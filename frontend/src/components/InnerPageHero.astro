@@ -1,0 +1,38 @@
+---
+type Props = {
+  id: string;
+  eyebrow?: string;
+  title: string;
+  description?: string;
+  backgroundImage?: string;
+  backgroundVideo?: string;
+};
+
+const { id, eyebrow, title, description, backgroundImage, backgroundVideo } = Astro.props;
+const titleLines = String(title || '').split('\n');
+const hasVideo = Boolean(backgroundVideo);
+---
+
+<section id={id} class="relative flex h-[65vh] min-h-[520px] items-center overflow-hidden bg-slate-900 text-white scroll-mt-24">
+  {backgroundVideo ? (
+    <video class="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-90" autoplay muted loop playsinline preload="auto" aria-hidden="true">
+      <source src={backgroundVideo} type="video/mp4" />
+    </video>
+  ) : (
+    backgroundImage && <div class="absolute inset-0 bg-cover bg-center opacity-50 mix-blend-overlay" style={`background-image:url('${backgroundImage}')`}></div>
+  )}
+  <div class={`absolute inset-0 ${hasVideo ? 'bg-gradient-to-r from-[#03203c]/72 via-[#0a4d8c]/36 to-[#061e38]/22' : 'bg-gradient-to-r from-[#03203c]/95 via-[#0a4d8c]/72 to-[#061e38]/55 mix-blend-multiply'}`}></div>
+  <div class={`absolute inset-0 ${hasVideo ? 'bg-[#061e38]/10' : 'bg-[#061e38]/35'}`}></div>
+  <div class="relative z-10 mx-auto w-full max-w-7xl px-6 text-center">
+    {eyebrow && <p class="mb-4 text-sm font-bold uppercase tracking-[0.28em] text-blue-300">{eyebrow}</p>}
+    <h1 class="mb-6 text-5xl font-extrabold leading-tight text-white md:text-6xl">
+      {titleLines.map((line, index) => (
+        <>
+          {index > 0 && <br />}
+          {line}
+        </>
+      ))}
+    </h1>
+    {description && <p class="mx-auto max-w-3xl text-xl font-light leading-relaxed text-gray-200">{description}</p>}
+  </div>
+</section>

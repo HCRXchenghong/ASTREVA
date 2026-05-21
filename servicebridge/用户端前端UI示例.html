@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="customer-service-api-base" content="">
+    <meta name="description" content="点击进入在线客服，有问题随时咨询，我们会尽快为您处理。">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="在线客服">
+    <meta property="og:description" content="点击进入在线客服，有问题随时咨询，我们会尽快为您处理。">
+    <meta property="og:image" content="./apps/user-web/assets/001.png">
+    <meta property="og:url" content="./用户端前端UI示例.html">
+    <meta property="og:site_name" content="在线客服">
+    <meta itemprop="name" content="在线客服">
+    <meta itemprop="description" content="点击进入在线客服，有问题随时咨询，我们会尽快为您处理。">
+    <meta itemprop="image" content="./apps/user-web/assets/001.png">
+    <link rel="image_src" href="./apps/user-web/assets/001.png">
+    <title>在线客服</title>
+    <script>
+        (() => {
+            const shareImageURL = new URL('./apps/user-web/assets/001.png', window.location.href).href;
+            const sharePageURL = window.location.href.split('#')[0];
+            const metas = [
+                ['meta[property="og:image"]', 'content', shareImageURL],
+                ['meta[itemprop="image"]', 'content', shareImageURL],
+                ['meta[property="og:url"]', 'content', sharePageURL],
+                ['link[rel="image_src"]', 'href', shareImageURL]
+            ];
+            metas.forEach(([selector, attr, value]) => {
+                const el = document.querySelector(selector);
+                if (el) el.setAttribute(attr, value);
+            });
+        })();
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+        
+        :root {
+            --wc-bg: #ededed;          /* 微信聊天背景色 */
+            --wc-header: #ededed;      /* 微信顶部导航栏颜色 */
+            --wc-footer: #f7f7f7;      /* 微信底部输入区颜色 */
+            --wc-bubble-user: #95ec69; /* 微信自己发的消息绿色 */
+            --wc-bubble-ai: #ffffff;   /* 微信对方发的消息白色 */
+            --wc-text-main: #111111;
+            --wc-text-muted: #b2b2b2;
+            --wc-border: #d5d5d5;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Segoe UI, Arial, Roboto, 'PingFang SC', 'miui', 'Hiragino Sans GB', 'Microsoft Yahei', sans-serif;
+            background-color: #333; /* PC端大背景设为深色，突出中间的手机外壳 */
+            margin: 0;
+            overflow: hidden;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* 隐藏滚动条 */
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* 气泡小三角 (左侧 - 对方) */
+        .bubble-left::before {
+            content: '';
+            position: absolute;
+            top: 14px;
+            left: -5px;
+            border-width: 5px 6px 5px 0;
+            border-style: solid;
+            border-color: transparent var(--wc-bubble-ai) transparent transparent;
+        }
+
+        /* 气泡小三角 (右侧 - 自己) */
+        .bubble-right::before {
+            content: '';
+            position: absolute;
+            top: 14px;
+            right: -5px;
+            border-width: 5px 0 5px 6px;
+            border-style: solid;
+            border-color: transparent transparent transparent var(--wc-bubble-user);
+        }
+
+        /* 图片消息的无尖角包裹层 */
+        .bubble-image img {
+            border-radius: 6px;
+            max-width: 140px;
+            max-height: 200px;
+            object-fit: cover;
+        }
+
+        /* 输入框自动增高，取消聚焦边框 */
+        textarea:focus { outline: none; }
+        
+        /* 底部安全区适配 */
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+        /* 面板动画基础设置 */
+        .bottom-panel {
+            will-change: height;
+            overflow: hidden;
+        }
+
+        /* 强制覆盖部分 tailwind 配置 */
+        .bg-wc-bg { background-color: var(--wc-bg); }
+        .bg-wc-header { background-color: var(--wc-header); }
+        .bg-wc-footer { background-color: var(--wc-footer); }
+        .bg-wc-user { background-color: var(--wc-bubble-user); }
+        .bg-wc-ai { background-color: var(--wc-bubble-ai); }
+        .border-wc { border-color: var(--wc-border); }
+        .text-wc-main { color: var(--wc-text-main); }
+    </style>
+</head>
+<body class="flex items-center justify-center h-screen w-screen relative">
+
+    <!-- PC端模拟手机外壳，移动端全屏 -->
+    <div id="app-container" class="relative w-full h-full md:w-[400px] md:h-[800px] md:max-h-[95vh] md:rounded-xl md:shadow-2xl overflow-hidden bg-wc-bg flex flex-col">
+        
+        <!-- 顶部导航栏 -->
+        <header class="h-[50px] bg-wc-header flex items-center justify-between px-3 shrink-0 relative z-20 border-b border-wc">
+            <!-- 左侧空位保持布局平衡，移除了返回按钮 -->
+            <div class="flex items-center w-16">
+            </div>
+            
+            <!-- 中间标题与状态 -->
+            <div class="flex-1 flex flex-col items-center justify-center text-center">
+                <div class="flex items-center gap-1">
+                    <span id="header-title" class="text-[17px] font-semibold text-wc-main truncate max-w-[150px]">官方客服</span>
+                    <!-- AI 标识 -->
+                    <span id="header-ai-badge" class="bg-blue-100 text-blue-600 text-[10px] px-1 rounded-sm border border-blue-200">AI</span>
+                </div>
+                <!-- 打字状态提示 (默认隐藏) -->
+                <span id="header-typing" class="text-xs text-gray-500 hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-wc-header w-32 text-center">
+                    对方正在输入...
+                </span>
+            </div>
+            
+            <!-- 右侧更多 -->
+            <div class="flex items-center justify-end w-16 gap-3">
+                <i id="btn-sound" class="fas fa-volume-up text-lg text-gray-700 cursor-pointer"></i>
+                <i id="btn-more-top" class="fas fa-ellipsis-h text-xl text-gray-700 cursor-pointer" title="结束会话等操作"></i>
+            </div>
+        </header>
+
+        <!-- 系统提示横幅 (排队/营业时间等) -->
+        <div id="sys-banner" class="bg-[#fdf6ec] text-[#e6a23c] text-xs px-3 py-2 flex items-center justify-center border-b border-[#faecd8] hidden shrink-0 z-10 shadow-sm relative">
+            <span id="sys-banner-text">提示信息</span>
+            <i class="fas fa-times absolute right-3 cursor-pointer text-[#e6a23c]" onclick="this.parentElement.classList.add('hidden')"></i>
+        </div>
+
+        <!-- 聊天内容区 -->
+        <main id="chat-list" class="flex-1 overflow-y-auto p-4 space-y-5 hide-scrollbar pb-6 relative z-0" onclick="closeAllPanels()">
+            
+            <!-- 历史记录拉取提示 -->
+            <div class="text-center">
+                <span class="text-xs text-blue-500 cursor-pointer hover:underline">点击加载更多历史记录</span>
+            </div>
+
+            <!-- 时间戳 -->
+            <div class="text-center mt-2">
+                <span class="text-[11px] text-gray-400 bg-[#dadada] px-2 py-0.5 rounded-sm text-white">昨天 14:30</span>
+            </div>
+
+            <!-- AI 欢迎语 (预设) -->
+            <div class="flex gap-3 msg-wrapper">
+                <img src="https://placehold.co/80x80/07c160/ffffff?text=服" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
+                <div class="flex flex-col gap-1 max-w-[70%]">
+                    <span class="text-[11px] text-gray-500 ml-1">智能助手小A</span>
+                    <div class="bg-wc-ai text-[16px] text-wc-main p-2.5 rounded-lg shadow-sm relative bubble-left leading-relaxed word-break-all border border-gray-200/50">
+                        您好！欢迎使用在线客服系统。<br>
+                        非工作时间 (18:00 - 09:00) 人工客服不在线，我将为您解答常见问题。<br>
+                        您可以直接发送文字、图片，或点击下方快捷问题。
+                    </div>
+                </div>
+            </div>
+
+            <!-- 快捷问题栏 (卡片式) -->
+            <div class="flex gap-3 msg-wrapper">
+                <div class="w-10 shrink-0"></div> <!-- 占位符对应头像位置 -->
+                <div class="bg-white p-3 rounded-lg shadow-sm border border-gray-200/50 w-[75%]">
+                    <div class="text-sm text-gray-500 mb-2 border-b border-gray-100 pb-1">猜你想问</div>
+                    <ul class="text-sm text-[#576b95] space-y-2">
+                        <li class="cursor-pointer active:bg-gray-100 p-1 -mx-1 rounded faq-click">1. 订单发货时间？</li>
+                        <li class="cursor-pointer active:bg-gray-100 p-1 -mx-1 rounded faq-click">2. 如何申请退换货？</li>
+                        <li class="cursor-pointer active:bg-gray-100 p-1 -mx-1 rounded faq-click">3. 转接人工客服</li>
+                    </ul>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- 底部输入与功能区 -->
+        <footer class="bg-wc-footer border-t border-wc shrink-0 pb-safe relative z-20">
+            <!-- 输入行 -->
+            <div class="min-h-[56px] px-2 py-2 flex items-end gap-2">
+                <!-- 语音切换 (纯展示图标) -->
+                <div class="w-8 h-8 flex items-center justify-center shrink-0 mb-1 cursor-pointer">
+                    <i class="fas fa-microphone-alt text-2xl text-gray-700 rounded-full border border-gray-500 p-1.5 w-8 h-8 flex items-center justify-center"></i>
+                </div>
+                
+                <!-- 输入框 -->
+                <div class="flex-1 bg-white rounded flex items-center border border-gray-300 min-h-[40px] mb-0.5 relative">
+                    <textarea id="chat-input" rows="1" class="w-full bg-transparent border-none resize-none px-2 py-2 text-[16px] leading-[22px] max-h-[100px] hide-scrollbar" style="height: 40px;"></textarea>
+                </div>
+                
+                <!-- 表情按钮 -->
+                <div class="w-8 h-8 flex items-center justify-center shrink-0 mb-1 cursor-pointer" onclick="togglePanel('emoji')">
+                    <i class="far fa-smile text-3xl text-gray-700"></i>
+                </div>
+                
+                <!-- 更多(+)按钮 / 发送按钮 (动态切换) -->
+                <div id="btn-plus" class="w-8 h-8 flex items-center justify-center shrink-0 mb-1 cursor-pointer" onclick="togglePanel('more')">
+                    <i class="fas fa-plus-circle text-3xl text-gray-700"></i>
+                </div>
+                <div id="btn-send" class="h-8 bg-[#07c160] text-white px-4 rounded font-medium text-[15px] flex items-center justify-center shrink-0 mb-1 cursor-pointer active:bg-[#06ad56]" style="display: none;" onclick="handleSend()">
+                    发送
+                </div>
+            </div>
+
+            <!-- 隐藏的表情面板 -->
+            <div id="panel-emoji" class="bottom-panel h-0 bg-wc-footer border-t border-gray-200">
+                <div class="p-4 grid grid-cols-8 gap-4 overflow-y-auto h-[250px] hide-scrollbar" id="emoji-container">
+                    <!-- JS 填充 -->
+                </div>
+            </div>
+
+            <!-- 隐藏的更多功能面板 -->
+            <div id="panel-more" class="bottom-panel h-0 bg-wc-footer border-t border-gray-200">
+                <div class="p-6 grid grid-cols-4 gap-y-6 gap-x-2 h-[250px]">
+                    
+                    <!-- 1. 发送照片 -->
+                    <div class="flex flex-col items-center gap-1 cursor-pointer group" onclick="triggerAction('photo')">
+                        <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
+                            <i class="fas fa-image text-[28px] text-gray-600"></i>
+                        </div>
+                        <span class="text-xs text-gray-500">相册</span>
+                    </div>
+
+                    <!-- 2. 电话联系 -->
+                    <div class="flex flex-col items-center gap-1 cursor-pointer group" onclick="triggerAction('phone')">
+                        <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
+                            <i class="fas fa-phone-alt text-[24px] text-gray-600"></i>
+                        </div>
+                        <span class="text-xs text-gray-500">电话联系</span>
+                    </div>
+
+                    <!-- 3. 加微信 -->
+                    <div class="flex flex-col items-center gap-1 cursor-pointer group" onclick="triggerAction('wechat')">
+                        <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
+                            <i class="fab fa-weixin text-[32px] text-[#07c160]"></i>
+                        </div>
+                        <span class="text-xs text-gray-500">加微信</span>
+                    </div>
+
+                    <!-- 4. 加QQ -->
+                    <div class="flex flex-col items-center gap-1 cursor-pointer group" onclick="triggerAction('qq')">
+                        <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
+                            <i class="fab fa-qq text-[28px] text-[#12B7F5]"></i>
+                        </div>
+                        <span class="text-xs text-gray-500">加QQ</span>
+                    </div>
+
+                </div>
+            </div>
+        </footer>
+
+        <!-- 评价遮罩层 (底部弹起，类似微信的小程序面板) -->
+        <div id="eval-overlay" class="absolute inset-0 bg-black/50 z-50 hidden flex-col justify-end">
+            <div class="bg-white rounded-t-xl w-full pt-4 pb-8 px-6 transform translate-y-full" id="eval-sheet">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-lg font-medium text-gray-800">服务评价</h3>
+                    <i class="fas fa-times text-gray-400 cursor-pointer text-xl p-2" onclick="closeEval()"></i>
+                </div>
+                
+                <p class="text-sm text-gray-500 mb-6 text-center">会话已结束，请对本次服务（智能助手小A）进行评价</p>
+                
+                <div class="flex justify-around mb-8">
+                    <div class="flex flex-col items-center gap-2 cursor-pointer eval-star" data-score="5">
+                        <i class="fas fa-laugh-squint text-4xl text-gray-300 transition-colors"></i>
+                        <span class="text-xs text-gray-500">非常满意</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-2 cursor-pointer eval-star" data-score="3">
+                        <i class="fas fa-meh text-4xl text-gray-300 transition-colors"></i>
+                        <span class="text-xs text-gray-500">一般</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-2 cursor-pointer eval-star" data-score="1">
+                        <i class="fas fa-frown text-4xl text-gray-300 transition-colors"></i>
+                        <span class="text-xs text-gray-500">不满意</span>
+                    </div>
+                </div>
+
+                <div id="eval-advice-box" class="hidden mb-5">
+                    <label class="block text-sm text-gray-600 mb-2">请告诉我们哪里做得不够好</label>
+                    <textarea
+                        id="eval-advice"
+                        class="w-full min-h-[96px] bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 resize-none focus:outline-none focus:border-[#07c160]"
+                        maxlength="300"
+                        placeholder="请输入您的建议，管理端会看到这条反馈"
+                    ></textarea>
+                </div>
+
+                <button class="w-full bg-[#07c160] text-white py-3 rounded-lg font-medium active:bg-[#06ad56]" onclick="submitEval()">提交评价</button>
+            </div>
+        </div>
+
+        <!-- 居中 Toast 提示 -->
+        <div id="toast" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/70 text-white text-[14px] px-4 py-2 rounded shadow-lg pointer-events-none opacity-0 z-[60]">
+            提示信息
+        </div>
+
+        <!-- 隐藏的音频 -->
+        <audio id="sound-new-msg" src="https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3" preload="auto"></audio>
+    </div>
+
+    <script>
+        // === 状态管理 ===
+        const State = {
+            sessionType: 'AI', // 'AI', 'QUEUING', 'HUMAN', 'ENDED'
+            agentName: '智能助手小A',
+            agentAvatar: 'https://placehold.co/80x80/07c160/ffffff?text=服',
+            soundEnabled: true,
+            activePanel: null, // 'emoji', 'more', or null
+            unreadCount: 0,
+            apiBase: inferAPIBase(),
+            visitorToken: '',
+            conversationId: '',
+            selectedRatingScore: 0,
+            ratingSubmitted: false
+        };
+
+        const DOM = {
+            chatList: document.getElementById('chat-list'),
+            input: document.getElementById('chat-input'),
+            btnPlus: document.getElementById('btn-plus'),
+            btnSend: document.getElementById('btn-send'),
+            panelEmoji: document.getElementById('panelEmoji'),
+            panelMore: document.getElementById('panel-more'),
+            emojiContainer: document.getElementById('emoji-container'),
+            sysBanner: document.getElementById('sys-banner'),
+            sysBannerText: document.getElementById('sys-banner-text'),
+            headerTitle: document.getElementById('header-title'),
+            headerTyping: document.getElementById('header-typing'),
+            headerAiBadge: document.getElementById('header-ai-badge'),
+            toast: document.getElementById('toast'),
+            evalOverlay: document.getElementById('eval-overlay'),
+            evalSheet: document.getElementById('eval-sheet'),
+            evalAdviceBox: document.getElementById('eval-advice-box'),
+            evalAdvice: document.getElementById('eval-advice'),
+            sound: document.getElementById('sound-new-msg'),
+            btnSound: document.getElementById('btn-sound')
+        };
+
+        // 常用 Emoji 列表
+        const EMOJIS = ['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🤩', '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '☹️', '😣'];
+
+        // === 工具函数 ===
+        function inferAPIBase() {
+            const configured = document.querySelector('meta[name="customer-service-api-base"]')?.content || window.CUSTOMER_SERVICE_API_BASE || '';
+            if (configured.trim()) return configured.trim().replace(/\/$/, '');
+            if (location.protocol === 'file:') return 'http://localhost:8080';
+            if (location.port && location.port !== '8080') return `${location.protocol}//${location.hostname}:8080`;
+            return location.origin;
+        }
+
+        function showToast(msg, duration = 2000) {
+            DOM.toast.textContent = msg;
+            gsap.to(DOM.toast, { opacity: 1, duration: 0.2 });
+            setTimeout(() => gsap.to(DOM.toast, { opacity: 0, duration: 0.3 }), duration);
+        }
+
+        function scrollToBottom() {
+            setTimeout(() => {
+                DOM.chatList.scrollTo({ top: DOM.chatList.scrollHeight, behavior: 'smooth' });
+            }, 50);
+        }
+
+        function playSound() {
+            if (State.soundEnabled && State.sessionType !== 'ENDED') {
+                DOM.sound.currentTime = 0;
+                DOM.sound.play().catch(() => {});
+            }
+        }
+
+        // === 核心 UI 逻辑 ===
+
+        // 输入框高度自动调整与发送按钮切换
+        DOM.input.addEventListener('input', function() {
+            // 高度自适应
+            this.style.height = '40px';
+            this.style.height = (this.scrollHeight) + 'px';
+            
+            // 切换 发送 / + 按钮
+            if (this.value.trim().length > 0) {
+                DOM.btnPlus.style.display = 'none';
+                DOM.btnSend.style.display = 'flex';
+            } else {
+                DOM.btnPlus.style.display = 'flex';
+                DOM.btnSend.style.display = 'none';
+            }
+        });
+
+        // 底部面板展开/收起控制
+        function togglePanel(panelName) {
+            const panelEmoji = document.getElementById('panel-emoji');
+            const panelMore = document.getElementById('panel-more');
+            
+            if (State.activePanel === panelName) {
+                // 关闭当前
+                closeAllPanels();
+            } else {
+                // 打开指定面板
+                State.activePanel = panelName;
+                if (panelName === 'emoji') {
+                    gsap.to(panelMore, { height: 0, duration: 0.2 });
+                    gsap.to(panelEmoji, { height: 250, duration: 0.3, ease: "power2.out" });
+                } else if (panelName === 'more') {
+                    gsap.to(panelEmoji, { height: 0, duration: 0.2 });
+                    gsap.to(panelMore, { height: 250, duration: 0.3, ease: "power2.out" });
+                }
+                scrollToBottom();
+            }
+        }
+
+        function closeAllPanels() {
+            State.activePanel = null;
+            gsap.to('.bottom-panel', { height: 0, duration: 0.2 });
+        }
+
+        // 初始化 Emoji
+        function initEmojis() {
+            EMOJIS.forEach(emo => {
+                const span = document.createElement('span');
+                span.className = 'text-2xl cursor-pointer text-center hover:bg-gray-200 py-1 rounded transition-colors';
+                span.textContent = emo;
+                span.onclick = () => {
+                    DOM.input.value += emo;
+                    DOM.input.dispatchEvent(new Event('input')); // 触发高度和按钮切换逻辑
+                };
+                DOM.emojiContainer.appendChild(span);
+            });
+        }
+
+        // === 消息构建与收发逻辑 ===
+
+        // 构建普通文本消息
+        function createMessageHTML(text, isUser = false, isFailed = false) {
+            const avatar = isUser ? 'https://placehold.co/80x80/cccccc/ffffff?text=客' : State.agentAvatar;
+            const bubbleBg = isUser ? 'bg-wc-user' : 'bg-wc-ai border border-gray-200/50';
+            const bubbleDir = isUser ? 'bubble-right' : 'bubble-left';
+            const textStyle = isUser ? 'text-wc-main' : 'text-wc-main';
+            
+            // 失败重试图标
+            const failIcon = (isUser && isFailed) ? 
+                `<i class="fas fa-exclamation-circle text-red-500 text-xl mr-2 cursor-pointer" onclick="retryMsg(this, '${text}')"></i>` : '';
+
+            // AI 头像旁显示名字
+            const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
+
+            return `
+                <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}">
+                    <img src="${avatar}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
+                    <div class="flex flex-col max-w-[70%] ${isUser ? 'items-end' : 'items-start'}">
+                        ${nameLabel}
+                        <div class="flex items-center ${isUser ? 'flex-row-reverse' : 'flex-row'}">
+                            <div class="${bubbleBg} ${textStyle} text-[16px] p-2.5 rounded-lg shadow-sm relative ${bubbleDir} leading-relaxed word-break-all min-h-[40px] flex items-center">
+                                ${text}
+                            </div>
+                            ${failIcon}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 构建图片消息 (微信中的图片没有气泡尖角和背景)
+        function createImageMessageHTML(imgSrc, isUser = false) {
+            const avatar = isUser ? 'https://placehold.co/80x80/cccccc/ffffff?text=客' : State.agentAvatar;
+            const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
+
+            return `
+                <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}">
+                    <img src="${avatar}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
+                    <div class="flex flex-col max-w-[70%] ${isUser ? 'items-end' : 'items-start'}">
+                        ${nameLabel}
+                        <div class="bubble-image mt-0.5">
+                            <img src="${imgSrc}" alt="图片" class="border border-gray-200/50 shadow-sm">
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function appendMessage(html, isUser = false) {
+            const div = document.createElement('div');
+            div.innerHTML = html.trim();
+            const el = div.firstElementChild;
+            DOM.chatList.appendChild(el);
+            
+            // 微信没有浮夸的弹性动画，一般是直接出现或者极短的位移
+            gsap.fromTo(el, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.2 });
+            
+            scrollToBottom();
+            if (!isUser) playSound();
+        }
+
+        function handleSend() {
+            if (State.sessionType === 'ENDED') {
+                showToast("会话已结束，无法发送消息");
+                return;
+            }
+            
+            const text = DOM.input.value.trim();
+            if (!text) return;
+
+            // 清空输入框并重置状态
+            DOM.input.value = '';
+            DOM.input.style.height = '40px';
+            DOM.btnPlus.style.display = 'flex';
+            DOM.btnSend.style.display = 'none';
+            closeAllPanels();
+
+            // 渲染用户消息
+            appendMessage(createMessageHTML(text, true), true);
+
+            // 触发模拟回复
+            simulateReply(text);
+        }
+
+        // 失败重试全局函数
+        window.retryMsg = function(icon, text) {
+            const wrapper = icon.closest('.msg-wrapper');
+            wrapper.remove(); // 移除旧消息
+            DOM.input.value = text;
+            DOM.input.dispatchEvent(new Event('input'));
+            showToast("已恢复内容");
+        };
+
+        // 模拟对方打字状态
+        function toggleTyping(show) {
+            if (show) {
+                DOM.headerTitle.classList.add('opacity-0');
+                DOM.headerAiBadge.classList.add('opacity-0');
+                DOM.headerTyping.classList.remove('hidden');
+            } else {
+                DOM.headerTitle.classList.remove('opacity-0');
+                DOM.headerAiBadge.classList.remove('opacity-0');
+                DOM.headerTyping.classList.add('hidden');
+            }
+        }
+
+        function simulateReply(userText) {
+            if (State.sessionType === 'QUEUING') return; // 排队不回复
+            
+            toggleTyping(true);
+
+            setTimeout(() => {
+                toggleTyping(false);
+
+                // 模拟网络异常 (5% 概率，仅在人工状态演示)
+                if (Math.random() < 0.05 && State.sessionType === 'HUMAN') {
+                    // 找到上一条用户消息，加上失败图标 (这里为了简便，直接用系统消息提示)
+                    appendSystemMessage("网络异常，消息发送失败，请重试。");
+                    return;
+                }
+
+                let reply = "";
+                if (State.sessionType === 'AI') {
+                    if (userText.includes("人工")) {
+                        triggerAction('human');
+                        return; // 中断，进入转人工逻辑
+                    } else if (userText === "[图片]") {
+                        reply = "我收到了您的图片，但我暂时还不会“看图说话”哦。您可以输入文字描述您的问题。";
+                    } else {
+                        reply = "这是一条来自 AI 的自动回复。您可以尝试发送包含“人工”的文字体验转接流程。";
+                    }
+                } else if (State.sessionType === 'HUMAN') {
+                    if (userText === "[图片]") {
+                        reply = "图片已收到，请稍等，我帮您核实一下...";
+                    } else {
+                        reply = `人工客服已收到您的消息：“${userText}”，正在为您处理。`;
+                    }
+                }
+
+                if(reply) {
+                    appendMessage(createMessageHTML(reply, false), false);
+                }
+
+            }, 1000 + Math.random() * 1000); // 1-2秒延迟
+        }
+
+        function appendSystemMessage(text) {
+            const html = `
+                <div class="text-center mt-2 msg-wrapper">
+                    <span class="text-[12px] text-gray-500 bg-[#dadada]/50 px-2 py-0.5 rounded-sm">${text}</span>
+                </div>
+            `;
+            appendMessage(html, false);
+        }
+
+        // === 状态机与业务动作 ===
+
+        function updateSessionState(newState) {
+            State.sessionType = newState;
+            
+            // 基础重置
+            DOM.sysBanner.classList.add('hidden');
+            DOM.headerAiBadge.classList.add('hidden');
+            DOM.input.disabled = false;
+            DOM.input.placeholder = "";
+
+            switch (newState) {
+                case 'AI':
+                    State.agentName = '智能助手小A';
+                    State.agentAvatar = 'https://placehold.co/80x80/07c160/ffffff?text=服';
+                    DOM.headerAiBadge.classList.remove('hidden');
+                    break;
+                case 'QUEUING':
+                    DOM.sysBanner.classList.remove('hidden');
+                    DOM.sysBannerText.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>正在转接人工客服，排队中 (前方 2 人)...';
+                    break;
+                case 'HUMAN':
+                    State.agentName = '客服-李雪';
+                    State.agentAvatar = 'https://placehold.co/80x80/f5a623/ffffff?text=雪';
+                    DOM.sysBanner.classList.remove('hidden');
+                    DOM.sysBanner.className = 'bg-[#f0f9eb] text-[#67c23a] text-xs px-3 py-2 flex items-center justify-center border-b border-[#e1f3d8] shrink-0 z-10 shadow-sm relative';
+                    DOM.sysBannerText.innerHTML = '<i class="fas fa-check-circle mr-1"></i>已接入人工客服';
+                    setTimeout(() => DOM.sysBanner.classList.add('hidden'), 3000);
+                    break;
+                case 'ENDED':
+                    State.agentName = '会话已结束';
+                    DOM.input.disabled = true;
+                    DOM.input.placeholder = "会话已结束";
+                    break;
+            }
+            DOM.headerTitle.textContent = State.agentName;
+        }
+
+        function triggerAction(action) {
+            closeAllPanels();
+            
+            if (action === 'photo') {
+                if (State.sessionType === 'ENDED') {
+                    showToast("会话已结束");
+                    return;
+                }
+                // 模拟调起相册并发送图片
+                const sampleImg = 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=300&q=80';
+                appendMessage(createImageMessageHTML(sampleImg, true), true);
+                simulateReply("[图片]");
+            }
+            else if (action === 'human') {
+                if (State.sessionType === 'HUMAN' || State.sessionType === 'QUEUING') {
+                    showToast("当前已是人工服务相关状态");
+                    return;
+                }
+                updateSessionState('QUEUING');
+                appendSystemMessage("正在为您转接人工客服...");
+                
+                // 模拟排队倒计时
+                setTimeout(() => {
+                    if(State.sessionType !== 'ENDED') {
+                        updateSessionState('HUMAN');
+                        appendSystemMessage("客服 李雪 为您服务");
+                        appendMessage(createMessageHTML("您好，我是人工客服李雪，请问有什么可以帮您？", false), false);
+                    }
+                }, 3000);
+            } 
+            else if (action === 'phone') {
+                appendSystemMessage('客服电话：<a href="tel:400-123-4567" class="text-blue-500">400-123-4567</a> (点击拨打)');
+            }
+            else if (action === 'wechat') {
+                appendSystemMessage('官方微信号：<span class="text-wc-user font-bold select-all">WeChatService999</span> (长按复制)');
+            }
+            else if (action === 'qq') {
+                appendSystemMessage('官方QQ号：<span class="text-wc-user font-bold select-all">88888888</span> (长按复制)');
+            }
+            else if (action === 'end') {
+                if(State.sessionType === 'ENDED') return;
+                appendSystemMessage("会话已结束");
+                updateSessionState('ENDED');
+                showEvalSheet();
+            }
+        }
+
+        // === 评价组件逻辑 ===
+        const RATING_ACTIVE_COLORS = {
+            satisfied: '#07c160',
+            neutral: '#f5a623',
+            unhappy: '#ef4444'
+        };
+
+        function ratingColor(score) {
+            const value = Number(score || 0);
+            if (value >= 5) return RATING_ACTIVE_COLORS.satisfied;
+            if (value >= 3) return RATING_ACTIVE_COLORS.neutral;
+            return RATING_ACTIVE_COLORS.unhappy;
+        }
+
+        function resetRatingIcons() {
+            document.querySelectorAll('.eval-star i').forEach(i => {
+                i.style.color = '';
+                i.classList.add('text-gray-300');
+            });
+        }
+
+        function showEvalSheet() {
+            DOM.evalOverlay.classList.remove('hidden');
+            DOM.evalOverlay.classList.add('flex');
+            gsap.to(DOM.evalSheet, { y: 0, duration: 0.3, ease: "power3.out" });
+            
+            // 重置星星
+            resetRatingIcons();
+            State.selectedRatingScore = 0;
+            DOM.evalAdvice.value = '';
+            syncEvalAdviceBox();
+        }
+
+        function closeEval() {
+            gsap.to(DOM.evalSheet, { y: '100%', duration: 0.2, ease: "power2.in", onComplete: () => {
+                DOM.evalOverlay.classList.remove('flex');
+                DOM.evalOverlay.classList.add('hidden');
+            }});
+        }
+
+        // 星星点击事件
+        document.querySelectorAll('.eval-star').forEach(star => {
+            star.addEventListener('click', function() {
+                // 清除所有颜色
+                resetRatingIcons();
+                // 点亮当前
+                const score = Number(this.dataset.score || 0);
+                const icon = this.querySelector('i');
+                icon.classList.remove('text-gray-300');
+                icon.style.color = ratingColor(score);
+                State.selectedRatingScore = score;
+                syncEvalAdviceBox();
+            });
+        });
+
+        function syncEvalAdviceBox() {
+            const needsAdvice = State.selectedRatingScore > 0 && State.selectedRatingScore < 5;
+            DOM.evalAdviceBox.classList.toggle('hidden', !needsAdvice);
+            if (!needsAdvice) DOM.evalAdvice.value = '';
+        }
+
+        async function ensureRatingConversation() {
+            if (State.visitorToken && State.conversationId) return true;
+            const resp = await fetch(`${State.apiBase}/api/visitor/conversations`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source: 'ui_reference' })
+            });
+            if (!resp.ok) throw new Error(`create conversation failed ${resp.status}`);
+            const data = await resp.json();
+            State.visitorToken = data.token || '';
+            State.conversationId = data.conversation?.id || '';
+            return !!State.visitorToken && !!State.conversationId;
+        }
+
+        function ratingTags(score) {
+            if (score >= 5) return ['非常满意'];
+            if (score >= 3) return ['一般'];
+            return ['不满意'];
+        }
+
+        window.submitEval = async function() {
+            if(!State.selectedRatingScore) {
+                showToast("请先选择评价等级");
+                return;
+            }
+            const advice = DOM.evalAdvice.value.trim();
+            if (State.selectedRatingScore < 5 && !advice) {
+                showToast("请输入您的建议");
+                DOM.evalAdvice.focus();
+                return;
+            }
+            if (State.ratingSubmitted) {
+                showToast("评价已提交");
+                closeEval();
+                return;
+            }
+            try {
+                await ensureRatingConversation();
+                const resp = await fetch(`${State.apiBase}/api/visitor/conversations/${encodeURIComponent(State.conversationId)}/rating`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${State.visitorToken}`
+                    },
+                    body: JSON.stringify({
+                        score: State.selectedRatingScore,
+                        tags: ratingTags(State.selectedRatingScore),
+                        comment: advice
+                    })
+                });
+                if (!resp.ok && resp.status !== 409) throw new Error(`rating failed ${resp.status}`);
+                State.ratingSubmitted = true;
+                showToast("感谢您的评价！");
+                closeEval();
+            } catch (err) {
+                console.error(err);
+                showToast("评价提交失败，请确认后端已启动");
+            }
+        }
+
+        // 顶部按钮事件
+        DOM.btnSound.addEventListener('click', function() {
+            State.soundEnabled = !State.soundEnabled;
+            if (State.soundEnabled) {
+                this.className = 'fas fa-volume-up text-lg text-gray-700 cursor-pointer';
+                showToast("提示音已开启");
+            } else {
+                this.className = 'fas fa-volume-mute text-lg text-gray-400 cursor-pointer';
+                showToast("提示音已关闭");
+            }
+        });
+
+        // 右上角 "..." 结束会话
+        document.getElementById('btn-more-top').addEventListener('click', () => {
+            if(State.sessionType !== 'ENDED') {
+                if(confirm("确定要结束当前客服会话吗？")) {
+                    triggerAction('end');
+                }
+            }
+        });
+
+        // 常见问题点击绑定
+        document.querySelectorAll('.faq-click').forEach(el => {
+            el.addEventListener('click', function() {
+                const text = this.textContent.replace(/^\d+\.\s*/, ''); // 去除序号
+                DOM.input.value = text;
+                DOM.input.dispatchEvent(new Event('input'));
+                handleSend();
+            });
+        });
+
+        // 阻止输入框回车换行，直接发送
+        DOM.input.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+            }
+        });
+
+        // 启动初始化
+        window.addEventListener('DOMContentLoaded', () => {
+            initEmojis();
+            updateSessionState('AI');
+            scrollToBottom();
+        });
+
+    </script>
+</body>
+</html>

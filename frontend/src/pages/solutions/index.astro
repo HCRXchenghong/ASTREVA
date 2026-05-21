@@ -1,0 +1,431 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import InnerPageHero from '../../components/InnerPageHero.astro';
+import { getContent, staticPage } from '../../lib/content';
+
+const content = await getContent();
+const page = staticPage(content, 'solutions');
+
+const defaultSolutionSections = [
+  {
+    id: 'sol-sec-1',
+    number: '01',
+    navLabel: '市政道路排水',
+    title: '市政道路与城市公共广场',
+    description:
+      '针对城市主干道、交通枢纽及大型公共广场，排水系统面临的首要挑战是高频率载荷与突发性强降水。星渡 F900 级模块化系统专为此设计。',
+    image: 'https://images.unsplash.com/photo-1577086664693-894d8405334a?auto=format&fit=crop&q=80&w=900',
+    videoImage: 'https://images.unsplash.com/photo-1545143333-11bb2f7d9ad6?auto=format&fit=crop&q=80&w=1200',
+    videoCaption: '演示视频：F900 承载不锈钢系统在城市枢纽的安装演示',
+    focusTitle: '核心解决：结构稳定性',
+    focusDescription:
+      '采用不锈钢一体化预制沟体，替代传统现浇沟渠。其物理特性保证了在重载碾压下不会产生混凝土剥落或缝隙扩大的风险。Click 锁扣系统确保了长距离安装的一致性。',
+    bullets: ['满足 EN1433 标准 F900 最高承载要求', '抗沉降设计，防止路面衔接处断裂', '极速排水模型计算，应对 50 年一遇暴雨']
+  },
+  {
+    id: 'sol-sec-2',
+    number: '02',
+    navLabel: '商业综合体',
+    title: '商业综合体与五星级酒店',
+    description:
+      '商业环境不仅要求功能卓越，更要求视觉隐形。排水系统必须与高端石材铺装完美融合，同时满足高人流量下的安全性与维护便捷性。',
+    focusTitle: '美学与性能的终极平衡',
+    focusDescription:
+      '星渡隐形排水系统可应用于高端商业与酒店项目。我们提供完整的 BIM 适配图纸，确保在设计阶段即可完成铺装模数对齐。',
+    bullets: ['仅 10-20mm 窄缝收水，隐藏于石材缝隙', 'U 型光滑底部提供高自净流速', '隐藏式检修口可填充同色石材，实现视觉统一']
+  },
+  {
+    id: 'sol-sec-3',
+    number: '03',
+    navLabel: '工业与洁净',
+    title: '工业厂房与洁净室排水',
+    description:
+      '在食品、医药生产车间，排水系统是污染控制的核心。星渡工业级全不锈钢明沟系统采用镜面抛光处理，支持 CIP 在位清洗。',
+    image: 'https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&q=80&w=1200',
+    focusTitle: '抗腐蚀与无卫生死角',
+    focusDescription:
+      '316L 不锈钢材质适应强酸强碱清洗环境，圆角沟底降低污垢残留，适合洁净厂房、食品加工和高频冲洗区域。',
+    bullets: ['316L 不锈钢材质，耐强酸强碱清洗环境', '符合 HACCP 要求的圆角设计', '适配重型叉车频繁转向的高强格栅']
+  },
+  {
+    id: 'sol-sec-4',
+    number: '04',
+    navLabel: '高端景观定制',
+    title: '高端景观与异形地坪定制',
+    description:
+      '面对曲线铺装、庭院水景、商业街区与高端住宅庭院，排水系统既要隐藏，又要顺应复杂边界。星渡支持弧形、异形和节点级定制。',
+    image: 'https://images.unsplash.com/photo-1572120360610-d971b9d7767c?auto=format&fit=crop&q=80&w=900',
+    focusTitle: '让排水系统融入铺装语言',
+    focusDescription:
+      '通过定制曲率、缝隙宽度和检修节点，排水沟可以成为铺装分缝的一部分，而不是破坏景观完整性的突兀构件。',
+    bullets: ['支持曲线、折线和非标尺寸定制', '可与石材、砖材、金属面层协调', '隐藏检修节点，兼顾维护和美观']
+  },
+  {
+    id: 'sol-sec-5',
+    number: '05',
+    navLabel: '海绵城市/生态',
+    title: '海绵城市与生态雨水利用',
+    description:
+      '面向公园、绿地、城市更新和生态街区，星渡将排水、滞蓄、检查与维护节点整合进可持续雨水管理系统。',
+    image: 'https://images.unsplash.com/photo-1518005020951-eccb494ad742?auto=format&fit=crop&q=80&w=900',
+    focusTitle: '从快速排水到雨水管理',
+    focusDescription:
+      '生态透水材料、雨水收集器和检查井节点可组合使用，帮助项目在暴雨应对、维护检修和可持续认证之间取得平衡。',
+    bullets: ['适配海绵城市节点和生态铺装', '支持雨水收集、检查与维护', '可与景观排水和市政管网衔接']
+  }
+];
+
+const rawSections = Array.isArray(page.sections?.solutionSections) && page.sections.solutionSections.length
+  ? page.sections.solutionSections
+  : defaultSolutionSections;
+
+const solutionSections = rawSections.map((item, index) => ({
+  ...defaultSolutionSections[index % defaultSolutionSections.length],
+  ...item,
+  bullets: Array.isArray(item.bullets)
+    ? item.bullets
+    : String(item.bullets || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+}));
+
+const systemCards = Array.isArray(page.sections?.systemCards) && page.sections.systemCards.length
+  ? page.sections.systemCards
+  : [
+      { step: 'Step 01. 窄缝收水', title: '仅 10-20mm 的缝隙，完美隐藏于石材缝隙中。' },
+      { step: 'Step 02. 高强沟体', title: 'U 型光滑底部提供超高自净流速，减少淤积。' },
+      { step: 'Step 03. 隐藏式检修', title: '专利检修口盖板可填充同色石材，实现 100% 视觉统一。' }
+    ];
+
+const solutionUi = {
+  architectureTitle: page.sections?.architectureTitle || '隐形缝隙式系统架构',
+  detailButtonLabel: page.sections?.ctaLabel || '查看详细技术手册',
+  detailButtonHref: page.sections?.ctaHref || '/support/',
+  sideNavTitle: page.sections?.sideNavTitle || '方案导航',
+  detailNote: page.sections?.detailNote || '后台可继续补充该节点的技术说明。',
+  adviceTitle: page.sections?.adviceTitle || '需要专业选型建议？',
+  advicePrimaryLabel: page.sections?.advicePrimaryLabel || '咨询方案专家',
+  advicePrimaryHref: page.sections?.advicePrimaryHref || '/support/',
+  adviceSecondaryLabel: page.sections?.adviceSecondaryLabel || '下载全线目录',
+  adviceSecondaryHref: page.sections?.adviceSecondaryHref || '/products/'
+};
+---
+
+<BaseLayout content={content} seo={page.seo} path="/solutions/">
+  <div class="w-full pt-24">
+    <InnerPageHero
+      id="solutions-hero"
+      eyebrow={page.hero?.eyebrow}
+      title={page.hero?.title || page.title}
+      description={page.hero?.description}
+      backgroundImage={page.hero?.backgroundImage}
+      backgroundVideo={page.hero?.backgroundVideo}
+    />
+
+    <div class="mx-auto max-w-7xl px-6 py-20">
+      <div class="flex flex-col gap-16 lg:flex-row lg:items-start">
+        <div class="flex-1 space-y-32">
+          {solutionSections.map((section, index) => (
+            <section id={section.id} class={`relative scroll-mt-44 ${index > 0 ? 'border-t border-gray-200 pt-12' : ''}`}>
+              <span class="section-number">{section.number}</span>
+              <div class="mb-12">
+                <h2 class="mb-6 text-4xl font-extrabold text-gray-900">{section.title}</h2>
+                <p class="max-w-4xl text-lg leading-relaxed text-gray-600">{section.description}</p>
+              </div>
+
+              {index === 0 && (
+                <div class="video-placeholder mb-12">
+                  {section.videoUrl ? (
+                    <video src={section.videoUrl} poster={section.videoImage || section.image} controls playsinline preload="metadata" class="h-full w-full object-cover"></video>
+                  ) : (
+                    <>
+                      <img src={section.videoImage || section.image} alt={section.title} class="h-full w-full object-cover opacity-60" />
+                      <div class="video-play-btn" aria-hidden="true"><span class="ml-1 text-3xl text-[#0a4d8c]">▶</span></div>
+                    </>
+                  )}
+                  <div class="absolute bottom-6 left-6 max-w-[calc(100%-48px)] rounded-lg bg-black/40 p-4 text-white backdrop-blur-sm">
+                    <p class="text-sm font-bold">{section.videoCaption}</p>
+                  </div>
+                </div>
+              )}
+
+              {index === 1 ? (
+                <div class="grid gap-16 md:grid-cols-2 md:items-center">
+                  <div class="order-2 rounded-3xl border border-gray-200 bg-gray-100 p-8 md:order-1">
+                    <h3 class="mb-4 font-bold text-[#0a4d8c]">{solutionUi.architectureTitle}</h3>
+                    <div class="space-y-4">
+                      {systemCards.map((card) => (
+                        <div class="rounded-xl border-l-4 border-[#0a66c2] bg-white p-4 shadow-sm">
+                          <p class="mb-1 text-xs font-bold uppercase text-gray-400">{card.step}</p>
+                          <p class="text-sm font-medium text-gray-800">{card.title}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div class="order-1 md:order-2">
+                    <h3 class="mb-6 text-2xl font-extrabold text-gray-900">{section.focusTitle}</h3>
+                    <p class="mb-8 leading-relaxed text-gray-600">{section.focusDescription}</p>
+                    <a href={section.ctaHref || solutionUi.detailButtonHref} class="inline-flex items-center gap-2 rounded-lg bg-[#0a4d8c] px-8 py-3 font-bold text-white transition-colors hover:bg-[#084b8c]">
+                      {section.ctaLabel || solutionUi.detailButtonLabel} <span aria-hidden="true">→</span>
+                    </a>
+                  </div>
+                </div>
+              ) : index === 2 ? (
+                <div class="flex flex-col gap-12 md:flex-row">
+                  <div class="md:w-1/3">
+                    <h3 class="mb-6 text-3xl font-extrabold leading-tight text-gray-900">{section.focusTitle}</h3>
+                    <div class="space-y-4">
+                      {section.bullets.slice(0, 2).map((bullet) => (
+                        <div class="rounded-lg bg-blue-50 p-4">
+                          <p class="mb-1 text-sm font-bold text-[#0a4d8c]">{bullet}</p>
+                          <p class="text-xs text-gray-500">{section.detailNote || solutionUi.detailNote}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div class="md:w-2/3">
+                    <img src={section.image} alt={section.title} class="h-[400px] w-full rounded-3xl object-cover" />
+                    <p class="mt-8 leading-relaxed text-gray-600">{section.focusDescription}</p>
+                  </div>
+                </div>
+              ) : (
+                <div class="grid gap-12 md:grid-cols-2 md:items-center">
+                  <div class="space-y-6">
+                    <h3 class="flex items-center gap-3 text-2xl font-extrabold text-gray-900">
+                      <span class="text-[#0a66c2]" aria-hidden="true">✓</span> {section.focusTitle}
+                    </h3>
+                    <p class="leading-relaxed text-gray-600">{section.focusDescription}</p>
+                    <ul class="space-y-3">
+                      {section.bullets.map((bullet) => (
+                        <li class="flex items-start gap-2 text-sm font-medium text-gray-800">
+                          <span class="mt-0.5 text-green-500" aria-hidden="true">✓</span> {bullet}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <img src={section.image} alt={section.title} class="rounded-2xl shadow-lg" />
+                  </div>
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+
+        <aside class="order-first w-full shrink-0 lg:sticky lg:top-32 lg:order-none lg:w-[300px] lg:self-start">
+          <div class="solution-rail">
+            <div class="rail-card">
+              <p class="rail-eyebrow">{solutionUi.sideNavTitle}</p>
+              <div class="space-y-1">
+                {solutionSections.map((section, index) => (
+                  <a href={`#${section.id}`} data-solution-nav class={`rail-link ${index === 0 ? 'active' : ''}`}>
+                    <span>{String(index + 1).padStart(2, '0')}</span>
+                    <strong>{section.navLabel}</strong>
+                  </a>
+                ))}
+              </div>
+            </div>
+            <div class="advisor-card">
+              <p class="advisor-title">{solutionUi.adviceTitle}</p>
+              <a href={solutionUi.advicePrimaryHref} class="advisor-primary">{solutionUi.advicePrimaryLabel}</a>
+              <a href={solutionUi.adviceSecondaryHref} class="advisor-secondary">{solutionUi.adviceSecondaryLabel}</a>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const solutionNavLinks = Array.from(document.querySelectorAll('[data-solution-nav]'));
+    const solutionContentSections = Array.from(document.querySelectorAll('section[id^="sol-sec-"]'));
+    const setActiveSolutionNav = (id) => {
+      solutionNavLinks.forEach((link) => {
+        link.classList.toggle('active', link.getAttribute('href') === `#${id}`);
+      });
+    };
+
+    solutionNavLinks.forEach((link) => {
+      link.addEventListener('click', () => {
+        const id = link.getAttribute('href')?.replace('#', '');
+        if (id) setActiveSolutionNav(id);
+      });
+    });
+
+    const hashId = window.location.hash.replace('#', '');
+    if (hashId && document.getElementById(hashId)) {
+      setActiveSolutionNav(hashId);
+    }
+    window.addEventListener('hashchange', () => {
+      const id = window.location.hash.replace('#', '');
+      if (id && document.getElementById(id)) setActiveSolutionNav(id);
+    });
+
+    if ('IntersectionObserver' in window) {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          const visibleEntry = entries
+            .filter((entry) => entry.isIntersecting)
+            .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+          if (visibleEntry?.target?.id) setActiveSolutionNav(visibleEntry.target.id);
+        },
+        { rootMargin: '-35% 0px -50% 0px', threshold: [0.12, 0.32, 0.6] }
+      );
+      solutionContentSections.forEach((section) => observer.observe(section));
+    }
+  </script>
+
+  <style>
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .blueprint-bg {
+      background-image: radial-gradient(rgba(255, 255, 255, 0.35) 0.5px, transparent 0.5px);
+      background-size: 20px 20px;
+      opacity: 0.12;
+    }
+    .section-number {
+      color: rgba(10, 77, 140, 0.05);
+      font-size: 8rem;
+      font-weight: 800;
+      left: -1rem;
+      line-height: 1;
+      position: absolute;
+      top: -2rem;
+      z-index: -1;
+    }
+    .solution-rail {
+      display: grid;
+      gap: 16px;
+    }
+    .rail-card,
+    .advisor-card {
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid #e4edf7;
+      border-radius: 16px;
+      box-shadow: 0 20px 45px rgba(15, 23, 42, 0.06);
+    }
+    .rail-card {
+      padding: 18px 14px;
+    }
+    .rail-eyebrow {
+      color: #94a3b8;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      margin: 0 12px 12px;
+    }
+    .rail-link {
+      align-items: center;
+      border-radius: 12px;
+      color: #64748b;
+      display: grid;
+      font-size: 14px;
+      gap: 10px;
+      grid-template-columns: 36px 1fr;
+      min-height: 46px;
+      padding: 0 12px;
+      position: relative;
+      transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+    }
+    .rail-link::before {
+      background: #0a66c2;
+      border-radius: 9999px;
+      content: '';
+      height: 22px;
+      left: -14px;
+      opacity: 0;
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      transition: opacity 0.2s ease;
+      width: 3px;
+    }
+    .rail-link span {
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+    .rail-link strong {
+      font-weight: 800;
+    }
+    .rail-link:hover,
+    .rail-link.active {
+      background: #f0f7ff;
+      color: #0a4d8c;
+      transform: translateX(2px);
+    }
+    .rail-link.active::before {
+      opacity: 1;
+    }
+    .rail-link.active span {
+      color: #0a66c2;
+    }
+    .advisor-card {
+      background: linear-gradient(180deg, #fff 0%, #f7fbff 100%);
+      padding: 18px;
+    }
+    .advisor-title {
+      color: #0f172a;
+      font-size: 14px;
+      font-weight: 900;
+      margin-bottom: 14px;
+    }
+    .advisor-primary,
+    .advisor-secondary {
+      border-radius: 10px;
+      display: block;
+      font-size: 13px;
+      font-weight: 900;
+      padding: 13px 14px;
+      text-align: center;
+      transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+      width: 100%;
+    }
+    .advisor-primary {
+      background: #0a4d8c;
+      color: #fff;
+      margin-bottom: 10px;
+      box-shadow: 0 12px 24px rgba(10, 77, 140, 0.18);
+    }
+    .advisor-primary:hover {
+      background: #084b8c;
+      transform: translateY(-1px);
+    }
+    .advisor-secondary {
+      background: #fff;
+      border: 1px solid #d9e2ec;
+      color: #0f172a;
+    }
+    .advisor-secondary:hover {
+      border-color: rgba(10, 102, 194, 0.45);
+      color: #0a4d8c;
+    }
+    .video-placeholder {
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 16px;
+      overflow: hidden;
+      position: relative;
+    }
+    .video-play-btn {
+      align-items: center;
+      background: #fff;
+      border-radius: 9999px;
+      cursor: pointer;
+      display: flex;
+      height: 64px;
+      justify-content: center;
+      left: 50%;
+      position: absolute;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      transition: all 0.3s ease;
+      width: 64px;
+    }
+    .video-play-btn:hover {
+      box-shadow: 0 0 30px rgba(255, 255, 255, 0.4);
+      transform: translate(-50%, -50%) scale(1.1);
+    }
+  </style>
+</BaseLayout>

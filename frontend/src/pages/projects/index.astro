@@ -1,0 +1,361 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import InnerPageHero from '../../components/InnerPageHero.astro';
+import { getContent, staticPage } from '../../lib/content';
+
+const content = await getContent();
+const page = staticPage(content, 'projects');
+
+const defaultFilters = ['全部项目', '北京', '上海', '市政工程', '商业地标', '工业仓储', '景观项目'];
+const filters = Array.isArray(page.sections?.filters) && page.sections.filters.length
+  ? page.sections.filters.map((item) => (typeof item === 'string' ? item : item.label)).filter(Boolean)
+  : defaultFilters;
+
+const defaultCases = [
+  {
+    id: 'hongqiao-hub',
+    title: '上海虹桥枢纽航站区排水系统改造工程',
+    location: '中国 · 上海',
+    type: '大型交通枢纽 / 市政重载',
+    year: '2023',
+    image: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=1200',
+    challenge: '作为全球繁忙的交通枢纽之一，该项目面临超大汇水面积、F900 顶级承载要求，以及施工窗口期仅有凌晨 4 小时的极端限制。',
+    solution: '采用星渡 AST-300 型模块化不锈钢一体化系统。通过预先在 BIM 环境下进行模数化分段，现场采用 Click 咔哒锁扣实现无焊连接，效率提升显著。',
+    results: '交付后历经多次强降水考验，路面无明显积水，不锈钢盖板稳固如新。',
+    tags: ['F900级', 'BIM深化', '极速安装']
+  },
+  {
+    id: 'beijing-cbd-plaza',
+    title: '北京某 CBD 顶级商业中心景观广场',
+    location: '中国 · 北京',
+    type: '商业综合体 / 景观美学',
+    year: '2023',
+    image: 'https://images.unsplash.com/photo-1577086664693-894d8405334a?auto=format&fit=crop&q=80&w=1200',
+    challenge: '建筑师要求广场铺装实现视觉对齐，传统排水格栅会破坏花岗岩质感。北方冬季严寒，还需要考虑融雪盐腐蚀。',
+    solution: '提供定制 15mm 极窄缝隙式系统，配合 SS316L 级抗盐腐蚀材质。检修口采用填充式盖板设计，铺装完成后视觉存在感极低。',
+    results: '实现了真正的隐身排水，景观铺装完整度与后期维护效率同步提升。',
+    tags: ['隐形缝隙', 'SS316L', '定制美学']
+  },
+  {
+    id: 'industrial-logistics',
+    title: '华东工业物流园重载排水改造项目',
+    location: '中国 · 华东',
+    type: '工业仓储 / 重载通行',
+    year: '2024',
+    image: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ece?auto=format&fit=crop&q=80&w=1200',
+    challenge: '重型叉车和货车长期频繁转向，原有混凝土沟体出现边缘破损、盖板松动和维护成本升高。',
+    solution: '采用高强不锈钢沟体和重载格栅组合，局部节点使用可开启检修盖板，便于后期清淤和巡检。',
+    results: '改造后通行区域稳定性提升，维护频次降低，排水沟边缘破损问题得到控制。',
+    tags: ['工业重载', '高强格栅', '可维护']
+  },
+  {
+    id: 'garden-residence',
+    title: '高端住宅景观排水节点定制项目',
+    location: '中国 · 华南',
+    type: '高端住宅 / 景观定制',
+    year: '2024',
+    image: 'https://images.unsplash.com/photo-1572120360610-d971b9d7767c?auto=format&fit=crop&q=80&w=1200',
+    challenge: '庭院铺装存在多处曲线边界，常规直线排水沟无法与景观线条自然融合。',
+    solution: '星渡根据景观图纸进行曲线模数拆分，定制窄缝收水和隐藏检修节点。',
+    results: '排水系统融入铺装缝线，暴雨后庭院积水明显改善，景观完整度保持稳定。',
+    tags: ['曲线定制', '景观排水', '隐藏节点']
+  }
+];
+
+const rawCases = Array.isArray(page.sections?.cases) && page.sections.cases.length ? page.sections.cases : defaultCases;
+const splitList = (value: unknown) =>
+  Array.isArray(value)
+    ? value.map(String).map((item) => item.trim()).filter(Boolean)
+    : String(value || '')
+        .split(/[,\n，]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+const pairRows = (value: unknown, fallback: Array<{ label: string; value: string }>) => {
+  if (Array.isArray(value) && value.length) {
+    return value
+      .map((item: any) => ({ label: item.label || item.name || '', value: item.value || item.text || item.description || '' }))
+      .filter((item) => item.label || item.value);
+  }
+  const rows = String(value || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [label, ...rest] = line.split(/[：:]/);
+      return { label: label?.trim() || '', value: rest.join('：').trim() || '' };
+    })
+    .filter((item) => item.label || item.value);
+  return rows.length ? rows : fallback;
+};
+
+const defaultSpecs = [
+  { label: '材质等级', value: 'AISI 304L / 316L 可选' },
+  { label: '承载等级', value: 'EN 1433 - F900' },
+  { label: '沟体长度', value: '1.0m / 2.0m 模块化' },
+  { label: '连接技术', value: 'Click-System 咔哒锁扣' }
+];
+
+const defaultMetrics = [
+  { label: '贯通闭水测试结论', value: '0 渗漏' },
+  { label: '后期维护成本降低', value: '75%' },
+  { label: '预期设计寿命', value: '50 年' }
+];
+
+const projectUi = {
+  cardButtonLabel: page.sections?.ctaLabel || '查看完整结项报告',
+  backLabel: page.sections?.backLabel || '返回案例列表',
+  breadcrumbLabel: page.sections?.breadcrumbLabel || '工程案例',
+  reportLabel: page.sections?.reportLabel || '详情报告',
+  detailIntroTitle: page.sections?.detailIntroTitle || '01. 项目背景与设计参数',
+  specTitle: page.sections?.specTitle || '技术规格清单 (Technical Specs)',
+  processTitle: page.sections?.processTitle || '02. 施工与深化过程 (Construction Process)',
+  reviewTitle: page.sections?.reviewTitle || '03. 交付实测与评价 (Review)',
+  detailCtaTitle: page.sections?.detailCtaTitle || '想了解相似项目在您的场景下如何落地？',
+  detailCtaDescription: page.sections?.detailCtaDescription || '我们的资深工程顾问可为您提供 1 对 1 技术咨询与 CAD 深化图纸。',
+  detailPrimaryLabel: page.sections?.detailPrimaryLabel || '咨询该案例专家',
+  detailPrimaryHref: page.sections?.detailPrimaryHref || '/support/'
+};
+
+const visualBlock = (value: string, color: string) => {
+  if (/^https?:\/\//i.test(value) || value.startsWith('/')) return { type: 'image', value };
+  return { type: 'label', value: value || color };
+};
+
+const cases = rawCases.map((item, index) => ({
+  ...defaultCases[index % defaultCases.length],
+  ...item,
+  id: item.id || `case-${index + 1}`,
+  tags: splitList(item.tags),
+  detailIntroExtra:
+    item.detailIntroExtra ||
+    '针对该项目的极端环境，星渡工程师联合设计团队，先通过水力模拟计算峰值排水量，再根据承载、铺装和维护需求确定模块尺寸与节点构造。',
+  specs: pairRows(item.specs, defaultSpecs),
+  processSteps: [
+    {
+      visual: visualBlock(item.processOneVisual || 'BIM Modeling Process', '#0a4d8c'),
+      title: item.processOneTitle || 'BIM 前置深化设计',
+      description: item.processOneDescription || '通过 BIM 技术对地下管线、结构柱梁进行避让，自动生成预制件清单，降低现场返工概率。'
+    },
+    {
+      visual: visualBlock(item.processTwoVisual || 'On-site Installation', '#0a66c2'),
+      title: item.processTwoTitle || '模块化极速安装',
+      description: item.processTwoDescription || '现场无需专业焊工。Click 锁扣配合星渡专用密封件，在保证强度的同时实现防渗漏和快速拼接。'
+    }
+  ],
+  reviewQuote: item.reviewQuote || '星渡不仅提供了产品，更解决了我们的工期焦虑。',
+  reviewAuthor: item.reviewAuthor || '项目总包方工程部负责人',
+  metrics: pairRows(item.metrics, defaultMetrics)
+}));
+---
+
+<BaseLayout content={content} seo={page.seo} path="/projects/">
+  <div class="w-full pt-24">
+    <InnerPageHero
+      id="projects-hero"
+      eyebrow={page.hero?.eyebrow}
+      title={page.hero?.title || page.title}
+      description={page.hero?.description}
+      backgroundImage={page.hero?.backgroundImage}
+      backgroundVideo={page.hero?.backgroundVideo}
+    />
+
+    <nav class="sticky top-24 z-40 overflow-x-auto border-b bg-white py-4 hide-scrollbar" aria-label="案例筛选">
+      <div class="mx-auto flex max-w-7xl gap-4 px-6">
+        {filters.map((filter, index) => (
+          <button data-case-filter={filter} class={`shrink-0 rounded-full px-6 py-2 text-sm font-bold transition-all ${index === 0 ? 'bg-[#0a4d8c] text-white' : 'border border-gray-200 text-gray-500 hover:border-[#0a4d8c] hover:text-[#0a4d8c]'}`} type="button">
+            {filter}
+          </button>
+        ))}
+      </div>
+    </nav>
+
+    <section id="case-list-view" class="mx-auto max-w-7xl px-6 py-16">
+      <div id="cases-rich-list" class="space-y-24">
+        {cases.map((item, index) => (
+          <article class="group flex flex-col items-center gap-12 lg:flex-row" data-case-card data-case-search={`${item.title} ${item.location} ${item.type} ${item.year} ${item.tags.join(' ')}`}>
+            <div class={`flex-1 ${index % 2 === 1 ? 'lg:order-2' : ''}`}>
+              <div class="relative overflow-hidden rounded-3xl shadow-2xl">
+                <img src={item.image} alt={item.title} class="h-[450px] w-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                <div class="absolute left-6 top-6 flex flex-wrap gap-2">
+                  {item.tags.map((tag) => <span class="rounded-full bg-[#0a4d8c]/80 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-white backdrop-blur-md">{tag}</span>)}
+                </div>
+              </div>
+            </div>
+            <div class={`flex-1 ${index % 2 === 1 ? 'lg:order-1' : ''}`}>
+              <p class="mb-4 text-sm font-bold uppercase tracking-widest text-[#0a66c2]">{item.location} | {item.year}</p>
+              <h2 class="mb-6 text-3xl font-extrabold text-gray-900 transition-colors group-hover:text-[#0a4d8c]">{item.title}</h2>
+              <div class="mb-8 space-y-6 text-gray-600">
+                <div>
+                  <p class="mb-2 text-xs font-bold uppercase text-gray-400">项目挑战</p>
+                  <p class="text-sm leading-relaxed">{item.challenge}</p>
+                </div>
+                <div>
+                  <p class="mb-2 text-xs font-bold uppercase text-gray-400">星渡方案</p>
+                  <p class="text-sm leading-relaxed">{item.solution}</p>
+                </div>
+              </div>
+              <button class="group/btn inline-flex items-center gap-3 font-bold text-[#0a4d8c]" data-case-trigger={item.id} type="button">
+                {projectUi.cardButtonLabel}
+                <span class="flex h-10 w-10 items-center justify-center rounded-full border border-blue-100 transition-all group-hover/btn:bg-[#0a4d8c] group-hover/btn:text-white">→</span>
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+
+    <section id="case-detail-view" class="hidden bg-white">
+      {cases.map((item) => (
+        <article class="case-detail hidden" data-case-detail={item.id}>
+          <div class="border-b bg-gray-50 py-12">
+            <div class="mx-auto max-w-7xl px-6">
+              <nav class="mb-8 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-gray-400">
+                <button class="hover:text-[#0a4d8c]" data-case-back type="button">{projectUi.breadcrumbLabel}</button>
+                <span aria-hidden="true">›</span>
+                <span class="text-gray-900">{projectUi.reportLabel}</span>
+              </nav>
+              <h2 class="mb-4 text-4xl font-extrabold text-gray-900 md:text-5xl">{item.title}</h2>
+              <p class="text-lg text-gray-500">{item.type} · {item.location}</p>
+            </div>
+          </div>
+
+          <div class="mx-auto max-w-7xl px-6 py-20">
+            <div class="mx-auto max-w-4xl space-y-24">
+              <section>
+                <h3 class="mb-10 inline-block border-b-2 border-[#0a4d8c] pb-4 text-2xl font-extrabold">{projectUi.detailIntroTitle}</h3>
+                <div class="grid gap-12 md:grid-cols-2">
+                  <div class="leading-relaxed text-gray-600">
+                    <p>{item.challenge}</p>
+                    <p class="mt-4">{item.detailIntroExtra}</p>
+                  </div>
+                  <div class="rounded-2xl border bg-white p-8 shadow-sm">
+                    <h4 class="mb-6 text-sm font-bold text-gray-900">{projectUi.specTitle}</h4>
+                    <ul class="space-y-4 text-xs font-medium">
+                      {item.specs.map((spec) => (
+                        <li class="flex justify-between gap-5 border-b py-2"><span class="text-gray-400">{spec.label}</span><span class="text-right">{spec.value}</span></li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <h3 class="mb-10 text-2xl font-extrabold">{projectUi.processTitle}</h3>
+                <div class="space-y-12">
+                  {item.processSteps.map((step, stepIndex) => (
+                    <div class={`flex flex-col items-center gap-10 ${stepIndex % 2 === 1 ? 'md:flex-row-reverse' : 'md:flex-row'}`}>
+                      <div class="flex-1">
+                        {step.visual.type === 'image' ? (
+                          <img src={step.visual.value} alt={step.title} class="aspect-[3/2] w-full rounded-xl object-cover" />
+                        ) : (
+                          <div class={`grid aspect-[3/2] place-items-center rounded-xl text-center text-white ${stepIndex % 2 === 1 ? 'bg-[#0a66c2]' : 'bg-[#0a4d8c]'}`}>{step.visual.value}</div>
+                        )}
+                      </div>
+                      <div class="flex-1">
+                        <h4 class="mb-4 font-bold text-gray-900">{step.title}</h4>
+                        <p class="text-sm leading-relaxed text-gray-500">{step.description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 class="mb-10 text-2xl font-extrabold">{projectUi.reviewTitle}</h3>
+                <div class="video-placeholder mb-10">
+                  <img src={item.image} alt={`${item.title} 交付效果`} class="h-full w-full object-cover opacity-50" />
+                  <div class="absolute inset-0 flex items-center justify-center p-6 text-center text-white">
+                    <div>
+                      <p class="mb-2 text-2xl font-bold">“{item.reviewQuote}”</p>
+                      <p class="text-sm">{item.reviewAuthor}</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="grid gap-6 md:grid-cols-3">
+                  {item.metrics.map((metric, metricIndex) => (
+                    <div class={`rounded-xl border p-6 ${metricIndex === 0 ? 'border-green-100 bg-green-50' : metricIndex === 1 ? 'border-blue-100 bg-blue-50' : 'border-gray-100 bg-gray-50'}`}>
+                      <p class={`text-2xl font-extrabold ${metricIndex === 0 ? 'text-green-600' : metricIndex === 1 ? 'text-blue-600' : 'text-gray-600'}`}>{metric.label}</p>
+                      <p class="text-xs text-gray-500">{metric.value}</p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <div class="bg-[#0a4d8c] py-20 text-center text-white">
+            <div class="mx-auto max-w-7xl px-6">
+              <h3 class="mb-6 text-3xl font-extrabold">{projectUi.detailCtaTitle}</h3>
+              <p class="mb-10 text-blue-100">{projectUi.detailCtaDescription}</p>
+              <div class="flex flex-wrap justify-center gap-4">
+                <a href={projectUi.detailPrimaryHref} class="rounded-xl bg-white px-10 py-4 font-bold text-[#0a4d8c]">{projectUi.detailPrimaryLabel}</a>
+                <button data-case-back type="button" class="rounded-xl border border-white/30 bg-white/10 px-10 py-4 font-bold text-white">{projectUi.backLabel}</button>
+              </div>
+            </div>
+          </div>
+        </article>
+      ))}
+    </section>
+  </div>
+
+  <script>
+    const listView = document.getElementById('case-list-view');
+    const detailView = document.getElementById('case-detail-view');
+    const details = Array.from(document.querySelectorAll('[data-case-detail]'));
+    const filterButtons = Array.from(document.querySelectorAll('[data-case-filter]'));
+    const caseCards = Array.from(document.querySelectorAll('[data-case-card]'));
+    const showList = () => {
+      detailView?.classList.add('hidden');
+      listView?.classList.remove('hidden');
+      details.forEach((item) => item.classList.add('hidden'));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    const showDetail = (id) => {
+      listView?.classList.add('hidden');
+      detailView?.classList.remove('hidden');
+      details.forEach((item) => item.classList.toggle('hidden', item.getAttribute('data-case-detail') !== id));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    document.querySelectorAll('[data-case-trigger]').forEach((button) => {
+      button.addEventListener('click', () => showDetail(button.getAttribute('data-case-trigger')));
+    });
+    document.querySelectorAll('[data-case-back]').forEach((button) => {
+      button.addEventListener('click', showList);
+    });
+    filterButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const value = button.getAttribute('data-case-filter') || '';
+        const isAll = button === filterButtons[0];
+        filterButtons.forEach((item) => {
+          const active = item === button;
+          item.classList.toggle('bg-[#0a4d8c]', active);
+          item.classList.toggle('text-white', active);
+          item.classList.toggle('border', !active);
+          item.classList.toggle('border-gray-200', !active);
+          item.classList.toggle('text-gray-500', !active);
+        });
+        caseCards.forEach((card) => {
+          const text = card.getAttribute('data-case-search') || '';
+          card.classList.toggle('hidden', !isAll && !text.includes(value));
+        });
+      });
+    });
+  </script>
+
+  <style>
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .blueprint-bg {
+      background-image: radial-gradient(rgba(10, 77, 140, 0.5) 0.5px, transparent 0.5px);
+      background-size: 20px 20px;
+      opacity: 0.18;
+    }
+    .video-placeholder {
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 16px;
+      overflow: hidden;
+      position: relative;
+    }
+  </style>
+</BaseLayout>

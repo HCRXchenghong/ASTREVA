@@ -1,0 +1,28 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import InnerPageHero from '../../components/InnerPageHero.astro';
+import { getContent, staticPage } from '../../lib/content';
+
+const content = await getContent();
+const page = staticPage(content, 'install');
+const aboutHero = staticPage(content, 'about').hero;
+---
+
+<BaseLayout content={content} seo={page.seo} path="/support/install/">
+  <div class="w-full pt-24">
+    <InnerPageHero
+      id="install-hero"
+      eyebrow={page.hero?.eyebrow}
+      title={page.hero?.title || page.title}
+      description={page.hero?.description || page.seo.description}
+      backgroundImage={page.hero?.backgroundImage || aboutHero?.backgroundImage}
+      backgroundVideo={page.hero?.backgroundVideo || aboutHero?.backgroundVideo}
+    />
+    <div id="install-content" class="py-24 bg-slate-50 min-h-[60vh] scroll-mt-24">
+      <div class="max-w-5xl mx-auto px-6">
+        <h2 class="text-4xl font-extrabold text-center text-gray-900 mb-16 flex items-center justify-center gap-3"><span class="text-[#0a66c2]" aria-hidden="true">{page.sections?.icon}</span> {page.title}</h2>
+        <div class="bg-white p-10 md:p-14 rounded-3xl shadow-sm border border-gray-100 prose-content" set:html={page.body}></div>
+      </div>
+    </div>
+  </div>
+</BaseLayout>

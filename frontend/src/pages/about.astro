@@ -1,0 +1,36 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import InnerPageHero from '../components/InnerPageHero.astro';
+import { getContent, staticPage } from '../lib/content';
+
+const content = await getContent();
+const page = staticPage(content, 'about');
+---
+
+<BaseLayout content={content} seo={page.seo} path="/about/">
+  <div class="w-full pt-24">
+    <InnerPageHero
+      id="about-hero"
+      eyebrow={page.hero?.eyebrow}
+      title={page.hero?.title || page.title}
+      description={page.hero?.description}
+      backgroundImage={page.hero?.backgroundImage}
+      backgroundVideo={page.hero?.backgroundVideo}
+    />
+    <section id="about-content" class="py-24 bg-white relative scroll-mt-24">
+      <div class="max-w-4xl mx-auto px-6 text-center">
+        {page.sections?.introIcon && <div class="text-[#0a66c2] mx-auto mb-8 opacity-20 text-5xl font-black">{page.sections.introIcon}</div>}
+        <h2 class="text-4xl font-extrabold text-gray-900 mb-10">{page.title}</h2>
+        <div class="prose-content space-y-6 text-lg text-gray-600 leading-loose text-justify md:text-center font-medium" set:html={page.body}></div>
+      </div>
+    </section>
+    <section class="py-24 bg-gray-50">
+      <div class="max-w-7xl mx-auto px-6 text-center">
+        <h2 class="text-4xl font-extrabold text-[#0a4d8c] mb-16">{page.sections?.partnersTitle}</h2>
+        <div class="flex flex-wrap justify-center items-center gap-12 md:gap-20 opacity-60 grayscale hover:grayscale-0 transition-all duration-700">
+          {content.home.partners.map((partner) => <div class="text-2xl md:text-3xl font-black tracking-tighter text-gray-800 hover:text-[#0a66c2] transition-colors">{partner}</div>)}
+        </div>
+      </div>
+    </section>
+  </div>
+</BaseLayout>

@@ -1,0 +1,29 @@
+{
+  "name": "astreva-independent-site",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "dependencies": {
+    "bcryptjs": "2.4.3",
+    "formidable": "2.1.5",
+    "qrcode": "1.5.4",
+    "typescript": "6.0.3"
+  },
+  "overrides": {
+    "vite": "7.3.3"
+  },
+  "scripts": {
+    "dev:frontend": "npm --workspace frontend run dev",
+    "build:frontend": "npm --workspace frontend run build",
+    "preview:frontend": "npm --workspace frontend run preview",
+    "dev:admin": "node admin-server/server.mjs",
+    "dev:cms": "npm run dev:admin",
+    "dev:backend": "npm run dev:admin",
+    "build": "npm run build:frontend",
+    "rebuild:webhook": "node scripts/rebuild-webhook.mjs",
+    "servicebridge:backend": "cd servicebridge/backend && go run ./cmd/server",
+    "servicebridge:web": "cd servicebridge/apps/user-web && python3 -m http.server 5173"
+  }
+}

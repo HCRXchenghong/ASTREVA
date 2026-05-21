@@ -1,0 +1,14 @@
+{
+  "name": "客服工作端",
+  "appid": "__UNI__CUSTOMER_SERVICE_AGENT__",
+  "description": "客服端 uni-app",
+  "versionName": "0.1.0",
+  "versionCode": "1",
+  "vueVersion": "3",
+  "app-plus": {
+    "distribute": {
+      "android": {},
+      "ios": {}
+    }
+  }
+}

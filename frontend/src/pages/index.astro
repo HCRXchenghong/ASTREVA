@@ -1,0 +1,167 @@
+---
+import VideoModal from '../components/VideoModal';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { featuredProducts, getContent } from '../lib/content';
+
+const content = await getContent();
+const home = content.home;
+const featured = featuredProducts(content, 3);
+const iconMap = { play: '▶', check: '✓', wrench: '工', droplet: '滴' };
+const productIntroBulletIcon = home.productIntro.bulletIcon || '✓';
+---
+
+<BaseLayout content={content} seo={home.seo} path="/">
+  <div class="w-full">
+    <div id="home-hero" class="relative h-screen min-h-[700px] flex items-center bg-slate-900 overflow-hidden scroll-mt-24">
+      {home.hero.backgroundVideo ? (
+        <video
+          class="pointer-events-none absolute inset-0 h-full w-full object-cover"
+          autoplay
+          muted
+          loop
+          playsinline
+          preload="auto"
+          poster={home.hero.backgroundImage}
+          aria-hidden="true"
+        >
+          <source src={home.hero.backgroundVideo} type="video/mp4" />
+        </video>
+      ) : (
+        <div class="absolute inset-0 bg-cover bg-center bg-no-repeat" style={`background-image:url('${home.hero.backgroundImage}')`}></div>
+      )}
+      <div class="absolute inset-0 bg-gradient-to-r from-[#03203c]/95 via-[#0a4070]/80 to-transparent mix-blend-multiply"></div>
+      <div class="absolute inset-0 bg-[#061e38]/40"></div>
+      <div class="relative z-10 max-w-7xl mx-auto px-6 w-full pt-16">
+        <p class="text-blue-300 font-medium tracking-wide mb-4 text-lg">{home.hero.eyebrow}</p>
+        <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 tracking-tight">
+          {home.hero.title}<span class="text-[0.4em] align-top relative -top-4">{home.hero.trademark}</span>
+        </h1>
+        <p class="text-xl md:text-2xl text-gray-200 mb-12 max-w-2xl font-light">{home.hero.subtitle}</p>
+        <VideoModal
+          client:only="react"
+          primaryLabel={home.hero.primaryCta}
+          primaryHref={home.hero.primaryHref || '/support/'}
+          secondaryLabel={home.hero.secondaryCta}
+          videoUrl={home.hero.videoUrl}
+          videoTitle={home.hero.videoTitle}
+          previewLabel={home.hero.videoPreviewLabel}
+          openExternalLabel={home.hero.videoOpenExternalLabel}
+          closeLabel={home.hero.videoCloseLabel}
+        />
+      </div>
+      <div class="absolute bottom-12 left-0 w-full px-6 z-10">
+        <div class="max-w-7xl mx-auto">
+          <p class="text-xs text-gray-400 font-semibold mb-4 tracking-widest uppercase">{home.partnerLabel}</p>
+          <div class="flex flex-wrap gap-8 items-center opacity-60 grayscale hover:grayscale-0 transition-all duration-500">
+            {home.partners.map((partner) => <span class="text-white text-lg md:text-xl font-bold tracking-tighter">{partner}</span>)}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <section id="home-products" class="py-24 bg-gray-50 scroll-mt-24">
+      <div class="max-w-7xl mx-auto px-6">
+        <div class="text-center mb-16">
+          <h2 class="text-4xl font-extrabold text-[#0a4d8c] mb-4">{home.featuredProducts.title}</h2>
+          <p class="text-gray-500 max-w-2xl mx-auto">{home.featuredProducts.description}</p>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+          {featured.map((item) => (
+            <a href={`/products/${item.categorySlug}/${item.slug}/`} class="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-shadow group border border-gray-100">
+              <div class="h-64 overflow-hidden"><img src={item.coverImage} alt={item.name} class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" /></div>
+              <div class="p-8">
+                <h3 class="text-xl font-bold mb-3 text-gray-800">{item.name}</h3>
+                <p class="text-gray-600 mb-6 line-clamp-2">{item.summary}</p>
+                <span class="text-[#0a66c2] font-semibold flex items-center gap-1 group-hover:gap-3 transition-all">{home.featuredProducts.linkLabel} <span aria-hidden="true">{home.featuredProducts.linkIcon || '→'}</span></span>
+              </div>
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section id="home-product-intro" class="py-24 bg-white scroll-mt-24">
+      <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center gap-16">
+        <div class="md:w-1/2">
+          <h2 class="text-4xl font-extrabold text-[#0a4d8c] mb-6">{home.productIntro.title}</h2>
+          <p class="text-lg text-gray-600 mb-6 leading-relaxed">{home.productIntro.description}</p>
+          <ul class="space-y-4 mb-8">
+            {home.productIntro.bullets.map((text) => (
+              <li class="flex items-center gap-3 text-gray-700 font-medium">
+                <span class="text-[#0a66c2] text-2xl leading-none" aria-hidden="true">{productIntroBulletIcon}</span> {text}
+              </li>
+            ))}
+          </ul>
+          <a href={home.productIntro.ctaHref || '/products/'} class="inline-flex bg-transparent border-2 border-[#0a66c2] text-[#0a66c2] hover:bg-[#0a66c2] hover:text-white px-8 py-3 rounded-full font-bold transition-colors">
+            {home.productIntro.ctaLabel}
+          </a>
+        </div>
+        <div class="md:w-1/2 relative">
+          <div class="aspect-square md:aspect-[4/3] rounded-3xl overflow-hidden shadow-2xl relative z-10 border border-gray-100">
+            <img src={home.productIntro.image} alt={home.productIntro.title} class="w-full h-full object-cover" />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="home-advantages" class="py-24 bg-[#0a4d8c] text-white scroll-mt-24">
+      <div class="max-w-7xl mx-auto px-6">
+        <div class="text-center mb-16">
+          <h2 class="text-4xl font-extrabold mb-4">{home.advantagesIntro.title}</h2>
+          <p class="text-blue-200 max-w-2xl mx-auto">{home.advantagesIntro.description}</p>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
+          {home.advantages.map((item) => {
+            const icon = iconMap[item.icon as keyof typeof iconMap] || item.icon || '✓';
+            return (
+              <div class="bg-[#0c59a3] p-8 rounded-2xl hover:-translate-y-2 transition-transform border border-blue-400/20">
+                <div class="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center text-blue-300 mb-6 text-3xl font-black">
+                  {icon}
+                </div>
+                <h3 class="text-xl font-bold mb-3">{item.title}</h3>
+                <p class="text-blue-100 text-sm leading-relaxed">{item.description}</p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+
+    <section id="home-testimonials" class="py-24 bg-gray-50 scroll-mt-24">
+      <div class="max-w-7xl mx-auto px-6">
+        <h2 class="text-4xl font-extrabold text-center text-[#0a4d8c] mb-16">{home.testimonialsTitle}</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          {home.testimonials.map((review) => (
+            <div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 relative hover:shadow-md transition-shadow">
+              <span class="text-blue-100 absolute top-6 right-6 text-5xl leading-none font-serif" aria-hidden="true">“</span>
+              <p class="text-gray-600 mb-6 relative z-10 italic">"{review.text}"</p>
+              <div class="flex items-center gap-4 mt-auto">
+                <div class="w-12 h-12 bg-[#0a66c2]/10 text-[#0a66c2] rounded-full flex items-center justify-center font-bold text-lg">{review.name[0]}</div>
+                <div>
+                  <h4 class="font-bold text-gray-900">{review.name}</h4>
+                  <p class="text-xs text-gray-500">{review.role}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section id="home-cta" class="py-20 bg-white scroll-mt-24">
+      <div class="max-w-5xl mx-auto px-6">
+        <div class="bg-gradient-to-br from-[#0a4d8c] to-[#0d6bcc] rounded-3xl p-12 md:p-20 text-center text-white relative overflow-hidden shadow-2xl border border-blue-400/30">
+          <div class="absolute top-0 left-0 w-full h-full opacity-10 bg-cover mix-blend-overlay" style={`background-image:url('${home.cta.backgroundImage}')`}></div>
+          <div class="relative z-10">
+            <h2 class="text-4xl md:text-5xl font-extrabold mb-6">{home.cta.title}</h2>
+            <p class="text-xl text-blue-100 mb-10 max-w-2xl mx-auto">{home.cta.description}</p>
+            <div class="flex flex-col sm:flex-row justify-center gap-4">
+              <a href={home.cta.primaryHref || '/support/'} class="bg-white text-[#0a4d8c] px-8 py-4 rounded-full font-bold hover:bg-gray-50 transition-colors shadow-lg">{home.cta.primaryLabel}</a>
+              <a href={home.cta.secondaryHref || '/products/'} class="bg-transparent border border-white text-white px-8 py-4 rounded-full font-bold hover:bg-white/10 transition-colors">{home.cta.secondaryLabel}</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</BaseLayout>

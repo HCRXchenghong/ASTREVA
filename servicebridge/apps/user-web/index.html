@@ -1,0 +1,2217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="customer-service-api-base" content="">
+    <meta name="description" content="点击进入在线客服，有问题随时咨询，我们会尽快为您处理。">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="在线客服">
+    <meta property="og:description" content="点击进入在线客服，有问题随时咨询，我们会尽快为您处理。">
+    <meta property="og:image" content="./assets/001.png">
+    <meta property="og:url" content="./index.html">
+    <meta property="og:site_name" content="在线客服">
+    <meta itemprop="name" content="在线客服">
+    <meta itemprop="description" content="点击进入在线客服，有问题随时咨询，我们会尽快为您处理。">
+    <meta itemprop="image" content="./assets/001.png">
+    <link rel="image_src" href="./assets/001.png">
+    <title>在线客服</title>
+    <script>
+        (() => {
+            if (new URLSearchParams(window.location.search).get('embed') === '1') {
+                document.documentElement.classList.add('embed-mode');
+            }
+        })();
+    </script>
+    <script>
+        (() => {
+            const shareImageURL = new URL('./assets/001.png', window.location.href).href;
+            const sharePageURL = window.location.href.split('#')[0];
+            const metas = [
+                ['meta[property="og:image"]', 'content', shareImageURL],
+                ['meta[itemprop="image"]', 'content', shareImageURL],
+                ['meta[property="og:url"]', 'content', sharePageURL],
+                ['link[rel="image_src"]', 'href', shareImageURL]
+            ];
+            metas.forEach(([selector, attr, value]) => {
+                const el = document.querySelector(selector);
+                if (el) el.setAttribute(attr, value);
+            });
+        })();
+    </script>
+    <link href="./assets/tailwind.css" rel="stylesheet">
+    <script src="./assets/vendor/gsap/gsap.min.js"></script>
+    <link href="./assets/vendor/fontawesome/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --wc-bg: #ededed;          /* 微信聊天背景色 */
+            --wc-header: #ededed;      /* 微信顶部导航栏颜色 */
+            --wc-footer: #f7f7f7;      /* 微信底部输入区颜色 */
+            --wc-bubble-user: #95ec69; /* 微信自己发的消息绿色 */
+            --wc-bubble-ai: #ffffff;   /* 微信对方发的消息白色 */
+            --wc-text-main: #111111;
+            --wc-text-muted: #b2b2b2;
+            --wc-border: #d5d5d5;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Segoe UI, Arial, Roboto, 'PingFang SC', 'miui', 'Hiragino Sans GB', 'Microsoft Yahei', sans-serif;
+            background-color: #333; /* PC端大背景设为深色，突出中间的手机外壳 */
+            margin: 0;
+            overflow: hidden;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html.embed-mode body {
+            background: transparent;
+        }
+
+        html.embed-mode #app-container {
+            width: 100vw !important;
+            height: 100vh !important;
+            max-height: none !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+        }
+
+        html.embed-mode #entry-view {
+            border-radius: 0;
+            background: var(--wc-bg);
+        }
+
+        html.embed-mode #entry-view .entry-view-inner {
+            display: none;
+        }
+
+        /* 隐藏滚动条 */
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* 气泡小三角 (左侧 - 对方) */
+        .bubble-left::before {
+            content: '';
+            position: absolute;
+            top: 14px;
+            left: -5px;
+            border-width: 5px 6px 5px 0;
+            border-style: solid;
+            border-color: transparent var(--wc-bubble-ai) transparent transparent;
+        }
+
+        /* 气泡小三角 (右侧 - 自己) */
+        .bubble-right::before {
+            content: '';
+            position: absolute;
+            top: 14px;
+            right: -5px;
+            border-width: 5px 0 5px 6px;
+            border-style: solid;
+            border-color: transparent transparent transparent var(--wc-bubble-user);
+        }
+
+        /* 图片消息的无尖角包裹层 */
+        .bubble-image img {
+            border-radius: 6px;
+            max-width: 140px;
+            max-height: 200px;
+            object-fit: cover;
+        }
+
+        .bubble-audio {
+            min-width: 132px;
+            max-width: 220px;
+            padding: 0 !important;
+            overflow: hidden;
+        }
+
+        .voice-bubble-btn {
+            width: 100%;
+            min-height: 44px;
+            border: none;
+            background: transparent;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            font: inherit;
+            color: inherit;
+            cursor: pointer;
+        }
+
+        .voice-bubble-btn:focus {
+            outline: none;
+        }
+
+        .voice-bubble-btn.voice-playing {
+            opacity: 0.88;
+        }
+
+        .voice-play-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 999px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(17, 17, 17, 0.08);
+            font-size: 10px;
+            flex-shrink: 0;
+        }
+
+        .voice-bubble-self .voice-play-icon {
+            background: rgba(17, 17, 17, 0.12);
+        }
+
+        .voice-wave {
+            display: inline-flex;
+            align-items: flex-end;
+            gap: 3px;
+            flex: 1;
+            min-width: 28px;
+        }
+
+        .voice-wave i {
+            display: block;
+            width: 3px;
+            border-radius: 999px;
+            background: rgba(17, 17, 17, 0.7);
+        }
+
+        .voice-wave i:nth-child(1) { height: 10px; opacity: 0.65; }
+        .voice-wave i:nth-child(2) { height: 15px; }
+        .voice-wave i:nth-child(3) { height: 20px; opacity: 0.8; }
+
+        .voice-bubble-btn.voice-playing .voice-wave i {
+            animation: voiceWavePulse 0.9s ease-in-out infinite;
+        }
+
+        .voice-bubble-btn.voice-playing .voice-wave i:nth-child(2) {
+            animation-delay: 0.12s;
+        }
+
+        .voice-bubble-btn.voice-playing .voice-wave i:nth-child(3) {
+            animation-delay: 0.24s;
+        }
+
+        @keyframes voiceWavePulse {
+            0%, 100% { transform: scaleY(0.72); opacity: 0.55; }
+            50% { transform: scaleY(1.05); opacity: 1; }
+        }
+
+        .voice-duration {
+            font-size: 12px;
+            color: rgba(17, 17, 17, 0.72);
+            flex-shrink: 0;
+            min-width: 28px;
+            text-align: right;
+        }
+
+        .voice-bubble-self .voice-duration {
+            color: rgba(17, 17, 17, 0.8);
+        }
+
+        .voice-audio-element {
+            display: none;
+        }
+
+        .bubble-revoked {
+            background-color: #f3f4f6 !important;
+            color: #6b7280 !important;
+            border: 1px solid #e5e7eb !important;
+            font-size: 14px !important;
+        }
+
+        .record-overlay-card {
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+
+        .record-overlay-card.record-cancel {
+            background: rgba(220, 38, 38, 0.92);
+        }
+
+        .record-overlay-stack {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 18px;
+            margin-bottom: 72px;
+        }
+
+        .record-cancel-bar {
+            min-width: 168px;
+            min-height: 40px;
+            padding: 0 18px;
+            border-radius: 999px;
+            background: rgba(17, 17, 17, 0.08);
+            color: #6b7280;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            border: 1px solid rgba(17, 17, 17, 0.06);
+            transition: all 0.16s ease;
+        }
+
+        .record-cancel-bar.record-cancel-active {
+            background: rgba(220, 38, 38, 0.12);
+            color: #dc2626;
+            border-color: rgba(220, 38, 38, 0.22);
+            transform: scale(1.04);
+        }
+
+        .end-confirm-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 70;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            background: rgba(0, 0, 0, 0.58);
+            opacity: 0;
+        }
+
+        .end-confirm-overlay.hidden {
+            display: none;
+        }
+
+        .end-confirm-sheet {
+            width: 100%;
+            min-height: 224px;
+            box-sizing: border-box;
+            flex-shrink: 0;
+            overflow: hidden;
+            background: #ffffff;
+            border-radius: 32px 32px 0 0;
+            box-shadow: 0 -18px 42px rgba(0, 0, 0, 0.12);
+            padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+            transform: translateY(100%);
+            will-change: transform;
+        }
+
+        .end-confirm-body {
+            padding: 34px 32px 24px;
+            text-align: center;
+        }
+
+        .end-confirm-title {
+            color: #111111;
+            font-size: 20px;
+            font-weight: 600;
+            line-height: 32px;
+        }
+
+        .end-confirm-desc {
+            color: #4b5563;
+            font-size: 15px;
+            line-height: 26px;
+            margin-top: 10px;
+        }
+
+        .end-confirm-actions {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 0 36px;
+        }
+
+        .end-confirm-btn {
+            flex: 1;
+            height: 50px;
+            border: 0;
+            border-radius: 15px;
+            font-size: 20px;
+            font-weight: 600;
+            line-height: 1;
+            white-space: nowrap;
+        }
+
+        .end-confirm-btn.cancel {
+            background: #f4f4f4;
+            color: #111111;
+        }
+
+        .end-confirm-btn.cancel:active {
+            background: #e9e9e9;
+        }
+
+        .end-confirm-btn.danger {
+            background: #ff4d4f;
+            color: #ffffff;
+        }
+
+        .end-confirm-btn.danger:active {
+            background: #f04446;
+        }
+
+        #btn-voice i {
+            width: 36px;
+            height: 36px;
+            border-radius: 999px;
+            border: 1px solid #cfcfcf;
+            background: #ffffff;
+            font-size: 17px;
+            color: #4b5563;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 1px 1px rgba(17, 17, 17, 0.04);
+            transition: all 0.18s ease;
+        }
+
+        #btn-voice.recording i {
+            background: #07c160;
+            border-color: #07c160;
+            color: #ffffff;
+        }
+
+        #btn-voice {
+            touch-action: none;
+        }
+
+        /* 输入框自动增高，取消聚焦边框 */
+        textarea:focus { outline: none; }
+        
+        /* 底部安全区适配 */
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+        /* 面板动画基础设置 */
+        .bottom-panel {
+            will-change: height;
+            overflow: hidden;
+        }
+
+        /* 强制覆盖部分 tailwind 配置 */
+        .bg-wc-bg { background-color: var(--wc-bg); }
+        .bg-wc-header { background-color: var(--wc-header); }
+        .bg-wc-footer { background-color: var(--wc-footer); }
+        .bg-wc-user { background-color: var(--wc-bubble-user); }
+        .bg-wc-ai { background-color: var(--wc-bubble-ai); }
+        .border-wc { border-color: var(--wc-border); }
+        .text-wc-main { color: var(--wc-text-main); }
+
+        .entry-view-inner {
+            width: 100%;
+            max-width: 360px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .entry-hero {
+            width: min(88vw, 340px);
+            max-height: 42vh;
+            object-fit: contain;
+            filter: drop-shadow(0 18px 30px rgba(17, 17, 17, 0.12));
+            transform-origin: center center;
+            animation: entryHeroFloat 5s ease-in-out infinite;
+            user-select: none;
+            -webkit-user-drag: none;
+        }
+
+        @keyframes entryHeroFloat {
+            0%, 100% {
+                transform: translateY(0) scale(1);
+            }
+            50% {
+                transform: translateY(-10px) scale(1.02);
+            }
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center h-screen w-screen relative">
+
+    <!-- PC端模拟手机外壳，移动端全屏 -->
+    <div id="app-container" class="relative w-full h-full md:w-[400px] md:h-[800px] md:max-h-[95vh] md:rounded-xl md:shadow-2xl overflow-hidden bg-wc-bg flex flex-col">
+        <div id="entry-view" class="absolute inset-0 z-30 bg-white flex items-center justify-center px-8">
+            <div class="entry-view-inner">
+                <img src="./assets/001.png" alt="咨询客服入口图片" class="entry-hero">
+                <button id="entry-btn" class="w-full max-w-[220px] bg-[#07c160] text-white py-3 rounded-lg text-[17px] font-medium active:bg-[#06ad56]" onclick="openConsultation()">
+                    咨询客服
+                </button>
+            </div>
+        </div>
+
+        <div id="chat-shell" class="w-full h-full flex flex-col hidden">
+            <!-- 顶部导航栏 -->
+            <header class="h-[50px] bg-wc-header flex items-center justify-between px-3 shrink-0 relative z-20 border-b border-wc">
+                <!-- 左侧空位保持布局平衡，移除了返回按钮 -->
+                <div class="flex items-center w-16">
+                </div>
+                
+                <!-- 中间标题与状态 -->
+                <div class="flex-1 flex flex-col items-center justify-center text-center">
+                    <div class="flex items-center gap-1">
+                        <span id="header-title" class="text-[17px] font-semibold text-wc-main truncate max-w-[150px]">官方客服</span>
+                        <!-- AI 标识 -->
+                        <span id="header-ai-badge" class="bg-blue-100 text-blue-600 text-[10px] px-1 rounded-sm border border-blue-200">AI</span>
+                    </div>
+                    <!-- 打字状态提示 (默认隐藏) -->
+                    <span id="header-typing" class="text-xs text-gray-500 hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-wc-header w-32 text-center">
+                        对方正在输入...
+                    </span>
+                </div>
+                
+                <!-- 右侧更多 -->
+                <div class="flex items-center justify-end w-16 gap-3">
+                    <i id="btn-sound" class="fas fa-volume-up text-lg text-gray-700 cursor-pointer"></i>
+                    <i id="btn-more-top" class="fas fa-ellipsis-h text-xl text-gray-700 cursor-pointer" title="结束会话等操作"></i>
+                </div>
+            </header>
+
+            <!-- 系统提示横幅 (排队/营业时间等) -->
+            <div id="sys-banner" class="bg-[#fdf6ec] text-[#e6a23c] text-xs px-3 py-2 flex items-center justify-center border-b border-[#faecd8] hidden shrink-0 z-10 shadow-sm relative">
+                <span id="sys-banner-text">提示信息</span>
+                <i class="fas fa-times absolute right-3 cursor-pointer text-[#e6a23c]" onclick="this.parentElement.classList.add('hidden')"></i>
+            </div>
+
+            <!-- 聊天内容区 -->
+            <main id="chat-list" class="flex-1 overflow-y-auto p-4 space-y-5 hide-scrollbar pb-6 relative z-0" onclick="closeAllPanels()">
+                <!-- 历史记录拉取提示 -->
+                <div class="text-center" id="history-anchor">
+                    <span id="load-history" class="text-xs text-blue-500 cursor-pointer hover:underline" onclick="loadOlderMessages()">点击加载更多历史记录</span>
+                </div>
+            </main>
+
+            <!-- 底部输入与功能区 -->
+            <footer class="bg-wc-footer border-t border-wc shrink-0 pb-safe relative z-20">
+                <!-- 输入行 -->
+                <div class="min-h-[56px] px-2 py-2 flex items-end gap-2">
+                    <!-- 语音切换 (纯展示图标) -->
+                    <div id="btn-voice" class="w-8 h-8 flex items-center justify-center shrink-0 mb-1 cursor-pointer select-none">
+                        <i class="fas fa-microphone-alt text-2xl text-gray-700 rounded-full border border-gray-500 p-1.5 w-8 h-8 flex items-center justify-center"></i>
+                    </div>
+                    
+                    <!-- 输入框 -->
+                    <div class="flex-1 bg-white rounded flex items-center border border-gray-300 min-h-[40px] mb-0.5 relative">
+                        <textarea id="chat-input" rows="1" class="w-full bg-transparent border-none resize-none px-2 py-2 text-[16px] leading-[22px] max-h-[100px] hide-scrollbar" style="height: 40px;"></textarea>
+                    </div>
+                    
+                    <!-- 表情按钮 -->
+                    <div class="w-8 h-8 flex items-center justify-center shrink-0 mb-1 cursor-pointer" onclick="togglePanel('emoji')">
+                        <i class="far fa-smile text-3xl text-gray-700"></i>
+                    </div>
+                    
+                    <!-- 更多(+)按钮 / 发送按钮 (动态切换) -->
+                    <div id="btn-plus" class="w-8 h-8 flex items-center justify-center shrink-0 mb-1 cursor-pointer" onclick="togglePanel('more')">
+                        <i class="fas fa-plus-circle text-3xl text-gray-700"></i>
+                    </div>
+                    <div id="btn-send" class="h-8 bg-[#07c160] text-white px-4 rounded font-medium text-[15px] flex items-center justify-center shrink-0 mb-1 cursor-pointer active:bg-[#06ad56]" style="display: none;" onclick="handleSend()">
+                        发送
+                    </div>
+                </div>
+
+                <!-- 隐藏的表情面板 -->
+                <div id="panel-emoji" class="bottom-panel h-0 bg-wc-footer border-t border-gray-200">
+                    <div class="p-4 grid grid-cols-8 gap-4 overflow-y-auto h-[250px] hide-scrollbar" id="emoji-container">
+                        <!-- JS 填充 -->
+                    </div>
+                </div>
+
+                <!-- 隐藏的更多功能面板 -->
+                <div id="panel-more" class="bottom-panel h-0 bg-wc-footer border-t border-gray-200">
+                    <div class="p-6 grid grid-cols-4 gap-y-6 gap-x-2 h-[250px]">
+                        
+                        <!-- 1. 发送照片 -->
+                        <div class="flex flex-col items-center gap-1 cursor-pointer group" onclick="triggerAction('photo')">
+                            <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
+                                <i class="fas fa-image text-[28px] text-gray-600"></i>
+                            </div>
+                            <span class="text-xs text-gray-500">相册</span>
+                        </div>
+
+                        <!-- 2. 电话联系 -->
+                        <div class="flex flex-col items-center gap-1 cursor-pointer group" onclick="triggerAction('phone')">
+                            <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
+                                <i class="fas fa-phone-alt text-[24px] text-gray-600"></i>
+                            </div>
+                            <span class="text-xs text-gray-500">电话联系</span>
+                        </div>
+
+                        <!-- 3. 加 WhatsApp -->
+                        <div class="flex flex-col items-center gap-1 cursor-pointer group" onclick="triggerAction('whatsapp')">
+                            <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
+                                <i class="fab fa-whatsapp text-[32px] text-[#25D366]"></i>
+                            </div>
+                            <span class="text-xs text-gray-500">加WhatsApp</span>
+                        </div>
+
+                        <!-- 4. 加 Telegram -->
+                        <div class="flex flex-col items-center gap-1 cursor-pointer group" onclick="triggerAction('telegram')">
+                            <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
+                                <i class="fab fa-telegram text-[30px] text-[#2AABEE]"></i>
+                            </div>
+                            <span class="text-xs text-gray-500">加Telegram</span>
+                        </div>
+                    </div>
+                </div>
+            </footer>
+        </div>
+
+        <!-- 评价遮罩层 (底部弹起，类似微信的小程序面板) -->
+        <div id="eval-overlay" class="absolute inset-0 bg-black/50 z-50 hidden flex-col justify-end">
+            <div class="bg-white rounded-t-xl w-full pt-4 pb-8 px-6 transform translate-y-full" id="eval-sheet">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-lg font-medium text-gray-800">服务评价</h3>
+                    <i class="fas fa-times text-gray-400 cursor-pointer text-xl p-2" onclick="closeEval()"></i>
+                </div>
+                
+                <p class="text-sm text-gray-500 mb-6 text-center">会话已结束，请对本次服务（在线客服）进行评价</p>
+                
+                <div class="flex justify-around mb-8">
+                    <div class="flex flex-col items-center gap-2 cursor-pointer eval-star" data-score="5">
+                        <i class="fas fa-laugh-squint text-4xl text-gray-300 transition-colors"></i>
+                        <span class="text-xs text-gray-500">非常满意</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-2 cursor-pointer eval-star" data-score="3">
+                        <i class="fas fa-meh text-4xl text-gray-300 transition-colors"></i>
+                        <span class="text-xs text-gray-500">一般</span>
+                    </div>
+                    <div class="flex flex-col items-center gap-2 cursor-pointer eval-star" data-score="1">
+                        <i class="fas fa-frown text-4xl text-gray-300 transition-colors"></i>
+                        <span class="text-xs text-gray-500">不满意</span>
+                    </div>
+                </div>
+
+                <div id="eval-advice-box" class="hidden mb-5">
+                    <label class="block text-sm text-gray-600 mb-2">请告诉我们哪里做得不够好</label>
+                    <textarea
+                        id="eval-advice"
+                        class="w-full min-h-[96px] bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 resize-none focus:outline-none focus:border-[#07c160]"
+                        maxlength="300"
+                        placeholder="请输入您的建议，管理端会看到这条反馈"
+                    ></textarea>
+                </div>
+
+                <button class="w-full bg-[#07c160] text-white py-3 rounded-lg font-medium active:bg-[#06ad56]" onclick="submitEval()">提交评价</button>
+            </div>
+        </div>
+
+        <div id="end-confirm-overlay" class="end-confirm-overlay hidden">
+            <div id="end-confirm-sheet" class="end-confirm-sheet">
+                <div class="end-confirm-body">
+                    <div class="end-confirm-title">确认要结束当前会话吗？</div>
+                    <div class="end-confirm-desc">结束后将返回咨询客服入口</div>
+                </div>
+                <div class="end-confirm-actions">
+                    <button id="end-confirm-cancel" type="button" class="end-confirm-btn cancel">取消</button>
+                    <button id="end-confirm-submit" type="button" class="end-confirm-btn danger">结束</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 居中 Toast 提示 -->
+        <div id="toast" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/70 text-white text-[14px] px-4 py-2 rounded shadow-lg pointer-events-none opacity-0 z-[60]">
+            提示信息
+        </div>
+
+        <div id="record-overlay" class="absolute inset-0 z-[65] hidden items-end justify-center pointer-events-none">
+            <div class="record-overlay-stack">
+                <div id="record-overlay-card" class="record-overlay-card bg-black/80 text-white rounded-2xl px-6 py-5 text-center min-w-[188px] shadow-lg">
+                    <i class="fas fa-microphone-alt text-3xl mb-3"></i>
+                    <div id="record-overlay-text" class="text-[15px] font-medium">松开发送语音</div>
+                    <div id="record-overlay-tip" class="text-[12px] text-white/80 mt-2">上滑进入取消区域</div>
+                </div>
+                <div id="record-overlay-cancel" class="record-cancel-bar">
+                    <i class="fas fa-times-circle text-[14px]"></i>
+                    <span id="record-overlay-cancel-text">上滑取消发送</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 隐藏的音频 -->
+        <audio id="sound-new-msg" src="./assets/audio/new-message.mp3" preload="auto"></audio>
+        <input id="upload-image-input" type="file" accept="image/*" class="hidden">
+    </div>
+
+    <script>
+        // === 状态管理 ===
+        const State = {
+            sessionType: 'AI', // 'AI', 'QUEUING', 'HUMAN', 'ENDED'
+            agentName: '在线客服',
+            agentAvatar: './assets/img/avatar-service.svg',
+            soundEnabled: true,
+            activePanel: null, // 'emoji', 'more', or null
+            entryVisible: true,
+            startingConversation: false,
+            pendingReturnToEntry: false,
+            unreadCount: 0,
+            apiBase: inferAPIBase(),
+            ws: null,
+            visitorToken: '',
+            conversationId: '',
+            connected: false,
+            selectedRatingScore: 0,
+            ratingSubmitted: false,
+            ratingPromptVisible: false,
+            evalReturnMessage: '',
+            renderedServerMsgIds: new Set(),
+            renderedClientMsgIds: new Set(),
+            hasMoreHistory: false,
+            nextBefore: '',
+            loadingHistory: false,
+            pendingInitialMessages: [],
+            quickRepliesRendered: false,
+            quickReplies: [],
+            mediaRecorder: null,
+            recordingStream: null,
+            recordingChunks: [],
+            isRecording: false,
+            recordingCanceled: false,
+            recordingStartY: 0,
+            recordingStartedAt: 0,
+            recordGestureSource: '',
+            recordPointerId: null,
+            recordPendingStop: false,
+            recordPendingForceCancel: false,
+            activeAudioElement: null,
+            activeAudioButton: null,
+            contacts: {
+                phone: '400-123-4567',
+                wechat: '+86 400 888 8888',
+                qq: '@AstrevaSupport',
+                whatsapp: '+86 400 888 8888',
+                telegram: '@AstrevaSupport'
+            }
+        };
+
+        const DOM = {
+            entryView: document.getElementById('entry-view'),
+            entryBtn: document.getElementById('entry-btn'),
+            chatShell: document.getElementById('chat-shell'),
+            chatList: document.getElementById('chat-list'),
+            input: document.getElementById('chat-input'),
+            btnPlus: document.getElementById('btn-plus'),
+            btnSend: document.getElementById('btn-send'),
+            panelEmoji: document.getElementById('panel-emoji'),
+            panelMore: document.getElementById('panel-more'),
+            emojiContainer: document.getElementById('emoji-container'),
+            btnVoice: document.getElementById('btn-voice'),
+            sysBanner: document.getElementById('sys-banner'),
+            sysBannerText: document.getElementById('sys-banner-text'),
+            headerTitle: document.getElementById('header-title'),
+            headerTyping: document.getElementById('header-typing'),
+            headerAiBadge: document.getElementById('header-ai-badge'),
+            toast: document.getElementById('toast'),
+            recordOverlay: document.getElementById('record-overlay'),
+            recordOverlayCard: document.getElementById('record-overlay-card'),
+            recordOverlayText: document.getElementById('record-overlay-text'),
+            recordOverlayTip: document.getElementById('record-overlay-tip'),
+            recordOverlayCancel: document.getElementById('record-overlay-cancel'),
+            recordOverlayCancelText: document.getElementById('record-overlay-cancel-text'),
+            evalOverlay: document.getElementById('eval-overlay'),
+            evalSheet: document.getElementById('eval-sheet'),
+            evalAdviceBox: document.getElementById('eval-advice-box'),
+            evalAdvice: document.getElementById('eval-advice'),
+            endConfirmOverlay: document.getElementById('end-confirm-overlay'),
+            endConfirmSheet: document.getElementById('end-confirm-sheet'),
+            endConfirmCancel: document.getElementById('end-confirm-cancel'),
+            endConfirmSubmit: document.getElementById('end-confirm-submit'),
+            sound: document.getElementById('sound-new-msg'),
+            btnSound: document.getElementById('btn-sound'),
+            uploadImageInput: document.getElementById('upload-image-input'),
+            loadHistory: document.getElementById('load-history'),
+            historyAnchor: document.getElementById('history-anchor')
+        };
+        const INITIAL_CHAT_HTML = DOM.chatList.innerHTML;
+        const DEFAULT_SYS_BANNER_CLASS = DOM.sysBanner.className;
+        const STORAGE_KEYS = {
+            visitorSession: 'customer_service_visitor_session_v1'
+        };
+        const ACTIVE_SESSION_TYPES = new Set(['AI', 'QUEUING', 'HUMAN']);
+
+        // 常用 Emoji 列表
+        const EMOJIS = ['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🤩', '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '☹️', '😣'];
+
+        // === 工具函数 ===
+        function inferAPIBase() {
+            const configured = document.querySelector('meta[name="customer-service-api-base"]')?.content || window.CUSTOMER_SERVICE_API_BASE || '';
+            if (configured.trim()) return configured.trim().replace(/\/$/, '');
+            if (location.protocol === 'file:') return 'http://127.0.0.1:8080';
+            if (location.port && location.port !== '8080') return `${location.protocol}//${location.hostname}:8080`;
+            return location.origin;
+        }
+
+        function inferWSBase() {
+            const apiUrl = new URL(State.apiBase);
+            apiUrl.protocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+            return apiUrl.origin;
+        }
+
+        function showEntryView() {
+            State.entryVisible = true;
+            DOM.chatShell.classList.add('hidden');
+            DOM.entryView.classList.remove('hidden');
+            DOM.entryView.classList.add('flex');
+        }
+
+        function showChatView() {
+            State.entryVisible = false;
+            DOM.entryView.classList.remove('flex');
+            DOM.entryView.classList.add('hidden');
+            DOM.chatShell.classList.remove('hidden');
+        }
+
+        function clearVisitorSession() {
+            try {
+                window.localStorage.removeItem(STORAGE_KEYS.visitorSession);
+            } catch (err) {}
+        }
+
+        function loadVisitorSession() {
+            try {
+                const raw = window.localStorage.getItem(STORAGE_KEYS.visitorSession);
+                if (!raw) return null;
+                const parsed = JSON.parse(raw);
+                const visitorToken = String(parsed?.visitorToken || '').trim();
+                const conversationId = String(parsed?.conversationId || '').trim();
+                const sessionType = ACTIVE_SESSION_TYPES.has(parsed?.sessionType) ? parsed.sessionType : 'AI';
+                if (!visitorToken || !conversationId) {
+                    clearVisitorSession();
+                    return null;
+                }
+                return {
+                    visitorToken,
+                    conversationId,
+                    sessionType
+                };
+            } catch (err) {
+                clearVisitorSession();
+                return null;
+            }
+        }
+
+        function saveVisitorSession() {
+            if (!State.visitorToken || !State.conversationId || State.entryVisible || !ACTIVE_SESSION_TYPES.has(State.sessionType)) {
+                return;
+            }
+            try {
+                window.localStorage.setItem(STORAGE_KEYS.visitorSession, JSON.stringify({
+                    visitorToken: State.visitorToken,
+                    conversationId: State.conversationId,
+                    sessionType: State.sessionType,
+                    savedAt: Date.now()
+                }));
+            } catch (err) {}
+        }
+
+        function escapeHTML(value) {
+            return String(value)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        function resolveAssetURL(value) {
+            value = String(value || '');
+            if (!value) return '';
+            if (/^https?:\/\//i.test(value) || value.startsWith('data:')) return value;
+            if (value.startsWith('/')) return State.apiBase.replace(/\/$/, '') + value;
+            return value;
+        }
+
+        function safeImageSrc(value) {
+            const resolved = resolveAssetURL(value);
+            if (/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(resolved)) return resolved;
+            try {
+                const parsed = new URL(resolved, location.href);
+                if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
+            } catch (err) {}
+            return '';
+        }
+
+        function clientMsgId() {
+            return 'web_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+        }
+
+        function showToast(msg, duration = 2000) {
+            DOM.toast.textContent = msg;
+            gsap.to(DOM.toast, { opacity: 1, duration: 0.2 });
+            setTimeout(() => gsap.to(DOM.toast, { opacity: 0, duration: 0.3 }), duration);
+        }
+
+        function scrollToBottom() {
+            setTimeout(() => {
+                DOM.chatList.scrollTo({ top: DOM.chatList.scrollHeight, behavior: 'smooth' });
+            }, 50);
+        }
+
+        function playSound() {
+            if (State.soundEnabled && State.sessionType !== 'ENDED') {
+                DOM.sound.currentTime = 0;
+                DOM.sound.play().catch(() => {});
+            }
+        }
+
+        function isEmbedMode() {
+            return document.documentElement.classList.contains('embed-mode');
+        }
+
+        function notifyHost(type, payload = {}) {
+            if (!isEmbedMode() || window.parent === window) return;
+            window.parent.postMessage({ type, ...payload }, '*');
+        }
+
+        function resetSystemBanner() {
+            DOM.sysBanner.className = DEFAULT_SYS_BANNER_CLASS;
+            DOM.sysBanner.classList.add('hidden');
+            DOM.sysBannerText.textContent = '提示信息';
+        }
+
+        function refreshChatRefs() {
+            DOM.loadHistory = document.getElementById('load-history');
+            DOM.historyAnchor = document.getElementById('history-anchor');
+        }
+
+        function hideEvalImmediately() {
+            DOM.evalOverlay.classList.remove('flex');
+            DOM.evalOverlay.classList.add('hidden');
+            gsap.set(DOM.evalSheet, { y: '100%' });
+        }
+
+        function hideEndConfirmImmediately() {
+            DOM.endConfirmOverlay.classList.remove('flex');
+            DOM.endConfirmOverlay.classList.add('hidden');
+            gsap.set(DOM.endConfirmOverlay, { opacity: 0 });
+            gsap.set(DOM.endConfirmSheet, { y: '100%' });
+        }
+
+        function showEndConfirm() {
+            if (State.sessionType === 'ENDED' || State.pendingReturnToEntry) return;
+            closeAllPanels();
+            DOM.endConfirmOverlay.classList.remove('hidden');
+            DOM.endConfirmOverlay.classList.add('flex');
+            gsap.killTweensOf([DOM.endConfirmOverlay, DOM.endConfirmSheet]);
+            gsap.set(DOM.endConfirmSheet, { y: '100%' });
+            gsap.to(DOM.endConfirmOverlay, { opacity: 1, duration: 0.18, ease: "power1.out" });
+            gsap.to(DOM.endConfirmSheet, { y: 0, duration: 0.28, ease: "power3.out" });
+        }
+
+        function closeEndConfirm(onComplete = null) {
+            if (DOM.endConfirmOverlay.classList.contains('hidden')) {
+                if (typeof onComplete === 'function') onComplete();
+                return;
+            }
+            gsap.killTweensOf([DOM.endConfirmOverlay, DOM.endConfirmSheet]);
+            gsap.to(DOM.endConfirmOverlay, { opacity: 0, duration: 0.16, ease: "power1.in" });
+            gsap.to(DOM.endConfirmSheet, {
+                y: '100%',
+                duration: 0.2,
+                ease: "power2.in",
+                onComplete: () => {
+                    DOM.endConfirmOverlay.classList.remove('flex');
+                    DOM.endConfirmOverlay.classList.add('hidden');
+                    if (typeof onComplete === 'function') onComplete();
+                }
+            });
+        }
+
+        function confirmEndConversation() {
+            closeEndConfirm(() => {
+                triggerAction('end');
+            });
+        }
+
+        function stopRecordingStream() {
+            if (!State.recordingStream) return;
+            State.recordingStream.getTracks().forEach((track) => track.stop());
+            State.recordingStream = null;
+        }
+
+        function hideRecordingOverlay() {
+            DOM.recordOverlay.classList.remove('flex');
+            DOM.recordOverlay.classList.add('hidden');
+            DOM.recordOverlayCard.classList.remove('record-cancel');
+            DOM.recordOverlayCancel.classList.remove('record-cancel-active');
+            DOM.recordOverlayText.textContent = '松开发送语音';
+            DOM.recordOverlayTip.textContent = '上滑进入取消区域';
+            DOM.recordOverlayCancelText.textContent = '上滑取消发送';
+            DOM.btnVoice.classList.remove('recording');
+        }
+
+        function updateRecordingOverlay(isCancel) {
+            DOM.recordOverlay.classList.remove('hidden');
+            DOM.recordOverlay.classList.add('flex');
+            DOM.recordOverlayCard.classList.toggle('record-cancel', !!isCancel);
+            DOM.recordOverlayCancel.classList.toggle('record-cancel-active', !!isCancel);
+            DOM.recordOverlayText.textContent = isCancel ? '松开手指，取消发送' : '松开发送语音';
+            DOM.recordOverlayTip.textContent = isCancel ? '已进入取消区域，松手不发送' : '上滑进入取消区域';
+            DOM.recordOverlayCancelText.textContent = isCancel ? '松开取消发送' : '上滑取消发送';
+            DOM.btnVoice.classList.add('recording');
+        }
+
+        function voicePoint(event) {
+            if (event && event.touches && event.touches[0]) {
+                return { x: event.touches[0].clientX || 0, y: event.touches[0].clientY || 0 };
+            }
+            if (event && event.changedTouches && event.changedTouches[0]) {
+                return { x: event.changedTouches[0].clientX || 0, y: event.changedTouches[0].clientY || 0 };
+            }
+            return { x: event?.clientX || 0, y: event?.clientY || 0 };
+        }
+
+        function isWithinCancelZone(clientX, clientY) {
+            if (!clientX || !clientY || DOM.recordOverlay.classList.contains('hidden')) return false;
+            const rect = DOM.recordOverlayCancel.getBoundingClientRect();
+            const expand = 18;
+            return clientX >= rect.left - expand &&
+                clientX <= rect.right + expand &&
+                clientY >= rect.top - expand &&
+                clientY <= rect.bottom + expand;
+        }
+
+        function beginVoiceGesture(event, source) {
+            if (State.sessionType === 'ENDED' || State.recordGestureSource) return;
+            const point = voicePoint(event);
+            State.recordGestureSource = source;
+            State.recordPointerId = source === 'pointer' ? event.pointerId ?? null : null;
+            State.recordPendingStop = false;
+            State.recordPendingForceCancel = false;
+            State.recordingCanceled = false;
+            State.recordingStartY = point.y || 0;
+            if (source === 'pointer' && typeof DOM.btnVoice.setPointerCapture === 'function' && event.pointerId != null) {
+                try {
+                    DOM.btnVoice.setPointerCapture(event.pointerId);
+                } catch (err) {}
+            }
+            event.preventDefault();
+            startVoiceRecording(point.y || 0);
+        }
+
+        function setAudioBubbleState(button, isPlaying) {
+            if (!button) return;
+            button.classList.toggle('voice-playing', !!isPlaying);
+            const icon = button.querySelector('[data-voice-icon]');
+            if (icon) {
+                icon.className = isPlaying ? 'fas fa-pause' : 'fas fa-play';
+            }
+        }
+
+        function stopCurrentAudio(resetProgress = false) {
+            if (!State.activeAudioElement) return;
+            State.activeAudioElement.pause();
+            if (resetProgress) {
+                try {
+                    State.activeAudioElement.currentTime = 0;
+                } catch (err) {}
+            }
+            setAudioBubbleState(State.activeAudioButton, false);
+            State.activeAudioElement = null;
+            State.activeAudioButton = null;
+        }
+
+        function bindAudioBubbleActions(root) {
+            root.querySelectorAll('[data-audio-bubble]').forEach((button) => {
+                if (button.dataset.boundAudio === '1') return;
+                button.dataset.boundAudio = '1';
+                const wrapper = button.closest('.bubble-audio');
+                const audio = wrapper ? wrapper.querySelector('.voice-audio-element') : null;
+                const durationText = button.querySelector('[data-audio-duration]');
+                if (!audio) return;
+                const syncDuration = () => {
+                    if (!durationText) return;
+                    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+                        durationText.textContent = `${Math.max(1, Math.round(audio.duration))}"`;
+                    } else {
+                        durationText.textContent = '语音';
+                    }
+                };
+                audio.addEventListener('loadedmetadata', syncDuration);
+                audio.addEventListener('ended', () => {
+                    if (State.activeAudioElement === audio) {
+                        State.activeAudioElement = null;
+                        State.activeAudioButton = null;
+                    }
+                    setAudioBubbleState(button, false);
+                });
+                audio.addEventListener('pause', () => {
+                    if (!audio.ended) {
+                        setAudioBubbleState(button, false);
+                    }
+                });
+                if (audio.readyState >= 1) {
+                    syncDuration();
+                }
+                button.addEventListener('click', async () => {
+                    if (State.activeAudioElement && State.activeAudioElement !== audio) {
+                        stopCurrentAudio(true);
+                    }
+                    if (audio.paused) {
+                        try {
+                            State.activeAudioElement = audio;
+                            State.activeAudioButton = button;
+                            setAudioBubbleState(button, true);
+                            await audio.play();
+                        } catch (err) {
+                            console.error(err);
+                            stopCurrentAudio(false);
+                            showToast('语音播放失败');
+                        }
+                        return;
+                    }
+                    stopCurrentAudio(true);
+                });
+            });
+        }
+
+        function messageDataAttrs(meta = {}) {
+            const attrs = [];
+            if (meta.serverMsgId) attrs.push(`data-server-msg-id="${escapeHTML(meta.serverMsgId)}"`);
+            if (meta.clientMsgId) attrs.push(`data-client-msg-id="${escapeHTML(meta.clientMsgId)}"`);
+            return attrs.join(' ');
+        }
+
+        function findMessageElement(meta = {}) {
+            const items = DOM.chatList.querySelectorAll('.msg-wrapper');
+            for (const item of items) {
+                if (meta.serverMsgId && item.dataset.serverMsgId === meta.serverMsgId) return item;
+                if (meta.clientMsgId && item.dataset.clientMsgId === meta.clientMsgId) return item;
+            }
+            return null;
+        }
+
+        function resetConversationRuntime() {
+            State.pendingReturnToEntry = false;
+            State.connected = false;
+            State.ws = null;
+            State.visitorToken = '';
+            State.conversationId = '';
+            State.selectedRatingScore = 0;
+            State.ratingSubmitted = false;
+            State.ratingPromptVisible = false;
+            State.evalReturnMessage = '';
+            State.renderedServerMsgIds = new Set();
+            State.renderedClientMsgIds = new Set();
+            State.hasMoreHistory = false;
+            State.nextBefore = '';
+            State.loadingHistory = false;
+            State.pendingInitialMessages = [];
+            State.quickRepliesRendered = false;
+            State.quickReplies = [];
+            State.mediaRecorder = null;
+            State.recordingChunks = [];
+            State.isRecording = false;
+            State.recordingCanceled = false;
+            State.recordingStartY = 0;
+            State.recordingStartedAt = 0;
+            State.recordGestureSource = '';
+            State.recordPointerId = null;
+            State.recordPendingStop = false;
+            State.recordPendingForceCancel = false;
+            stopCurrentAudio(true);
+            stopRecordingStream();
+            hideRecordingOverlay();
+        }
+
+        function resetChatView() {
+            DOM.chatList.innerHTML = INITIAL_CHAT_HTML;
+            refreshChatRefs();
+            DOM.input.value = '';
+            DOM.input.disabled = false;
+            DOM.input.placeholder = '';
+            DOM.input.style.height = '40px';
+            DOM.btnPlus.style.display = 'flex';
+            DOM.btnSend.style.display = 'none';
+            DOM.headerTyping.classList.add('hidden');
+            DOM.uploadImageInput.value = '';
+            closeAllPanels();
+            resetSystemBanner();
+            hideEndConfirmImmediately();
+            DOM.chatList.scrollTop = 0;
+            if (DOM.loadHistory) DOM.loadHistory.textContent = '点击加载更多历史记录';
+        }
+
+        function disconnectSocket() {
+            if (!State.ws) return;
+            const socket = State.ws;
+            State.ws = null;
+            socket.onclose = null;
+            socket.onerror = null;
+            socket.onmessage = null;
+            try {
+                socket.close();
+            } catch (err) {}
+        }
+
+        function returnToEntry(message = '') {
+            disconnectSocket();
+            clearVisitorSession();
+            resetConversationRuntime();
+            resetChatView();
+            hideEvalImmediately();
+            updateSessionState('AI');
+            State.startingConversation = false;
+            DOM.entryBtn.disabled = false;
+            DOM.entryBtn.textContent = '咨询客服';
+            if (isEmbedMode()) {
+                showChatView();
+                if (message) appendSystemMessage(message);
+                return;
+            }
+            showEntryView();
+            if (message) showToast(message);
+        }
+
+        function promptForRatingOrReturn(message = '会话已结束') {
+            State.pendingReturnToEntry = false;
+            State.connected = false;
+            disconnectSocket();
+            updateSessionState('ENDED');
+            if (!State.visitorToken || !State.conversationId || State.ratingSubmitted) {
+                returnToEntry(message);
+                return;
+            }
+            State.evalReturnMessage = message;
+            showEvalSheet();
+        }
+
+        async function openConsultation() {
+            if (State.startingConversation) return;
+            State.startingConversation = true;
+            DOM.entryBtn.disabled = true;
+            DOM.entryBtn.textContent = '连接中...';
+            clearVisitorSession();
+            resetConversationRuntime();
+            resetChatView();
+            updateSessionState('AI');
+            if (isEmbedMode()) {
+                showChatView();
+            }
+            const ok = await initConversation();
+            State.startingConversation = false;
+            DOM.entryBtn.disabled = false;
+            DOM.entryBtn.textContent = '咨询客服';
+            if (!ok) return;
+            showChatView();
+            saveVisitorSession();
+            scrollToBottom();
+        }
+
+        async function restoreConsultation(savedSession) {
+            const saved = savedSession || loadVisitorSession();
+            if (!saved) return false;
+            disconnectSocket();
+            resetConversationRuntime();
+            resetChatView();
+            hideEvalImmediately();
+            updateSessionState('AI');
+            await loadContactSettings();
+            State.visitorToken = saved.visitorToken;
+            State.conversationId = saved.conversationId;
+            State.startingConversation = false;
+            DOM.entryBtn.disabled = false;
+            DOM.entryBtn.textContent = '咨询客服';
+            showChatView();
+            updateSessionState(saved.sessionType || 'AI');
+            let syncState = null;
+            try {
+                syncState = await syncMessages();
+            } catch (err) {
+                console.error(err);
+            }
+            if (syncState === false) {
+                returnToEntry("会话已失效");
+                return false;
+            }
+            if (!State.quickRepliesRendered) {
+                renderQuickRepliesCard();
+            }
+            saveVisitorSession();
+            connectSocket();
+            scrollToBottom();
+            return true;
+        }
+
+        async function bootApp() {
+            const savedSession = loadVisitorSession();
+            if (savedSession) {
+                const restored = await restoreConsultation(savedSession);
+                if (restored) return;
+            }
+            if (isEmbedMode()) {
+                await openConsultation();
+                return;
+            }
+            returnToEntry();
+        }
+
+        // === 核心 UI 逻辑 ===
+
+        // 输入框高度自动调整与发送按钮切换
+        DOM.input.addEventListener('input', function() {
+            // 高度自适应
+            this.style.height = '40px';
+            this.style.height = (this.scrollHeight) + 'px';
+            
+            // 切换 发送 / + 按钮
+            if (this.value.trim().length > 0) {
+                DOM.btnPlus.style.display = 'none';
+                DOM.btnSend.style.display = 'flex';
+            } else {
+                DOM.btnPlus.style.display = 'flex';
+                DOM.btnSend.style.display = 'none';
+            }
+        });
+
+        // 底部面板展开/收起控制
+        function togglePanel(panelName) {
+            const panelEmoji = document.getElementById('panel-emoji');
+            const panelMore = document.getElementById('panel-more');
+            
+            if (State.activePanel === panelName) {
+                // 关闭当前
+                closeAllPanels();
+            } else {
+                // 打开指定面板
+                State.activePanel = panelName;
+                if (panelName === 'emoji') {
+                    gsap.to(panelMore, { height: 0, duration: 0.2 });
+                    gsap.to(panelEmoji, { height: 250, duration: 0.3, ease: "power2.out" });
+                } else if (panelName === 'more') {
+                    gsap.to(panelEmoji, { height: 0, duration: 0.2 });
+                    gsap.to(panelMore, { height: 250, duration: 0.3, ease: "power2.out" });
+                }
+                scrollToBottom();
+            }
+        }
+
+        function closeAllPanels() {
+            State.activePanel = null;
+            gsap.to('.bottom-panel', { height: 0, duration: 0.2 });
+        }
+
+        // 初始化 Emoji
+        function initEmojis() {
+            EMOJIS.forEach(emo => {
+                const span = document.createElement('span');
+                span.className = 'text-2xl cursor-pointer text-center hover:bg-gray-200 py-1 rounded transition-colors';
+                span.textContent = emo;
+                span.onclick = () => {
+                    DOM.input.value += emo;
+                    DOM.input.dispatchEvent(new Event('input')); // 触发高度和按钮切换逻辑
+                };
+                DOM.emojiContainer.appendChild(span);
+            });
+        }
+
+        // === 消息构建与收发逻辑 ===
+
+        // 构建普通文本消息
+        function createMessageHTML(text, isUser = false, isFailed = false, meta = {}, extraBubbleClass = '') {
+            const safeText = escapeHTML(text).replace(/\n/g, '<br>');
+            const safeRetryText = escapeHTML(text).replace(/\n/g, '&#10;');
+            const avatar = isUser ? './assets/img/avatar-visitor.svg' : State.agentAvatar;
+            const bubbleBg = isUser ? 'bg-wc-user' : 'bg-wc-ai border border-gray-200/50';
+            const bubbleDir = isUser ? 'bubble-right' : 'bubble-left';
+            const textStyle = isUser ? 'text-wc-main' : 'text-wc-main';
+            
+            // 失败重试图标
+            const failIcon = (isUser && isFailed) ? 
+                `<i class="fas fa-exclamation-circle text-red-500 text-xl mr-2 cursor-pointer retry-icon" data-retry-text="${safeRetryText}"></i>` : '';
+
+            // AI 头像旁显示名字
+            const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
+
+            return `
+                <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(meta)}>
+                    <img src="${avatar}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
+                    <div class="flex flex-col max-w-[70%] ${isUser ? 'items-end' : 'items-start'}">
+                        ${nameLabel}
+                        <div class="flex items-center ${isUser ? 'flex-row-reverse' : 'flex-row'}">
+                            <div class="${bubbleBg} ${textStyle} text-[16px] p-2.5 rounded-lg shadow-sm relative ${bubbleDir} leading-relaxed word-break-all min-h-[40px] flex items-center ${extraBubbleClass}">
+                                ${safeText}
+                            </div>
+                            ${failIcon}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 构建图片消息 (微信中的图片没有气泡尖角和背景)
+        function createImageMessageHTML(imgSrc, isUser = false, meta = {}) {
+            const avatar = isUser ? './assets/img/avatar-visitor.svg' : State.agentAvatar;
+            const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
+            const safeSrc = escapeHTML(safeImageSrc(imgSrc));
+
+            return `
+                <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(meta)}>
+                    <img src="${avatar}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
+                    <div class="flex flex-col max-w-[70%] ${isUser ? 'items-end' : 'items-start'}">
+                        ${nameLabel}
+                        <div class="bubble-image mt-0.5">
+                            <img src="${safeSrc}" alt="图片" class="border border-gray-200/50 shadow-sm">
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function createAudioMessageHTML(audioSrc, isUser = false, meta = {}) {
+            const avatar = isUser ? './assets/img/avatar-visitor.svg' : State.agentAvatar;
+            const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
+            const safeSrc = escapeHTML(resolveAssetURL(audioSrc));
+            const bubbleBg = isUser ? 'bg-wc-user' : 'bg-wc-ai border border-gray-200/50';
+            const bubbleDir = isUser ? 'bubble-right' : 'bubble-left';
+
+            return `
+                <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(meta)}>
+                    <img src="${avatar}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
+                    <div class="flex flex-col max-w-[70%] ${isUser ? 'items-end' : 'items-start'}">
+                        ${nameLabel}
+                        <div class="${bubbleBg} bubble-audio rounded-2xl shadow-sm relative ${bubbleDir}">
+                            <button type="button" class="voice-bubble-btn ${isUser ? 'voice-bubble-self' : 'voice-bubble-other'}" data-audio-bubble aria-label="播放语音消息">
+                                <span class="voice-play-icon"><i class="fas fa-play" data-voice-icon></i></span>
+                                <span class="voice-wave" aria-hidden="true"><i></i><i></i><i></i></span>
+                                <span class="voice-duration" data-audio-duration>语音</span>
+                            </button>
+                            <audio class="voice-audio-element" preload="metadata" src="${safeSrc}"></audio>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function createRevokedMessageHTML(text, isUser = false, meta = {}) {
+            return createMessageHTML(text, isUser, false, meta, 'bubble-revoked italic');
+        }
+
+        function buildServerMessageHTML(msg, isUser = false) {
+            const meta = {
+                serverMsgId: msg.server_msg_id || '',
+                clientMsgId: msg.client_msg_id || ''
+            };
+            if (msg.message_type === 'image') {
+                return createImageMessageHTML(resolveAssetURL(msg.content), isUser, meta);
+            }
+            if (msg.message_type === 'audio') {
+                return createAudioMessageHTML(resolveAssetURL(msg.content), isUser, meta);
+            }
+            if (msg.message_type === 'revoked' || msg.revoked_at) {
+                return createRevokedMessageHTML(msg.content || '对方撤回了一条消息', isUser, meta);
+            }
+            return createMessageHTML(msg.content || '', isUser, false, meta);
+        }
+
+        function removeQuickReplyCards() {
+            DOM.chatList.querySelectorAll('.quick-replies-card').forEach((node) => node.remove());
+        }
+
+        function bindQuickReplyActions(root) {
+            root.querySelectorAll('[data-quick-reply]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    const displayText = button.dataset.quickReply || '';
+                    const sendText = button.dataset.sendText || displayText;
+                    removeQuickReplyCards();
+                    handleSend(sendText, displayText);
+                });
+            });
+        }
+
+        function renderQuickRepliesCard() {
+            removeQuickReplyCards();
+            if (!State.quickReplies.length) return;
+            const items = State.quickReplies.map((item, index) => `
+                <button
+                    type="button"
+                    class="w-full text-left text-sm text-[#576b95] active:bg-gray-100 px-1 py-1.5 rounded transition-colors"
+                    data-quick-reply="${escapeHTML(item.text || '')}"
+                    data-send-text="${escapeHTML(item.send_text || item.text || '')}"
+                >${index + 1}. ${escapeHTML(item.text || '')}</button>
+            `).join('');
+            const html = `
+                <div class="flex gap-3 msg-wrapper quick-replies-card">
+                    <div class="w-10 shrink-0"></div>
+                    <div class="bg-white p-3 rounded-lg shadow-sm border border-gray-200/50 w-[75%]">
+                        <div class="text-sm text-gray-500 mb-2 border-b border-gray-100 pb-1">猜你想问</div>
+                        <div class="space-y-1">${items}</div>
+                    </div>
+                </div>
+            `;
+            const div = document.createElement('div');
+            div.innerHTML = html.trim();
+            const el = div.firstElementChild;
+            DOM.chatList.appendChild(el);
+            bindQuickReplyActions(el);
+            State.quickRepliesRendered = true;
+            gsap.fromTo(el, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.2 });
+            scrollToBottom();
+        }
+
+        function appendMessage(html, isUser = false, mode = 'append', options = {}) {
+            const div = document.createElement('div');
+            div.innerHTML = html.trim();
+            const el = div.firstElementChild;
+            if (mode === 'prepend') {
+                DOM.historyAnchor.insertAdjacentElement('afterend', el);
+            } else {
+                DOM.chatList.appendChild(el);
+            }
+            el.querySelectorAll('.retry-icon').forEach(icon => {
+                icon.addEventListener('click', () => retryMsg(icon, icon.dataset.retryText || ''));
+            });
+            bindAudioBubbleActions(el);
+            
+            // 微信没有浮夸的弹性动画，一般是直接出现或者极短的位移
+            if (mode === 'append') {
+                gsap.fromTo(el, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.2 });
+            }
+            
+            if (mode === 'append') scrollToBottom();
+            if (!isUser && !options.silent) playSound();
+        }
+
+        function replaceMessageElement(target, html) {
+            if (!target) return;
+            const div = document.createElement('div');
+            div.innerHTML = html.trim();
+            const next = div.firstElementChild;
+            next.querySelectorAll('.retry-icon').forEach(icon => {
+                icon.addEventListener('click', () => retryMsg(icon, icon.dataset.retryText || ''));
+            });
+            bindAudioBubbleActions(next);
+            target.replaceWith(next);
+        }
+
+        function handleSend(manualText = null, displayText = null) {
+            if (State.sessionType === 'ENDED') {
+                showToast("会话已结束，无法发送消息");
+                return;
+            }
+            
+            const text = DOM.input.value.trim();
+            const outgoingText = manualText || text;
+            if (!outgoingText) return;
+            const renderedText = displayText || outgoingText;
+
+            // 清空输入框并重置状态
+            DOM.input.value = '';
+            DOM.input.style.height = '40px';
+            DOM.btnPlus.style.display = 'flex';
+            DOM.btnSend.style.display = 'none';
+            closeAllPanels();
+            removeQuickReplyCards();
+
+            // 渲染用户消息
+            appendMessage(createMessageHTML(renderedText, true), true);
+
+            if (State.connected) {
+                sendSocketMessage(outgoingText);
+            } else {
+                appendMessage(createMessageHTML("当前未连接服务器，请稍后重试。", false), false);
+            }
+        }
+
+        // 失败重试全局函数
+        window.retryMsg = function(icon, text) {
+            const wrapper = icon.closest('.msg-wrapper');
+            wrapper.remove(); // 移除旧消息
+            DOM.input.value = text;
+            DOM.input.dispatchEvent(new Event('input'));
+            showToast("已恢复内容");
+        };
+
+        async function uploadMedia(file, filename = '') {
+            const form = new FormData();
+            const uploadName = filename || file?.name || `upload-${Date.now()}`;
+            form.append('file', file, uploadName);
+            const resp = await fetch(`${State.apiBase}/api/uploads`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${State.visitorToken}` },
+                body: form
+            });
+            if (!resp.ok) {
+                const detail = await resp.text().catch(() => '');
+                throw new Error(`upload failed ${resp.status} ${detail}`.trim());
+            }
+            return resp.json();
+        }
+
+        function appendSystemMessage(text) {
+            const html = `
+                <div class="text-center mt-2 msg-wrapper">
+                    <span class="text-[12px] text-gray-500 bg-[#dadada]/50 px-2 py-0.5 rounded-sm">${text}</span>
+                </div>
+            `;
+            appendMessage(html, false);
+        }
+
+        // === 状态机与业务动作 ===
+
+        function updateSessionState(newState) {
+            State.sessionType = newState;
+            
+            // 基础重置
+            resetSystemBanner();
+            DOM.headerAiBadge.classList.add('hidden');
+            DOM.input.disabled = false;
+            DOM.input.placeholder = "";
+
+            switch (newState) {
+                case 'AI':
+                    State.agentName = '在线客服';
+                    State.agentAvatar = './assets/img/avatar-service.svg';
+                    DOM.headerAiBadge.classList.remove('hidden');
+                    break;
+                case 'QUEUING':
+                    DOM.sysBanner.classList.remove('hidden');
+                    DOM.sysBannerText.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>正在转接人工客服，请稍候...';
+                    break;
+                case 'HUMAN':
+                    State.agentName = '客服-李雪';
+                    State.agentAvatar = './assets/img/avatar-agent-xue.svg';
+                    DOM.sysBanner.classList.remove('hidden');
+                    DOM.sysBanner.className = 'bg-[#f0f9eb] text-[#67c23a] text-xs px-3 py-2 flex items-center justify-center border-b border-[#e1f3d8] shrink-0 z-10 shadow-sm relative';
+                    DOM.sysBannerText.innerHTML = '<i class="fas fa-check-circle mr-1"></i>已接入人工客服';
+                    setTimeout(() => DOM.sysBanner.classList.add('hidden'), 3000);
+                    break;
+                case 'ENDED':
+                    State.agentName = '会话已结束';
+                    DOM.input.disabled = true;
+                    DOM.input.placeholder = "会话已结束";
+                    break;
+            }
+            DOM.headerTitle.textContent = State.agentName;
+        }
+
+        function triggerAction(action) {
+            closeAllPanels();
+            
+            if (action === 'photo') {
+                if (State.sessionType === 'ENDED') {
+                    showToast("会话已结束");
+                    return;
+                }
+                DOM.uploadImageInput.click();
+            }
+            else if (action === 'human') {
+                if (State.sessionType === 'HUMAN' || State.sessionType === 'QUEUING') {
+                    showToast("当前已是人工服务相关状态");
+                    return;
+                }
+                updateSessionState('QUEUING');
+                appendSystemMessage("正在为您转接人工客服...");
+                sendSocketMessage("人工客服");
+            } 
+            else if (action === 'phone') {
+                appendSystemMessage(`客服电话：<a href="tel:${escapeHTML(State.contacts.phone)}" class="text-blue-500">${escapeHTML(State.contacts.phone)}</a> (点击拨打)`);
+                if (State.connected) sendSocketMessage("电话");
+            }
+            else if (action === 'whatsapp') {
+                const whatsapp = State.contacts.whatsapp || State.contacts.wechat;
+                appendSystemMessage(`官方 WhatsApp：<span class="text-wc-user font-bold select-all">${escapeHTML(whatsapp)}</span> (长按复制)`);
+                if (State.contacts.wechat_reply_type === 'image' && State.contacts.wechat_image_url) {
+                    appendMessage(createImageMessageHTML(resolveAssetURL(State.contacts.wechat_image_url), false), false);
+                }
+                if (State.connected) sendSocketMessage("WhatsApp");
+            }
+            else if (action === 'telegram') {
+                const telegram = State.contacts.telegram || State.contacts.qq;
+                appendSystemMessage(`官方 Telegram：<span class="text-wc-user font-bold select-all">${escapeHTML(telegram)}</span> (长按复制)`);
+                if (State.contacts.qq_reply_type === 'image' && State.contacts.qq_image_url) {
+                    appendMessage(createImageMessageHTML(resolveAssetURL(State.contacts.qq_image_url), false), false);
+                }
+                if (State.connected) sendSocketMessage("Telegram");
+            }
+            else if (action === 'end') {
+                if (State.sessionType === 'ENDED' || State.pendingReturnToEntry) return;
+                if (State.connected) {
+                    State.pendingReturnToEntry = true;
+                    updateSessionState('ENDED');
+                    State.ws.send(JSON.stringify({
+                        event: 'conversation.close',
+                        data: { conversation_id: State.conversationId }
+                    }));
+                    setTimeout(() => {
+                        if (State.pendingReturnToEntry) {
+                            promptForRatingOrReturn("会话已结束");
+                        }
+                    }, 600);
+                } else {
+                    promptForRatingOrReturn("会话已结束");
+                }
+            }
+        }
+
+        async function initConversation() {
+            try {
+                await loadContactSettings();
+                const resp = await fetch(`${State.apiBase}/api/visitor/conversations`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source: window.innerWidth >= 768 ? 'web_pc' : 'web_mobile' })
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+                State.visitorToken = data.token;
+                State.conversationId = data.conversation.id;
+                State.pendingInitialMessages = data.initial_messages || [];
+                State.nextBefore = data.initial_messages?.[0]?.server_msg_id || '';
+                applyConversationState(data.conversation);
+                connectSocket();
+                return true;
+            } catch (err) {
+                console.error(err);
+                showToast("连接客服系统失败，请确认后端已启动", 3000);
+                return false;
+            }
+        }
+
+        async function loadContactSettings() {
+            try {
+                const resp = await fetch(`${State.apiBase}/api/contact-settings`);
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const whatsapp = data.whatsapp || data.wechat || State.contacts.whatsapp || State.contacts.wechat;
+                const telegram = data.telegram || data.qq || State.contacts.telegram || State.contacts.qq;
+                State.contacts = {
+                    ...State.contacts,
+                    ...data,
+                    whatsapp,
+                    telegram,
+                    wechat: whatsapp,
+                    qq: telegram
+                };
+                State.quickReplies = Array.isArray(data.quick_replies) ? data.quick_replies : [];
+            } catch (err) {}
+        }
+
+        async function drainPendingInitialMessages() {
+            const pending = Array.isArray(State.pendingInitialMessages) ? [...State.pendingInitialMessages] : [];
+            State.pendingInitialMessages = [];
+            for (const msg of pending) {
+                if (msg.server_msg_id) State.renderedServerMsgIds.add(msg.server_msg_id);
+                if (msg.client_msg_id) State.renderedClientMsgIds.add(msg.client_msg_id);
+                renderServerMessage(msg, 'append', { force: true, silent: true });
+                await new Promise((resolve) => setTimeout(resolve, 220));
+            }
+            if (!State.quickRepliesRendered) {
+                renderQuickRepliesCard();
+            }
+        }
+
+        function connectSocket() {
+            if (!State.visitorToken || !State.conversationId) return;
+            const url = `${inferWSBase()}/ws?role=visitor&token=${encodeURIComponent(State.visitorToken)}&conversation_id=${encodeURIComponent(State.conversationId)}`;
+            State.ws = new WebSocket(url);
+            State.ws.onopen = () => {
+                State.connected = true;
+                showToast("客服通道已连接");
+                drainPendingInitialMessages()
+                    .catch(() => {})
+                    .finally(() => {
+                        syncMessages().catch(() => {});
+                    });
+            };
+            State.ws.onclose = () => {
+                State.connected = false;
+                if (!State.entryVisible && State.conversationId && State.sessionType !== 'ENDED') {
+                    setTimeout(connectSocket, 2000);
+                }
+            };
+            State.ws.onerror = () => {
+                State.connected = false;
+            };
+            State.ws.onmessage = (event) => {
+                const payload = JSON.parse(event.data);
+                handleSocketEvent(payload);
+            };
+        }
+
+        function sendSocketMessage(text, type = 'text') {
+            if (!State.connected || !State.ws) {
+                appendMessage(createMessageHTML("消息未发送，客服通道正在重连。", false), false);
+                return '';
+            }
+            const id = clientMsgId();
+            State.renderedClientMsgIds.add(id);
+            State.ws.send(JSON.stringify({
+                event: 'message.send',
+                data: {
+                    conversation_id: State.conversationId,
+                    client_msg_id: id,
+                    message_type: type,
+                    content: text
+                }
+            }));
+            return id;
+        }
+
+        function handleSocketEvent(payload) {
+            if (payload.event === 'message.receive') {
+                const msg = payload.data;
+                renderServerMessage(msg, 'append');
+                if (msg && msg.sender_type !== 'visitor') {
+                    notifyHost('servicebridge:unread', { delta: 1 });
+                }
+                return;
+            }
+            if (payload.event === 'message.revoked') {
+                const msg = payload.data;
+                renderServerMessage(msg, 'append', { force: true, silent: true, replaceOnly: true });
+                return;
+            }
+            if (payload.event === 'conversation.status_changed' || payload.event === 'conversation.assigned') {
+                applyConversationState(payload.data);
+                return;
+            }
+            if (payload.event === 'error') {
+                const code = payload.data?.code || '';
+                if (code === 'unauthorized' || code === 'forbidden' || code === 'not_found') {
+                    returnToEntry("会话已失效");
+                    return;
+                }
+                showToast(payload.data?.message || "客服通道异常");
+            }
+        }
+
+        function renderServerMessage(msg, mode = 'append', options = {}) {
+            if (!msg) return;
+            const target = findMessageElement({
+                serverMsgId: msg.server_msg_id || '',
+                clientMsgId: msg.client_msg_id || ''
+            });
+            const isUser = msg.sender_type === 'visitor';
+            const html = buildServerMessageHTML(msg, isUser);
+            if (target) {
+                replaceMessageElement(target, html);
+                return;
+            }
+            if (options.replaceOnly) return;
+            if (!options.force && msg.server_msg_id && State.renderedServerMsgIds.has(msg.server_msg_id)) return;
+            if (!options.force && msg.client_msg_id && State.renderedClientMsgIds.has(msg.client_msg_id)) return;
+            if (msg.server_msg_id) State.renderedServerMsgIds.add(msg.server_msg_id);
+            if (msg.client_msg_id) State.renderedClientMsgIds.add(msg.client_msg_id);
+            appendMessage(html, isUser, mode, options);
+        }
+
+        async function syncMessages(mode = 'append') {
+            if (!State.conversationId || !State.visitorToken) return false;
+            const resp = await fetch(`${State.apiBase}/api/conversations/${encodeURIComponent(State.conversationId)}/messages?limit=50`, {
+                headers: { 'Authorization': `Bearer ${State.visitorToken}` }
+            });
+            if (resp.status === 401 || resp.status === 403 || resp.status === 404) return false;
+            if (!resp.ok) throw new Error(`sync failed ${resp.status}`);
+            const data = await resp.json();
+            State.hasMoreHistory = !!data.has_more;
+            State.nextBefore = data.next_before || (data.messages?.[0]?.server_msg_id || State.nextBefore);
+            if (DOM.loadHistory) DOM.loadHistory.textContent = State.hasMoreHistory ? '点击加载更多历史记录' : '暂无更多历史记录';
+            (data.messages || []).forEach((msg) => renderServerMessage(msg, mode));
+            return true;
+        }
+
+        async function loadOlderMessages() {
+            if (State.loadingHistory) return;
+            if (!State.hasMoreHistory || !State.nextBefore) {
+                showToast("暂无更多历史记录");
+                return;
+            }
+            State.loadingHistory = true;
+            try {
+                const resp = await fetch(`${State.apiBase}/api/conversations/${encodeURIComponent(State.conversationId)}/messages?limit=30&before=${encodeURIComponent(State.nextBefore)}`, {
+                    headers: { 'Authorization': `Bearer ${State.visitorToken}` }
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+                State.hasMoreHistory = !!data.has_more;
+                State.nextBefore = data.next_before || (data.messages?.[0]?.server_msg_id || State.nextBefore);
+                [...(data.messages || [])].reverse().forEach((msg) => renderServerMessage(msg, 'prepend'));
+                DOM.loadHistory.textContent = State.hasMoreHistory ? '点击加载更多历史记录' : '暂无更多历史记录';
+            } catch (err) {
+                showToast("历史记录加载失败");
+            } finally {
+                State.loadingHistory = false;
+            }
+        }
+
+        function applyConversationState(conversation) {
+            if (!conversation) return;
+            if (conversation.status === 'assigned') {
+                updateSessionState('HUMAN');
+            } else if (conversation.status === 'ai_serving') {
+                updateSessionState('AI');
+            } else if (conversation.status === 'waiting' || conversation.status === 'human_requested') {
+                updateSessionState('QUEUING');
+            } else if (conversation.status === 'closed') {
+                promptForRatingOrReturn("会话已结束");
+                return;
+            }
+            saveVisitorSession();
+        }
+
+        // === 评价组件逻辑 ===
+        const RATING_ACTIVE_COLORS = {
+            satisfied: '#07c160',
+            neutral: '#f5a623',
+            unhappy: '#ef4444'
+        };
+
+        function ratingColor(score) {
+            const value = Number(score || 0);
+            if (value >= 5) return RATING_ACTIVE_COLORS.satisfied;
+            if (value >= 3) return RATING_ACTIVE_COLORS.neutral;
+            return RATING_ACTIVE_COLORS.unhappy;
+        }
+
+        function resetRatingIcons() {
+            document.querySelectorAll('.eval-star i').forEach(i => {
+                i.style.color = '';
+                i.classList.add('text-gray-300');
+            });
+        }
+
+        function showEvalSheet() {
+            if (State.ratingPromptVisible) return;
+            State.ratingPromptVisible = true;
+            DOM.evalOverlay.classList.remove('hidden');
+            DOM.evalOverlay.classList.add('flex');
+            gsap.to(DOM.evalSheet, { y: 0, duration: 0.3, ease: "power3.out" });
+            
+            // 重置星星
+            resetRatingIcons();
+            State.selectedRatingScore = 0;
+            DOM.evalAdvice.value = '';
+            syncEvalAdviceBox();
+        }
+
+        function closeEval() {
+            gsap.to(DOM.evalSheet, { y: '100%', duration: 0.2, ease: "power2.in", onComplete: () => {
+                DOM.evalOverlay.classList.remove('flex');
+                DOM.evalOverlay.classList.add('hidden');
+                State.ratingPromptVisible = false;
+                if (State.evalReturnMessage) {
+                    const message = State.evalReturnMessage;
+                    State.evalReturnMessage = '';
+                    returnToEntry(message);
+                }
+            }});
+        }
+
+        // 星星点击事件
+        document.querySelectorAll('.eval-star').forEach(star => {
+            star.addEventListener('click', function() {
+                // 清除所有颜色
+                resetRatingIcons();
+                // 点亮当前
+                const score = Number(this.dataset.score || 0);
+                const icon = this.querySelector('i');
+                icon.classList.remove('text-gray-300');
+                icon.style.color = ratingColor(score);
+                State.selectedRatingScore = score;
+                syncEvalAdviceBox();
+            });
+        });
+
+        function syncEvalAdviceBox() {
+            const needsAdvice = State.selectedRatingScore > 0 && State.selectedRatingScore < 5;
+            DOM.evalAdviceBox.classList.toggle('hidden', !needsAdvice);
+            if (!needsAdvice) DOM.evalAdvice.value = '';
+        }
+
+        window.submitEval = async function() {
+            if(!State.selectedRatingScore) {
+                showToast("请先选择评价等级");
+                return;
+            }
+            const advice = DOM.evalAdvice.value.trim();
+            if (State.selectedRatingScore < 5 && !advice) {
+                showToast("请输入您的建议");
+                DOM.evalAdvice.focus();
+                return;
+            }
+            if (State.ratingSubmitted) {
+                showToast("评价已提交");
+                closeEval();
+                return;
+            }
+            try {
+                const resp = await fetch(`${State.apiBase}/api/visitor/conversations/${encodeURIComponent(State.conversationId)}/rating`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${State.visitorToken}`
+                    },
+                    body: JSON.stringify({
+                        score: State.selectedRatingScore,
+                        tags: ratingTags(State.selectedRatingScore),
+                        comment: advice
+                    })
+                });
+                if (!resp.ok && resp.status !== 409) throw new Error('rating failed');
+                State.ratingSubmitted = true;
+                showToast("感谢您的评价！");
+                closeEval();
+            } catch (err) {
+                showToast("评价提交失败，请稍后重试");
+            }
+        }
+
+        function ratingTags(score) {
+            if (score >= 5) return ['非常满意'];
+            if (score >= 3) return ['一般'];
+            return ['不满意'];
+        }
+
+        // 顶部按钮事件
+        DOM.btnSound.addEventListener('click', function() {
+            State.soundEnabled = !State.soundEnabled;
+            if (State.soundEnabled) {
+                this.className = 'fas fa-volume-up text-lg text-gray-700 cursor-pointer';
+                showToast("提示音已开启");
+            } else {
+                this.className = 'fas fa-volume-mute text-lg text-gray-400 cursor-pointer';
+                showToast("提示音已关闭");
+            }
+        });
+
+        DOM.endConfirmOverlay.addEventListener('click', (event) => {
+            if (event.target === DOM.endConfirmOverlay) {
+                closeEndConfirm();
+            }
+        });
+
+        DOM.endConfirmCancel.addEventListener('click', () => {
+            closeEndConfirm();
+        });
+
+        DOM.endConfirmSubmit.addEventListener('click', () => {
+            confirmEndConversation();
+        });
+
+        DOM.uploadImageInput.addEventListener('change', async function() {
+            const file = this.files && this.files[0];
+            this.value = '';
+            if (!file) return;
+            if (!State.visitorToken) {
+                showToast("客服通道尚未初始化");
+                return;
+            }
+            try {
+                showToast("图片上传中...");
+                const data = await uploadMedia(file, file.name || `image-${Date.now()}.png`);
+                const imageURL = resolveAssetURL(data.url);
+                appendMessage(createImageMessageHTML(imageURL, true), true);
+                if (State.connected) {
+                    sendSocketMessage(data.url, 'image');
+                }
+            } catch (err) {
+                console.error(err);
+                showToast("图片上传失败");
+            }
+        });
+
+        function preferredAudioMimeType() {
+            if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') return '';
+            const candidates = [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/mp4',
+                'audio/ogg;codecs=opus'
+            ];
+            return candidates.find((item) => MediaRecorder.isTypeSupported(item)) || '';
+        }
+
+        function audioExtension(mimeType) {
+            if (String(mimeType).includes('ogg')) return '.ogg';
+            if (String(mimeType).includes('mp4')) return '.m4a';
+            if (String(mimeType).includes('mpeg') || String(mimeType).includes('mp3')) return '.mp3';
+            return '.webm';
+        }
+
+        async function startVoiceRecording(startY = 0) {
+            if (State.isRecording || State.sessionType === 'ENDED') return;
+            if (!navigator.mediaDevices || typeof MediaRecorder === 'undefined') {
+                showToast('当前浏览器不支持录音');
+                State.recordGestureSource = '';
+                State.recordPointerId = null;
+                return;
+            }
+            try {
+                closeAllPanels();
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const mimeType = preferredAudioMimeType();
+                const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+                State.recordingStream = stream;
+                State.mediaRecorder = recorder;
+                State.recordingChunks = [];
+                State.recordingCanceled = false;
+                State.isRecording = true;
+                State.recordingStartY = startY;
+                State.recordingStartedAt = Date.now();
+                updateRecordingOverlay(false);
+                recorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size > 0) {
+                        State.recordingChunks.push(event.data);
+                    }
+                };
+                recorder.onstop = async () => {
+                    const chunks = State.recordingChunks.slice();
+                    const canceled = State.recordingCanceled;
+                    const startedAt = State.recordingStartedAt;
+                    const type = recorder.mimeType || mimeType || 'audio/webm';
+                    State.mediaRecorder = null;
+                    State.recordingChunks = [];
+                    State.isRecording = false;
+                    State.recordingCanceled = false;
+                    State.recordingStartedAt = 0;
+                    State.recordingStartY = 0;
+                    State.recordGestureSource = '';
+                    State.recordPointerId = null;
+                    State.recordPendingStop = false;
+                    State.recordPendingForceCancel = false;
+                    stopRecordingStream();
+                    hideRecordingOverlay();
+                    if (canceled) {
+                        showToast('已取消发送');
+                        return;
+                    }
+                    if (!chunks.length || Date.now() - startedAt < 400) {
+                        showToast('录音时间太短');
+                        return;
+                    }
+                    try {
+                        showToast('语音上传中...');
+                        const blob = new Blob(chunks, { type });
+                        const fileName = `voice-${Date.now()}${audioExtension(type)}`;
+                        let payload = blob;
+                        if (typeof File === 'function') {
+                            payload = new File([blob], fileName, { type, lastModified: Date.now() });
+                        }
+                        const data = await uploadMedia(payload, fileName);
+                        const audioURL = resolveAssetURL(data.url);
+                        appendMessage(createAudioMessageHTML(audioURL, true), true);
+                        if (State.connected) {
+                            sendSocketMessage(data.url, 'audio');
+                        } else {
+                            appendMessage(createMessageHTML('当前未连接服务器，请稍后重试。', false), false);
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        showToast('语音发送失败');
+                    }
+                };
+                recorder.start();
+                if (State.recordPendingStop) {
+                    finishVoiceRecording(State.recordPendingForceCancel);
+                }
+            } catch (err) {
+                console.error(err);
+                State.recordGestureSource = '';
+                State.recordPointerId = null;
+                State.recordPendingStop = false;
+                State.recordPendingForceCancel = false;
+                stopRecordingStream();
+                hideRecordingOverlay();
+                showToast('无法启用麦克风，请检查权限');
+            }
+        }
+
+        function updateVoiceRecordingPosition(clientY, clientX = 0) {
+            if (!State.recordGestureSource || clientY <= 0 || State.recordingStartY <= 0) return;
+            const deltaY = State.recordingStartY - clientY;
+            const enterThreshold = 96;
+            const leaveThreshold = 56;
+            const overCancelZone = isWithinCancelZone(clientX, clientY);
+            let shouldCancel = State.recordingCanceled;
+            if (shouldCancel) {
+                shouldCancel = overCancelZone || deltaY >= leaveThreshold;
+            } else {
+                shouldCancel = overCancelZone || deltaY >= enterThreshold;
+            }
+            State.recordingCanceled = shouldCancel;
+            State.recordPendingForceCancel = shouldCancel;
+            if (State.isRecording) {
+                updateRecordingOverlay(shouldCancel);
+            }
+        }
+
+        function finishVoiceRecording(forceCancel = false) {
+            if (!State.recordGestureSource && !State.isRecording) return;
+            State.recordPendingStop = true;
+            State.recordPendingForceCancel = State.recordPendingForceCancel || State.recordingCanceled || forceCancel;
+            if (!State.isRecording || !State.mediaRecorder) return;
+            State.recordingCanceled = State.recordPendingForceCancel;
+            if (State.mediaRecorder.state !== 'inactive') {
+                State.mediaRecorder.stop();
+            }
+        }
+
+        DOM.btnVoice.addEventListener('pointerdown', (event) => {
+            if (event.pointerType === 'mouse' && event.button !== 0) return;
+            beginVoiceGesture(event, 'pointer');
+        });
+
+        window.addEventListener('pointermove', (event) => {
+            if (State.recordGestureSource !== 'pointer') return;
+            if (State.recordPointerId != null && event.pointerId != null && event.pointerId !== State.recordPointerId) return;
+            updateVoiceRecordingPosition(event.clientY || 0, event.clientX || 0);
+        });
+
+        window.addEventListener('pointerup', (event) => {
+            if (State.recordGestureSource !== 'pointer') return;
+            if (State.recordPointerId != null && event.pointerId != null && event.pointerId !== State.recordPointerId) return;
+            finishVoiceRecording(false);
+        });
+
+        window.addEventListener('pointercancel', (event) => {
+            if (State.recordGestureSource !== 'pointer') return;
+            if (State.recordPointerId != null && event.pointerId != null && event.pointerId !== State.recordPointerId) return;
+            finishVoiceRecording(true);
+        });
+
+        DOM.btnVoice.addEventListener('touchstart', (event) => {
+            beginVoiceGesture(event, 'touch');
+        }, { passive: false });
+
+        window.addEventListener('touchmove', (event) => {
+            if (State.recordGestureSource !== 'touch') return;
+            event.preventDefault();
+            const point = voicePoint(event);
+            updateVoiceRecordingPosition(point.y || 0, point.x || 0);
+        }, { passive: false });
+
+        window.addEventListener('touchend', (event) => {
+            if (State.recordGestureSource !== 'touch') return;
+            event.preventDefault();
+            finishVoiceRecording(false);
+        }, { passive: false });
+
+        window.addEventListener('touchcancel', (event) => {
+            if (State.recordGestureSource !== 'touch') return;
+            event.preventDefault();
+            finishVoiceRecording(true);
+        }, { passive: false });
+
+        // 右上角 "..." 结束会话
+        document.getElementById('btn-more-top').addEventListener('click', () => {
+            if(State.sessionType !== 'ENDED') {
+                showEndConfirm();
+            }
+        });
+
+        // 阻止输入框回车换行，直接发送
+        DOM.input.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+            }
+        });
+
+        // 启动初始化
+        window.addEventListener('DOMContentLoaded', async () => {
+            notifyHost('servicebridge:ready');
+            initEmojis();
+            hideEvalImmediately();
+            hideEndConfirmImmediately();
+            await bootApp();
+        });
+
+    </script>
+</body>
+</html>

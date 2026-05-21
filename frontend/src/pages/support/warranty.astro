@@ -1,0 +1,28 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import InnerPageHero from '../../components/InnerPageHero.astro';
+import { getContent, staticPage } from '../../lib/content';
+
+const content = await getContent();
+const page = staticPage(content, 'warranty');
+const aboutHero = staticPage(content, 'about').hero;
+---
+
+<BaseLayout content={content} seo={page.seo} path="/support/warranty/">
+  <div class="w-full pt-24">
+    <InnerPageHero
+      id="warranty-hero"
+      eyebrow={page.hero?.eyebrow}
+      title={page.hero?.title || page.title}
+      description={page.hero?.description || page.seo.description}
+      backgroundImage={page.hero?.backgroundImage || aboutHero?.backgroundImage}
+      backgroundVideo={page.hero?.backgroundVideo || aboutHero?.backgroundVideo}
+    />
+    <div id="warranty-content" class="py-24 bg-slate-50 min-h-[60vh] scroll-mt-24">
+      <div class="max-w-4xl mx-auto px-6 bg-white p-12 md:p-16 rounded-3xl shadow-sm border border-gray-100">
+        <h2 class="text-4xl font-extrabold text-gray-900 mb-8 flex items-center gap-4"><span class="text-[#0a66c2]" aria-hidden="true">{page.sections?.icon}</span> {page.title}</h2>
+        <div class="prose-content text-gray-600 leading-relaxed space-y-6" set:html={page.body}></div>
+      </div>
+    </div>
+  </div>
+</BaseLayout>

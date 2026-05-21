@@ -1,0 +1,28 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import InnerPageHero from '../components/InnerPageHero.astro';
+import { getContent, staticPage } from '../lib/content';
+
+const content = await getContent();
+const page = staticPage(content, 'agreement');
+const aboutHero = staticPage(content, 'about').hero;
+---
+
+<BaseLayout content={content} seo={page.seo} path="/agreement/">
+  <div class="w-full pt-24">
+    <InnerPageHero
+      id="agreement-hero"
+      eyebrow={page.hero?.eyebrow}
+      title={page.hero?.title || page.title}
+      description={page.hero?.description || page.seo.description}
+      backgroundImage={page.hero?.backgroundImage || aboutHero?.backgroundImage}
+      backgroundVideo={page.hero?.backgroundVideo || aboutHero?.backgroundVideo}
+    />
+    <div id="agreement-content" class="py-24 bg-white min-h-[60vh] scroll-mt-24">
+      <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-4xl font-extrabold text-gray-900 mb-10 border-b border-gray-200 pb-6">{page.title}</h2>
+        <div class="prose-content text-gray-600 leading-loose space-y-6" set:html={page.body}></div>
+      </div>
+    </div>
+  </div>
+</BaseLayout>

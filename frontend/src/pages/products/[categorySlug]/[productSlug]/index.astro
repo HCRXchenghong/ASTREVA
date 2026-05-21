@@ -1,0 +1,155 @@
+---
+import BaseLayout from '../../../../layouts/BaseLayout.astro';
+import InnerPageHero from '../../../../components/InnerPageHero.astro';
+import { getContent } from '../../../../lib/content';
+import { breadcrumbJsonLd, productJsonLd } from '../../../../lib/seo';
+
+export async function getStaticPaths() {
+  const content = await getContent();
+  return content.products.map((product) => ({
+    params: { categorySlug: product.categorySlug, productSlug: product.slug },
+    props: {
+      product,
+      category: content.categories.find((item) => item.slug === product.categorySlug)
+    }
+  }));
+}
+
+const content = await getContent();
+const { product, category } = Astro.props;
+const path = `/products/${product.categorySlug}/${product.slug}/`;
+const productCenter = content.productCenter;
+const detail = productCenter.detailPage;
+const breadcrumbSeparator = detail.breadcrumbSeparator || '›';
+const badgeIcon = detail.badgeIcon || '✓';
+const featureIcon = detail.featureIcon || '✓';
+const quoteButtonIcon = detail.quoteButtonIcon || '✉';
+const downloadButtonIcon = detail.downloadButtonIcon || '↓';
+const isMp4Video = product.videoUrl && /\.(mp4|webm|ogg)(\?|#|$)/i.test(product.videoUrl);
+const jsonLd = [
+  productJsonLd(product, category),
+  breadcrumbJsonLd([
+    { name: content.site.navigation.homeLabel, url: '/' },
+    { name: content.site.navigation.productsLabel, url: '/products/' },
+    { name: category.name, url: `/products/${category.slug}/` },
+    { name: product.name, url: path }
+  ])
+];
+---
+
+<BaseLayout content={content} seo={product.seo} path={path} jsonLd={jsonLd}>
+  <div class="w-full pt-24">
+    <InnerPageHero
+      id="product-page-hero"
+      eyebrow={category.name}
+      title={product.name}
+      description={product.summary}
+      backgroundImage={product.coverImage || category.coverImage}
+      backgroundVideo={isMp4Video ? product.videoUrl : category.heroVideo}
+    />
+    <div class="bg-gray-50 border-b border-gray-200">
+      <div class="max-w-7xl mx-auto px-6 py-4 flex items-center gap-2 text-sm text-gray-500 flex-wrap">
+        <a href="/" class="hover:text-[#0a66c2] transition-colors">{content.site.navigation.homeLabel}</a>
+        <span aria-hidden="true">{breadcrumbSeparator}</span>
+        <a href="/products/" class="hover:text-[#0a66c2] transition-colors">{content.site.navigation.productsLabel}</a>
+        <span aria-hidden="true">{breadcrumbSeparator}</span>
+        <a href={`/products/${category.slug}/`} class="hover:text-[#0a66c2] transition-colors">{category.name}</a>
+        <span aria-hidden="true">{breadcrumbSeparator}</span>
+        <span class="text-gray-900 font-bold">{product.name}</span>
+      </div>
+    </div>
+    <section id="product-detail-hero" class="py-16 bg-white scroll-mt-24">
+      <div class="max-w-7xl mx-auto px-6 flex flex-col lg:flex-row gap-16 items-center">
+        <div class="lg:w-1/2">
+          <div class="rounded-3xl overflow-hidden shadow-2xl border border-gray-100 aspect-[4/3] group relative">
+            <img src={product.coverImage} alt={product.name} class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+            <div class="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+          </div>
+        </div>
+        <div class="lg:w-1/2">
+          <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-50 text-[#0a66c2] text-sm font-bold mb-6">
+            <span aria-hidden="true">{badgeIcon}</span> {detail.badgeLabel}
+          </div>
+          <h1 class="text-4xl md:text-5xl font-extrabold text-gray-900 mb-6 leading-tight">{product.name}</h1>
+          <p class="text-lg text-gray-600 leading-relaxed mb-8">{product.summary}</p>
+          <div class="space-y-4 mb-10">
+            {product.features.map((feature) => (
+              <div class="flex items-center gap-3">
+                <div class="w-6 h-6 rounded-full bg-[#0a66c2]/10 flex items-center justify-center shrink-0">
+                  <span class="text-[#0a66c2] text-sm leading-none" aria-hidden="true">{featureIcon}</span>
+                </div>
+                <span class="text-gray-700 font-medium">{feature}</span>
+              </div>
+            ))}
+          </div>
+          <div class="flex flex-wrap gap-4">
+            <a href="/support/" class="bg-[#0a66c2] hover:bg-[#084b8c] text-white px-8 py-4 rounded-xl font-bold transition-all shadow-lg hover:shadow-xl flex items-center gap-2">
+              <span aria-hidden="true">{quoteButtonIcon}</span> {detail.quoteButtonLabel}
+            </a>
+            {product.downloads[0] && (
+              <a href={product.downloads[0].url} class="bg-white border-2 border-gray-200 text-gray-700 hover:border-[#0a66c2] hover:text-[#0a66c2] px-8 py-4 rounded-xl font-bold transition-all flex items-center gap-2">
+                <span aria-hidden="true">{downloadButtonIcon}</span> {product.downloads[0].label}
+              </a>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+    <section id="product-specs" class="py-20 bg-gray-50 scroll-mt-24">
+      <div class="max-w-7xl mx-auto px-6">
+        <div class="mb-12 text-center">
+          <h2 class="text-3xl font-extrabold text-gray-900 mb-4">{detail.specsTitle}</h2>
+          <p class="text-gray-500">{detail.specsDescription}</p>
+        </div>
+        <div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+          <div class="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-100">
+            <div class="p-10 flex gap-6">
+              <span class="text-[#0a66c2] shrink-0 text-4xl font-black" aria-hidden="true">{detail.specsPrimaryIcon}</span>
+              <div>
+                <h4 class="text-xl font-bold text-gray-900 mb-2">{detail.specsPrimaryTitle}</h4>
+                <ul class="space-y-2 text-gray-600 text-sm">
+                  {product.specifications.slice(0, 3).map((spec) => <li><strong>{spec.label}：</strong> {spec.value}</li>)}
+                </ul>
+              </div>
+            </div>
+            <div class="p-10 flex gap-6">
+              <span class="text-[#0a66c2] shrink-0 text-4xl font-black" aria-hidden="true">{detail.descriptionIcon}</span>
+              <div>
+                <h4 class="text-xl font-bold text-gray-900 mb-2">{detail.descriptionTitle}</h4>
+                <div class="text-gray-600 text-sm leading-relaxed" set:html={product.body}></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    {product.galleryImages.length > 0 && (
+      <section id="product-gallery" class="py-20 bg-white scroll-mt-24">
+        <div class="max-w-7xl mx-auto px-6">
+          <h2 class="text-3xl font-extrabold text-gray-900 mb-10">{detail.galleryTitle}</h2>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {product.galleryImages.map((image) => (
+              <div class="aspect-[4/3] rounded-2xl overflow-hidden border border-gray-100 shadow-sm">
+                <img src={image} alt={product.name} class="h-full w-full object-cover" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    )}
+    {product.videoUrl && (
+      <section id="product-video" class="py-20 bg-gray-50 scroll-mt-24">
+        <div class="max-w-5xl mx-auto px-6">
+          <h2 class="text-3xl font-extrabold text-gray-900 mb-8 text-center">{detail.videoTitle}</h2>
+          <div class="aspect-video overflow-hidden rounded-3xl border border-gray-100 bg-black shadow-xl">
+            {isMp4Video ? (
+              <video src={product.videoUrl} controls playsinline preload="metadata" class="h-full w-full" />
+            ) : (
+              <iframe src={product.videoUrl} title={detail.videoTitle} class="h-full w-full border-0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+            )}
+          </div>
+        </div>
+      </section>
+    )}
+  </div>
+</BaseLayout>

@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: astreva
+      POSTGRES_USER: astreva
+      POSTGRES_PASSWORD: astreva_dev
+    volumes:
+      - astreva-postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astreva -d astreva"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  cms:
+    build:
+      context: ..
+      dockerfile: cms/Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 1337
+      APP_KEYS: change-me-key-1,change-me-key-2,change-me-key-3,change-me-key-4
+      API_TOKEN_SALT: change-me-api-token-salt
+      ADMIN_JWT_SECRET: change-me-admin-jwt-secret
+      TRANSFER_TOKEN_SALT: change-me-transfer-token-salt
+      JWT_SECRET: change-me-jwt-secret
+      DATABASE_CLIENT: postgres
+      DATABASE_URL: postgres://astreva:astreva_dev@postgres:5432/astreva?sslmode=disable
+      FRONTEND_SITE_ORIGIN: http://127.0.0.1:8080
+      FRONTEND_REBUILD_WEBHOOK_URL: http://rebuild-webhook:8787/rebuild
+      STRAPI_REBUILD_WEBHOOK_SECRET: change-me-webhook-secret
+    ports:
+      - "1337:1337"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  rebuild-webhook:
+    image: node:24-alpine
+    working_dir: /app
+    command: ["node", "scripts/rebuild-webhook.mjs"]
+    environment:
+      REBUILD_WEBHOOK_PORT: 8787
+      STRAPI_REBUILD_WEBHOOK_SECRET: change-me-webhook-secret
+      PUBLIC_SITE_URL: http://127.0.0.1:8080
+      PUBLIC_STRAPI_URL: http://cms:1337
+      PUBLIC_SERVICEBRIDGE_URL: http://127.0.0.1:8081
+    volumes:
+      - ..:/app
+    ports:
+      - "8787:8787"
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      args:
+        PUBLIC_SITE_URL: http://127.0.0.1:8080
+        PUBLIC_STRAPI_URL: http://127.0.0.1:1337
+        PUBLIC_SERVICEBRIDGE_URL: http://127.0.0.1:8081
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+
+volumes:
+  astreva-postgres:

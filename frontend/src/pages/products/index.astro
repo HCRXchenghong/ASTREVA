@@ -1,0 +1,47 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import InnerPageHero from '../../components/InnerPageHero.astro';
+import { getContent } from '../../lib/content';
+
+const content = await getContent();
+const productCenter = content.productCenter;
+const seo = productCenter.seo;
+const categoryCtaIcon = productCenter.categoryPage.categoryCtaIcon || '→';
+---
+
+<BaseLayout content={content} seo={seo} path="/products/">
+  <div class="w-full pt-24">
+    <InnerPageHero
+      id="products-hero"
+      title={productCenter.hero.title}
+      description={productCenter.hero.description}
+      backgroundImage={productCenter.hero.backgroundImage}
+      backgroundVideo={productCenter.hero.backgroundVideo}
+    />
+    <div id="product-categories" class="py-24 bg-gray-50 min-h-[60vh] scroll-mt-24">
+      <div class="max-w-7xl mx-auto px-6">
+        <div class="text-center mb-16">
+          <h2 class="text-3xl font-bold text-gray-800">{productCenter.intro.title}</h2>
+          <p class="text-gray-500 mt-4">{productCenter.intro.description}</p>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+          {content.categories.map((item) => (
+            <a href={`/products/${item.slug}/`} class="group bg-white rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-gray-100">
+              <div class="h-64 overflow-hidden relative">
+                <div class="absolute inset-0 bg-[#0a4d8c]/10 group-hover:bg-transparent transition-colors z-10"></div>
+                <img src={item.coverImage} alt={item.name} class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+              </div>
+              <div class="p-8 text-center">
+                <h3 class="text-xl font-bold text-gray-800 group-hover:text-[#0a5ca8] transition-colors">{item.name}</h3>
+                <p class="text-gray-500 mt-3 text-sm line-clamp-2">{item.description}</p>
+                <span class="inline-flex mt-6 text-sm text-[#0a66c2] font-semibold items-center gap-1 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all">
+                  {productCenter.intro.categoryCtaLabel} <span aria-hidden="true">{categoryCtaIcon}</span>
+                </span>
+              </div>
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+  </div>
+</BaseLayout>

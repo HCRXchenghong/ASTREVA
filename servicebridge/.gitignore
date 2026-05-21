@@ -1,0 +1,21 @@
+.DS_Store
+
+# Go
+bin/
+coverage.out
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Local runtime state
+.run/

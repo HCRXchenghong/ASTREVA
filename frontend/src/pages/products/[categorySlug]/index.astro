@@ -1,0 +1,59 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import InnerPageHero from '../../../components/InnerPageHero.astro';
+import { getContent, productsForCategory } from '../../../lib/content';
+import { breadcrumbJsonLd } from '../../../lib/seo';
+
+export async function getStaticPaths() {
+  const content = await getContent();
+  return content.categories.map((category) => ({ params: { categorySlug: category.slug }, props: { category } }));
+}
+
+const content = await getContent();
+const { category } = Astro.props;
+const products = productsForCategory(content, category.slug);
+const path = `/products/${category.slug}/`;
+const productCenter = content.productCenter;
+const categoryTitle = productCenter.categoryPage.titleTemplate.replace('{category}', category.name);
+const backIcon = productCenter.categoryPage.backIcon || '←';
+const jsonLd = [breadcrumbJsonLd([{ name: content.site.navigation.homeLabel, url: '/' }, { name: content.site.navigation.productsLabel, url: '/products/' }, { name: category.name, url: path }])];
+---
+
+<BaseLayout content={content} seo={category.seo} path={path} jsonLd={jsonLd}>
+  <div class="w-full pt-24">
+    <InnerPageHero
+      id="category-hero"
+      eyebrow={content.site.navigation.productsLabel}
+      title={category.name}
+      description={category.description}
+      backgroundImage={category.coverImage}
+      backgroundVideo={category.heroVideo}
+    />
+    <div id="category-products" class="py-24 bg-gray-50 min-h-[60vh] scroll-mt-24">
+      <div class="max-w-7xl mx-auto px-6">
+        <div class="flex flex-col md:flex-row justify-between items-center mb-12 border-b border-gray-200 pb-6">
+          <h2 class="text-3xl font-bold text-gray-800 border-l-4 border-[#0a4d8c] pl-4">{categoryTitle}</h2>
+          <a href="/products/" class="mt-4 md:mt-0 flex items-center gap-2 text-[#0a4d8c] font-bold hover:bg-blue-50 px-5 py-2.5 rounded-full transition-colors border border-blue-200">
+            <span aria-hidden="true">{backIcon}</span> {productCenter.categoryPage.backLabel}
+          </a>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+          {products.map((item) => (
+            <a href={`/products/${category.slug}/${item.slug}/`} class="group bg-white rounded-3xl overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-300 border border-gray-100 flex flex-col">
+              <div class="h-64 overflow-hidden relative">
+                <div class="absolute inset-0 bg-[#0a4d8c]/0 group-hover:bg-[#0a4d8c]/20 transition-colors z-10 flex items-center justify-center">
+                  <span class="bg-white text-[#0a4d8c] px-6 py-2 rounded-full font-bold opacity-0 group-hover:opacity-100 transform translate-y-4 group-hover:translate-y-0 transition-all">{productCenter.categoryPage.productHoverLabel}</span>
+                </div>
+                <img src={item.coverImage} alt={item.name} class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+              </div>
+              <div class="p-8">
+                <h3 class="text-2xl font-extrabold text-gray-800 mb-3">{item.name}</h3>
+                <p class="text-gray-500 leading-relaxed text-sm">{item.summary}</p>
+              </div>
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
