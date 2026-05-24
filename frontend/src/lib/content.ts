@@ -3,6 +3,25 @@ import type { Category, FAQ, HomePage, Product, ProductCenterPage, SiteContent, 
 
 const CONTENT_API_URL = (process.env.PUBLIC_ADMIN_URL || '').replace(/\/$/, '');
 const CONTENT_API_TOKEN = process.env.CONTENT_API_TOKEN || '';
+const CONTENT_BRIDGE_URL = (process.env.PUBLIC_SERVICEBRIDGE_URL || '').replace(/\/$/, '');
+
+function normalizeServiceBridgeUrl(value?: string) {
+  const candidate = `${value || ''}`.trim().replace(/\/$/, '');
+  if (!candidate) return '';
+  const lower = candidate.toLowerCase();
+  if (lower === '127.0.0.1' || lower === 'localhost' || lower === '::1' || lower.startsWith('127.0.0.1:') || lower.startsWith('localhost:') || lower.startsWith('[::1]') || lower.startsWith('[::1]:')) {
+    return '';
+  }
+  if (!candidate.includes('://')) return candidate;
+  try {
+    const url = new URL(candidate);
+    const host = String(url.hostname || '').toLowerCase();
+    if (host === '127.0.0.1' || host === 'localhost' || host === '::1') return '';
+    return candidate;
+  } catch {
+    return '';
+  }
+}
 
 type ApiEntity = Record<string, any>;
 
@@ -106,7 +125,10 @@ function mapSiteSetting(raw: any): SiteSettings {
     phone: item.phone || fallbackContent.site.phone,
     email: item.email || fallbackContent.site.email,
     copyright: item.copyright || fallbackContent.site.copyright,
-    serviceBridgeUrl: item.serviceBridgeUrl || process.env.PUBLIC_SERVICEBRIDGE_URL || fallbackContent.site.serviceBridgeUrl,
+    serviceBridgeUrl:
+      normalizeServiceBridgeUrl(item.serviceBridgeUrl) ||
+      normalizeServiceBridgeUrl(CONTENT_BRIDGE_URL) ||
+      fallbackContent.site.serviceBridgeUrl,
     defaultSeo: seoWithFallback(item.defaultSeo, fallbackContent.site.defaultSeo),
     socialLinks: json(item.socialLinks, fallbackContent.site.socialLinks),
     cookie: { ...fallbackContent.site.cookie, ...json(item.cookie, fallbackContent.site.cookie) },

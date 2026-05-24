@@ -14,8 +14,27 @@ export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUr
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(Number(chat.initialUnreadCount ?? 1));
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const envBridgeUrl = (import.meta.env.PUBLIC_SERVICEBRIDGE_URL || '').trim().replace(/\/$/, '');
+
+  const normalizeBridgeUrl = (value: string) => {
+    const candidate = `${value || ''}`.trim().replace(/\/$/, '');
+    if (!candidate) return '';
+    const lower = candidate.toLowerCase();
+    if (lower === '127.0.0.1' || lower === 'localhost' || lower === '::1' || lower.startsWith('127.0.0.1:') || lower.startsWith('localhost:') || lower.startsWith('[::1]') || lower.startsWith('[::1]:')) {
+      return '';
+    }
+    if (!candidate.includes('://')) return candidate;
+    try {
+      const host = new URL(candidate).hostname.toLowerCase();
+      if (host === '127.0.0.1' || host === 'localhost' || host === '::1') return '';
+      return candidate;
+    } catch {
+      return '';
+    }
+  };
+
   const iframeUrl = useMemo(() => {
-    const base = serviceBridgeUrl || import.meta.env.PUBLIC_SERVICEBRIDGE_URL || 'http://127.0.0.1:5173';
+    const base = normalizeBridgeUrl(serviceBridgeUrl) || normalizeBridgeUrl(envBridgeUrl) || window.location.origin;
     try {
       const url = new URL(base);
       url.searchParams.set('embed', '1');

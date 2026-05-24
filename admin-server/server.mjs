@@ -116,12 +116,38 @@ async function loadFallbackContent() {
     process: {
       env: {
         ...process.env,
-        PUBLIC_SERVICEBRIDGE_URL: process.env.PUBLIC_SERVICEBRIDGE_URL || 'http://127.0.0.1:5173'
+        PUBLIC_SERVICEBRIDGE_URL: process.env.PUBLIC_SERVICEBRIDGE_URL || ''
       }
     }
   };
   vm.runInNewContext(compiled, sandbox, { filename: 'fallback.ts' });
   return structuredClone(sandbox.exports.fallbackContent);
+}
+
+function normalizeServiceBridgeUrl(value) {
+  const candidate = `${value || ''}`.trim().replace(/\/$/, '');
+  if (!candidate) return '';
+  const lower = candidate.toLowerCase();
+  if (lower === '127.0.0.1' || lower === 'localhost' || lower === '::1' || lower.startsWith('127.0.0.1:') || lower.startsWith('localhost:') || lower.startsWith('[::1]') || lower.startsWith('[::1]:')) {
+    return '';
+  }
+  if (!candidate.includes('://')) return candidate;
+  try {
+    const url = new URL(candidate);
+    const host = String(url.hostname || '').toLowerCase();
+    if (host === '127.0.0.1' || host === 'localhost' || host === '::1') return '';
+    return candidate;
+  } catch {
+    return '';
+  }
+}
+
+function resolveServiceBridgeUrl(rawValue) {
+  return (
+    normalizeServiceBridgeUrl(rawValue) ||
+    normalizeServiceBridgeUrl(process.env.PUBLIC_SERVICEBRIDGE_URL) ||
+    ''
+  );
 }
 
 function normalizeContent(content) {
@@ -133,7 +159,10 @@ function normalizeContent(content) {
   content.products ||= [];
   content.faqs ||= [];
   content.staticPages ||= [];
-  content.site.serviceBridgeUrl ||= process.env.PUBLIC_SERVICEBRIDGE_URL || 'http://127.0.0.1:5173';
+  content.site.serviceBridgeUrl = resolveServiceBridgeUrl(content.site.serviceBridgeUrl);
+  if (!content.site.serviceBridgeUrl) {
+    content.site.serviceBridgeUrl = resolveServiceBridgeUrl(process.env.PUBLIC_SERVICEBRIDGE_URL);
+  }
   return content;
 }
 

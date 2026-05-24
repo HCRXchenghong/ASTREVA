@@ -160,11 +160,21 @@ const cases = rawCases.map((item, index) => ({
       backgroundVideo={page.hero?.backgroundVideo}
     />
 
-    <nav class="sticky top-24 z-40 overflow-x-auto border-b bg-white py-4 hide-scrollbar" aria-label="案例筛选">
-      <div class="mx-auto flex max-w-7xl gap-4 px-6">
+    <nav class="sticky top-24 z-40 overflow-x-auto border-y border-[#d9dee5] bg-white/95 backdrop-blur hide-scrollbar" aria-label="案例筛选">
+      <div class="mx-auto flex max-w-7xl items-center gap-8 px-6">
+        <span class="shrink-0 text-xs font-bold uppercase tracking-[0.18em] text-[#9aa3af]">Case Filter</span>
         {filters.map((filter, index) => (
-          <button data-case-filter={filter} class={`shrink-0 rounded-full px-6 py-2 text-sm font-bold transition-all ${index === 0 ? 'bg-[#0a4d8c] text-white' : 'border border-gray-200 text-gray-500 hover:border-[#0a4d8c] hover:text-[#0a4d8c]'}`} type="button">
-            {filter}
+          <button
+            data-case-filter={filter}
+            class={`group relative shrink-0 py-5 text-sm font-bold transition-colors hover:text-[#0a4d8c] ${
+              index === 0
+                ? 'text-[#0a4d8c]'
+                : 'text-[#6b7280]'
+            }`}
+            type="button"
+          >
+            <span>{filter}</span>
+            <span class={`absolute inset-x-0 bottom-0 h-[2px] origin-left bg-[#0a66c2] transition-transform ${index === 0 ? 'scale-x-100' : 'scale-x-0 group-hover:scale-x-100'}`}></span>
           </button>
         ))}
       </div>
@@ -178,7 +188,11 @@ const cases = rawCases.map((item, index) => ({
               <div class="relative overflow-hidden rounded-3xl shadow-2xl">
                 <img src={item.image} alt={item.title} class="h-[450px] w-full object-cover transition-transform duration-700 group-hover:scale-105" />
                 <div class="absolute left-6 top-6 flex flex-wrap gap-2">
-                  {item.tags.map((tag) => <span class="rounded-full bg-[#0a4d8c]/80 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-white backdrop-blur-md">{tag}</span>)}
+                  {item.tags.map((tag) => (
+                    <span class="border border-white/40 bg-[#101820]/65 px-3 py-1.5 text-[11px] font-bold tracking-[0.06em] text-white backdrop-blur-sm">
+                      {tag}
+                    </span>
+                  ))}
                 </div>
               </div>
             </div>
@@ -329,11 +343,11 @@ const cases = rawCases.map((item, index) => ({
         const isAll = button === filterButtons[0];
         filterButtons.forEach((item) => {
           const active = item === button;
-          item.classList.toggle('bg-[#0a4d8c]', active);
-          item.classList.toggle('text-white', active);
-          item.classList.toggle('border', !active);
-          item.classList.toggle('border-gray-200', !active);
-          item.classList.toggle('text-gray-500', !active);
+          item.classList.toggle('text-[#0a4d8c]', active);
+          item.classList.toggle('text-[#6b7280]', !active);
+          const underline = item.querySelector('span:last-child');
+          underline?.classList.toggle('scale-x-100', active);
+          underline?.classList.toggle('scale-x-0', !active);
         });
         caseCards.forEach((card) => {
           const text = card.getAttribute('data-case-search') || '';

@@ -42,6 +42,8 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
     .filter((product) => product.categorySlug === hoveredCategory)
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .slice(0, 6);
+  const hoveredCategoryInfo = sortedCategories.find((category) => category.slug === hoveredCategory) || sortedCategories[0];
+  const menuProductTags = ['工程铺装', '模块化', '可定制'];
 
   const isActive = (item: (typeof navItems)[number]) => {
     if (item.href === '/') return currentPath === '/';
@@ -76,45 +78,81 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
               </a>
 
               {item.hasDropdown && activeDropdown === 'products' && (
-                <div className="absolute top-full left-1/2 -translate-x-1/2 w-[1008px] max-w-[calc(100vw-48px)] bg-white shadow-2xl rounded-b-2xl border-t border-gray-100 overflow-hidden flex flex-col">
-                  <div className="bg-gray-50 px-10 py-6 border-b border-gray-200 flex items-center gap-5">
-                    <span className="text-[17px] font-bold text-gray-500 whitespace-nowrap">{site.navigation.categoryPrompt}</span>
-                    <div className="flex flex-wrap gap-2.5">
-                      {sortedCategories.map((category) => (
-                        <a
-                          key={category.slug}
-                          href={`/products/${category.slug}/`}
-                          onMouseEnter={() => setHoveredCategory(category.slug)}
-                          className={`px-5 py-2.5 rounded-full text-[17px] font-bold transition-all ${
-                            hoveredCategory === category.slug
-                              ? 'bg-[#0a66c2] text-white shadow-md scale-105'
-                              : 'bg-white text-gray-600 hover:bg-gray-200 hover:text-gray-900 border border-gray-200'
-                          }`}
-                        >
-                          {category.name}
-                        </a>
-                      ))}
+                <div className="fixed left-0 top-24 w-screen border-y border-[#d9dee5] bg-[#f7f8f6] shadow-[0_24px_60px_rgba(18,32,54,0.12)]">
+                  <div className="max-w-7xl mx-auto px-6 py-7">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
+                      <span className="text-[15px] font-extrabold text-[#596272] whitespace-nowrap">{site.navigation.categoryPrompt.replace(' :', '').replace(':', '')}</span>
+                      <div className="flex flex-wrap gap-3">
+                        {sortedCategories.map((category, index) => {
+                          const active = hoveredCategory === category.slug;
+                          return (
+                            <a
+                              key={category.slug}
+                              href={`/products/${category.slug}/`}
+                              onMouseEnter={() => setHoveredCategory(category.slug)}
+                              className={`inline-flex items-center gap-3 rounded-xl border px-5 py-3 text-[15px] font-extrabold transition-all ${
+                                active
+                                  ? 'border-[#0a66c2] bg-[#0a66c2] text-white shadow-[0_12px_24px_rgba(10,102,194,0.22)]'
+                                  : 'border-[#d8dee7] bg-white text-[#303a4b] hover:border-[#9fb7d1] hover:text-[#0a5ca8]'
+                              }`}
+                            >
+                              <span className={`text-[11px] font-black ${active ? 'text-white/70' : 'text-[#a3acba]'}`}>{String(index + 1).padStart(2, '0')}</span>
+                              {category.name}
+                            </a>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
-                  <div className="p-10 bg-white min-h-[336px]">
-                    <div className="grid grid-cols-2 gap-10">
-                      {activeProducts.map((product) => (
-                        <a
-                          key={product.id}
-                          href={`/products/${product.categorySlug}/${product.slug}/`}
-                          className="group flex gap-5 items-center bg-gray-50/50 hover:bg-blue-50/50 p-3.5 rounded-2xl transition-colors border border-transparent hover:border-blue-100"
-                        >
-                          <div className="h-[115px] w-[154px] shrink-0 rounded-xl overflow-hidden shadow-sm relative">
-                            <img src={product.coverImage} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                          </div>
-                          <div>
-                            <h4 className="text-[19px] font-bold text-gray-800 group-hover:text-[#0a5ca8] transition-colors leading-snug mb-2.5">{product.name}</h4>
-                            <span className="inline-flex text-[13px] text-[#0a66c2] font-semibold items-center gap-1.5 opacity-0 group-hover:opacity-100 transform translate-x-[-10px] group-hover:translate-x-0 transition-all">
-                              {site.navigation.productDetailLabel} <ArrowRight size={14} />
-                            </span>
-                          </div>
-                        </a>
-                      ))}
+
+                  <div className="border-t border-[#d9dee5] bg-white">
+                    <div className="max-w-7xl mx-auto px-6 py-9">
+                      <div className="mb-6 flex items-end justify-between gap-8">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#b88923]">Product Line</p>
+                          <h3 className="mt-2 text-2xl font-black text-[#172033]">{hoveredCategoryInfo?.name}</h3>
+                        </div>
+                        <p className="hidden max-w-md text-sm leading-7 text-[#667085] lg:block">{hoveredCategoryInfo?.description}</p>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                        {activeProducts.map((product, index) => (
+                          <a
+                            key={product.id}
+                            href={`/products/${product.categorySlug}/${product.slug}/`}
+                            className="group overflow-hidden rounded-xl border border-[#dfe4ea] bg-white shadow-[0_12px_34px_rgba(18,32,54,0.06)] transition-all hover:-translate-y-0.5 hover:border-[#9fb7d1] hover:shadow-[0_18px_44px_rgba(18,32,54,0.12)]"
+                          >
+                            <div className="grid min-h-[178px] grid-cols-[190px_1fr]">
+                              <div
+                                className="relative overflow-hidden bg-[linear-gradient(135deg,#d7dde3,#f6f7f6)]"
+                                style={{
+                                  backgroundImage: `linear-gradient(135deg, rgba(10,77,140,0.10), rgba(184,137,35,0.10)), url('${product.coverImage}')`,
+                                  backgroundSize: 'cover',
+                                  backgroundPosition: 'center'
+                                }}
+                              >
+                                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0)_45%,rgba(10,31,57,0.35))]" />
+                                <span className="absolute left-4 top-4 rounded-full bg-white/90 px-3 py-1 text-[11px] font-black text-[#0a4d8c] shadow-sm">ASTREVA {String(index + 1).padStart(2, '0')}</span>
+                              </div>
+                              <div className="flex flex-col justify-between p-6">
+                                <div>
+                                  <div className="mb-4 h-[3px] w-10 bg-[#b88923]" />
+                                  <h4 className="text-xl font-black text-[#172033] group-hover:text-[#0a5ca8] transition-colors leading-tight">{product.name}</h4>
+                                  <p className="mt-3 text-sm leading-6 text-[#667085] line-clamp-2">{product.summary}</p>
+                                  <div className="mt-4 flex flex-wrap gap-2">
+                                    {menuProductTags.map((tag) => (
+                                      <span key={tag} className="rounded-full border border-[#dfe4ea] bg-[#f7f8f6] px-3 py-1 text-[11px] font-bold text-[#536173]">{tag}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                                <span className="mt-5 inline-flex items-center gap-2 text-sm font-extrabold text-[#0a66c2]">
+                                  {site.navigation.productDetailLabel} <ArrowRight size={15} className="transition-transform group-hover:translate-x-1" />
+                                </span>
+                              </div>
+                            </div>
+                          </a>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
