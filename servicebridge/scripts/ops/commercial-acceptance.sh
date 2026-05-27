@@ -52,13 +52,8 @@ wait_ready() {
 section "backend unit tests"
 (cd "$ROOT_DIR/backend" && go test ./...)
 
-section "frontend syntax checks"
-(cd "$ROOT_DIR" && node --check apps/admin-app/main.js)
-(cd "$ROOT_DIR" && node --check apps/admin-app/common/api.js)
-(cd "$ROOT_DIR" && node --check apps/admin-app/common/realtime.js)
-(cd "$ROOT_DIR" && node --check apps/agent-app/main.js)
-(cd "$ROOT_DIR" && node --check apps/agent-app/common/api.js)
-(cd "$ROOT_DIR" && node --check apps/agent-app/common/realtime.js)
+section "user web checks"
+test -f "$ROOT_DIR/apps/user-web/index.html"
 
 section "docker compose config"
 docker compose -f "$ROOT_DIR/deployments/docker-compose.dev.yml" config >/tmp/customer-service-compose-dev-acceptance.out
@@ -103,9 +98,14 @@ S3_SESSION_TOKEN=
 S3_FORCE_PATH_STYLE=false
 S3_KEY_PREFIX=uploads
 S3_PUBLIC_BASE_URL=
-PUSH_WEBHOOK_URL=
-PUSH_WEBHOOK_BEARER_TOKEN=
-PUSH_WEBHOOK_TIMEOUT_SECONDS=5
+FEISHU_ENABLED=false
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+FEISHU_VERIFICATION_TOKEN=
+FEISHU_ENCRYPT_KEY=
+FEISHU_DEFAULT_CHAT_ID=
+FEISHU_AGENT_ID=agent_feishu
+FEISHU_TIMEOUT_SECONDS=8
 EOF
 sed -i '' \
   -e "s#__POSTGRES_PASSWORD__#$acceptance_pg_secret#g" \

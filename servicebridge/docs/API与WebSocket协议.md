@@ -117,7 +117,95 @@ Authorization: Bearer <agent_token>
 - `busy`
 - `offline`
 
-### 注册 App 推送设备
+## 4. 飞书直连接口
+
+### 飞书事件回调
+
+`POST /api/integrations/feishu/events`
+
+飞书开放平台事件订阅回调地址。该接口支持 URL 校验和 `im.message.receive_v1` 消息事件。
+
+URL 校验请求：
+
+```json
+{
+  "challenge": "test_challenge",
+  "token": "<FEISHU_VERIFICATION_TOKEN>",
+  "type": "url_verification"
+}
+```
+
+返回：
+
+```json
+{
+  "challenge": "test_challenge"
+}
+```
+
+消息事件处理规则：
+
+- 只处理文本消息。
+- 优先用飞书 `parent_id/root_id/message_id` 查找本地会话。
+- 找不到映射时，从文本中的 `#conv_xxx` 兜底。
+- 回复落库为虚拟客服 `agent_feishu` 的客服消息。
+- 重复事件通过 `event_id/message_id` 幂等。
+
+### 获取飞书配置
+
+`GET /api/admin/integrations/feishu`
+
+返回后台保存的飞书配置。密钥字段只返回脱敏值：
+
+```json
+{
+  "enabled": true,
+  "base_url": "https://open.feishu.cn",
+  "app_id": "cli_xxx",
+  "app_secret_masked": "cli_****xxxx",
+  "verification_token_masked": "abcd****wxyz",
+  "encrypt_key_masked": "abcd****wxyz",
+  "default_chat_id": "oc_xxx",
+  "agent_id": "agent_feishu",
+  "timeout_seconds": 8
+}
+```
+
+### 保存飞书配置
+
+`PATCH /api/admin/integrations/feishu`
+
+该接口是飞书直连版的后台配置入口。配置会保存到 PostgreSQL 的 `feishu_settings` 表；`app_secret`、`verification_token`、`encrypt_key` 在配置 `DATA_ENCRYPTION_KEY` 后会加密落库。未传或空字符串的密钥字段会保留原值。
+
+```json
+{
+  "enabled": true,
+  "base_url": "https://open.feishu.cn",
+  "app_id": "cli_xxx",
+  "app_secret": "xxx",
+  "verification_token": "xxx",
+  "encrypt_key": "xxx",
+  "default_chat_id": "oc_xxx",
+  "agent_id": "agent_feishu",
+  "timeout_seconds": 8
+}
+```
+
+### 测试飞书配置
+
+`POST /api/admin/integrations/feishu/test`
+
+向后台保存的默认飞书群发送一条测试消息。
+
+```json
+{
+  "text": "飞书客服接入测试"
+}
+```
+
+### 旧推送设备接口
+
+以下接口只保留为兼容旧内部测试，不再作为产品主链路。
 
 `POST /api/agent/push-device`
 
@@ -129,11 +217,9 @@ Authorization: Bearer <agent_token>
 }
 ```
 
-该接口用于 APNs、Android 厂商推送或 uni-push 接入。相同客服、平台、服务商和 token 会幂等更新。
+飞书直连版不再依赖该接口。
 
-客服端 uni-app 登录成功后会尝试调用 `uni.getPushClientId`，拿到 `cid` 后自动注册到该接口；H5 或模拟器没有推送能力时会静默跳过。
-
-当后端配置 `PUSH_WEBHOOK_URL` 后，访客新消息触发客服提醒时，服务端会把通知和该客服已注册设备 POST 到推送网关。网关可以是 uni-push 云函数、APNs/Android 厂商推送适配服务。
+## 5. 账号与客服兼容接口
 
 ### 修改当前登录密码
 
@@ -161,7 +247,7 @@ Authorization: Bearer <agent_token>
 }
 ```
 
-## 4. 管理接口
+## 6. 管理接口
 
 请求头：
 
@@ -428,7 +514,7 @@ Authorization: Bearer <admin_token>
 
 返回 `text/csv` 附件，字段包含审计 ID、操作者类型、操作者 ID、动作、资源、资源 ID、IP、User-Agent、描述和创建时间。管理端“管理操作审计”页面的“导出”按钮调用该接口。
 
-## 5. 通用会话接口
+## 7. 通用会话接口
 
 ### 获取历史消息
 
@@ -473,7 +559,7 @@ Authorization: Bearer <admin_token>
 
 访客、客服、管理账号均可上传。使用 `multipart/form-data`，字段名为 `file`。当前支持 `jpg/png/gif/webp`。
 
-用户端 Web、客服端 uni-app 的相册/拍照发送，以及管理端联系方式二维码上传均使用该接口。上传完成后，图片消息通过 WebSocket 以 `message_type=image` 发送，`content` 必须为上传返回的 `/uploads/...` 或公开 `http(s)` URL。
+用户端 Web 图片发送使用该接口。上传完成后，图片消息通过 WebSocket 以 `message_type=image` 发送，`content` 必须为上传返回的 `/uploads/...` 或公开 `http(s)` URL。
 
 上传存储由 `UPLOAD_DRIVER` 决定：
 
@@ -543,7 +629,7 @@ Authorization: Bearer <visitor_token>
 }
 ```
 
-## 6. WebSocket 连接
+## 8. WebSocket 连接
 
 ### 访客连接
 
@@ -563,7 +649,7 @@ ws://localhost:8080/ws?role=agent&token=<agent_token>
 ws://localhost:8080/ws?role=admin&token=<admin_token>
 ```
 
-## 7. WebSocket 事件
+## 9. WebSocket 事件
 
 ### 心跳
 
@@ -701,7 +787,7 @@ ws://localhost:8080/ws?role=admin&token=<admin_token>
 }
 ```
 
-## 8. 生产安全相关环境变量
+## 10. 生产安全相关环境变量
 
 - `DATA_ENCRYPTION_KEY`：配置后，PostgreSQL 中 `ai_settings.api_key_ciphertext` 会以 `enc:v1:` 前缀加密存储。
 - `ADMIN_BOOTSTRAP_PASSWORD` / `AGENT_BOOTSTRAP_PASSWORD`：首次初始化默认管理员和默认客服的密码；生产环境必须设置为非默认强密码。
@@ -714,3 +800,9 @@ ws://localhost:8080/ws?role=admin&token=<admin_token>
 - `REDIS_ADDR`：启用 Redis 跨节点 WebSocket 事件广播。
 - `UPLOAD_DIR`：本地上传目录，容器部署时需要挂共享卷。
 - `UPLOAD_PUBLIC_BASE_URL`：上传文件公开域名，例如 `https://service.example.com`。
+- `FEISHU_ENABLED`：启用飞书直连客服。
+- `FEISHU_APP_ID` / `FEISHU_APP_SECRET`：飞书自建应用凭证。
+- `FEISHU_VERIFICATION_TOKEN`：飞书事件订阅校验 token。
+- `FEISHU_ENCRYPT_KEY`：飞书事件订阅加密密钥。
+- `FEISHU_DEFAULT_CHAT_ID`：默认客服群 `chat_id`。
+- `FEISHU_AGENT_ID`：飞书虚拟客服 ID，默认 `agent_feishu`。

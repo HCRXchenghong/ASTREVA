@@ -47,6 +47,8 @@ type Store interface {
 	UpdateKeywordRule(id string, next domain.KeywordRule) (domain.KeywordRule, error)
 	AISettings() domain.AISettings
 	UpdateAISettings(next domain.AISettings) (domain.AISettings, error)
+	FeishuSettings() domain.FeishuSettings
+	UpdateFeishuSettings(next domain.FeishuSettings) (domain.FeishuSettings, error)
 	BusinessHours() domain.BusinessHours
 	UpdateBusinessHours(next domain.BusinessHours) (domain.BusinessHours, error)
 	ChangePassword(session domain.AuthSession, currentPassword, newPassword string) error
@@ -56,6 +58,9 @@ type Store interface {
 	ResetAgentPassword(id, password string) (domain.Agent, error)
 	DisableAgent(id string) (domain.Agent, error)
 	DeleteAgent(id string) (domain.Agent, error)
+	EnsureFeishuAgent(id, name string) (domain.Agent, error)
+	BindFeishuMessage(binding domain.FeishuMessageBinding) (domain.FeishuMessageBinding, error)
+	FeishuConversationByMessage(messageID string) (string, bool)
 	RegisterAgentPushDevice(agentID string, device domain.PushDevice) (domain.PushDevice, error)
 	PushDevicesForAgent(agentID string) []domain.PushDevice
 }

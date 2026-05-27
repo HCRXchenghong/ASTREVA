@@ -35,27 +35,38 @@ type MemoryStore struct {
 	authTokens    map[string]domain.AuthSession
 	visitorTokens map[string]domain.AuthSession
 
-	visitors      map[string]*domain.Visitor
-	conversations map[string]*domain.Conversation
-	messages      map[string][]domain.Message
-	pushDevices   map[string]*domain.PushDevice
-	ratings       map[string]*domain.ServiceRating
-	auditEvents   []domain.AuditEvent
+	visitors       map[string]*domain.Visitor
+	conversations  map[string]*domain.Conversation
+	messages       map[string][]domain.Message
+	pushDevices    map[string]*domain.PushDevice
+	feishuBindings map[string]*domain.FeishuMessageBinding
+	ratings        map[string]*domain.ServiceRating
+	auditEvents    []domain.AuditEvent
 
 	keywordRules []domain.KeywordRule
 	contacts     domain.ContactSettings
 	ai           domain.AISettings
+	feishu       domain.FeishuSettings
 	business     domain.BusinessHours
 }
 
 type Options struct {
-	OpenAIAPIKey           string
-	OpenAIBaseURL          string
-	OpenAIModel            string
-	OpenAIAPIType          string
-	DataEncryptionKey      string
-	BootstrapAdminPassword string
-	BootstrapAgentPassword string
+	OpenAIAPIKey            string
+	OpenAIBaseURL           string
+	OpenAIModel             string
+	OpenAIAPIType           string
+	DataEncryptionKey       string
+	BootstrapAdminPassword  string
+	BootstrapAgentPassword  string
+	FeishuEnabled           bool
+	FeishuBaseURL           string
+	FeishuAppID             string
+	FeishuAppSecret         string
+	FeishuVerificationToken string
+	FeishuEncryptKey        string
+	FeishuDefaultChatID     string
+	FeishuAgentID           string
+	FeishuTimeoutSeconds    int
 }
 
 func NewMemoryStore(options Options) *MemoryStore {
@@ -70,6 +81,7 @@ func NewMemoryStore(options Options) *MemoryStore {
 		conversations:   map[string]*domain.Conversation{},
 		messages:        map[string][]domain.Message{},
 		pushDevices:     map[string]*domain.PushDevice{},
+		feishuBindings:  map[string]*domain.FeishuMessageBinding{},
 		ratings:         map[string]*domain.ServiceRating{},
 		auditEvents:     []domain.AuditEvent{},
 		contacts: domain.ContactSettings{
@@ -93,6 +105,21 @@ func NewMemoryStore(options Options) *MemoryStore {
 			TimeoutSeconds:        20,
 			SystemPrompt:          defaultPrompt(),
 			NoReplyTimeoutSeconds: 60,
+		},
+		feishu: domain.FeishuSettings{
+			Enabled:                 options.FeishuEnabled,
+			BaseURL:                 nonEmpty(options.FeishuBaseURL, "https://open.feishu.cn"),
+			AppID:                   strings.TrimSpace(options.FeishuAppID),
+			AppSecret:               strings.TrimSpace(options.FeishuAppSecret),
+			AppSecretMasked:         maskAPIKey(options.FeishuAppSecret),
+			VerificationToken:       strings.TrimSpace(options.FeishuVerificationToken),
+			VerificationTokenMasked: maskAPIKey(options.FeishuVerificationToken),
+			EncryptKey:              strings.TrimSpace(options.FeishuEncryptKey),
+			EncryptKeyMasked:        maskAPIKey(options.FeishuEncryptKey),
+			DefaultChatID:           strings.TrimSpace(options.FeishuDefaultChatID),
+			AgentID:                 nonEmpty(options.FeishuAgentID, "agent_feishu"),
+			TimeoutSeconds:          positiveInt(options.FeishuTimeoutSeconds, 8),
+			UpdatedAt:               now,
 		},
 		business: domain.BusinessHours{
 			Timezone: "Asia/Shanghai",
@@ -577,6 +604,84 @@ func (s *MemoryStore) DeleteAgent(id string) (domain.Agent, error) {
 	deleted.CurrentConversations = 0
 	deleted.Updated = now
 	return deleted, nil
+}
+
+func (s *MemoryStore) EnsureFeishuAgent(id, name string) (domain.Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id = strings.TrimSpace(id)
+	name = strings.TrimSpace(name)
+	if id == "" {
+		id = "agent_feishu"
+	}
+	if name == "" {
+		name = "飞书客服"
+	}
+	if agent, ok := s.agentsByID[id]; ok {
+		agent.Name = name
+		if strings.TrimSpace(agent.Group) == "" {
+			agent.Group = "飞书"
+		}
+		agent.DisabledAt = nil
+		agent.Updated = time.Now().UTC()
+		return *agent, nil
+	}
+	now := time.Now().UTC()
+	account := id
+	if _, ok := s.agentsByAccount[account]; ok {
+		account = id + "_bridge"
+	}
+	agent := &domain.Agent{
+		ID:               id,
+		Account:          account,
+		Name:             name,
+		Group:            "飞书",
+		Password:         "feishu-bridge-disabled-login",
+		Status:           domain.AgentOffline,
+		MaxConversations: 10000,
+		Created:          now,
+		Updated:          now,
+	}
+	s.agentsByAccount[agent.Account] = agent
+	s.agentsByID[agent.ID] = agent
+	return *agent, nil
+}
+
+func (s *MemoryStore) BindFeishuMessage(binding domain.FeishuMessageBinding) (domain.FeishuMessageBinding, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	binding.MessageID = strings.TrimSpace(binding.MessageID)
+	binding.ConversationID = strings.TrimSpace(binding.ConversationID)
+	binding.ChatID = strings.TrimSpace(binding.ChatID)
+	binding.RootMessageID = strings.TrimSpace(binding.RootMessageID)
+	if binding.MessageID == "" || binding.ConversationID == "" {
+		return domain.FeishuMessageBinding{}, ErrInvalidInput
+	}
+	if _, ok := s.conversations[binding.ConversationID]; !ok {
+		return domain.FeishuMessageBinding{}, ErrNotFound
+	}
+	if binding.CreatedAt.IsZero() {
+		binding.CreatedAt = time.Now().UTC()
+	}
+	s.feishuBindings[binding.MessageID] = &binding
+	return binding, nil
+}
+
+func (s *MemoryStore) FeishuConversationByMessage(messageID string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return "", false
+	}
+	binding, ok := s.feishuBindings[messageID]
+	if !ok || binding.ConversationID == "" {
+		return "", false
+	}
+	return binding.ConversationID, true
 }
 
 func (s *MemoryStore) RegisterAgentPushDevice(agentID string, device domain.PushDevice) (domain.PushDevice, error) {
@@ -1253,6 +1358,51 @@ func (s *MemoryStore) UpdateAISettings(next domain.AISettings) (domain.AISetting
 	return s.ai, nil
 }
 
+func (s *MemoryStore) FeishuSettings() domain.FeishuSettings {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.feishu
+}
+
+func (s *MemoryStore) UpdateFeishuSettings(next domain.FeishuSettings) (domain.FeishuSettings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := validateFeishuSettings(next); err != nil {
+		return s.feishu, err
+	}
+	if strings.TrimSpace(next.BaseURL) != "" {
+		s.feishu.BaseURL = strings.TrimRight(strings.TrimSpace(next.BaseURL), "/")
+	}
+	if strings.TrimSpace(next.AppID) != "" {
+		s.feishu.AppID = strings.TrimSpace(next.AppID)
+	}
+	if strings.TrimSpace(next.AppSecret) != "" {
+		s.feishu.AppSecret = strings.TrimSpace(next.AppSecret)
+		s.feishu.AppSecretMasked = maskAPIKey(next.AppSecret)
+	}
+	if strings.TrimSpace(next.VerificationToken) != "" {
+		s.feishu.VerificationToken = strings.TrimSpace(next.VerificationToken)
+		s.feishu.VerificationTokenMasked = maskAPIKey(next.VerificationToken)
+	}
+	if strings.TrimSpace(next.EncryptKey) != "" {
+		s.feishu.EncryptKey = strings.TrimSpace(next.EncryptKey)
+		s.feishu.EncryptKeyMasked = maskAPIKey(next.EncryptKey)
+	}
+	if strings.TrimSpace(next.DefaultChatID) != "" {
+		s.feishu.DefaultChatID = strings.TrimSpace(next.DefaultChatID)
+	}
+	if strings.TrimSpace(next.AgentID) != "" {
+		s.feishu.AgentID = strings.TrimSpace(next.AgentID)
+	}
+	if next.TimeoutSeconds > 0 {
+		s.feishu.TimeoutSeconds = next.TimeoutSeconds
+	}
+	s.feishu.Enabled = next.Enabled
+	s.feishu.UpdatedAt = time.Now().UTC()
+	return s.feishu, nil
+}
+
 func (s *MemoryStore) BusinessHours() domain.BusinessHours {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1599,6 +1749,13 @@ func isHumanKeyword(text string) bool {
 func nonEmpty(value, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func positiveInt(value, fallback int) int {
+	if value <= 0 {
 		return fallback
 	}
 	return value

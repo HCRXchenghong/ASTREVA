@@ -8,7 +8,7 @@ Go 后端服务入口。
 - `GET /readyz`
 - 优雅退出
 - 基础请求日志
-- 管理端、客服端、访客端 HTTP API
+- 管理、客服、访客 HTTP API
 - 管理员 / 客服自助修改登录密码
 - 改密、重置密码、禁用账号后的登录 token 撤销与在线 WebSocket 断开
 - WebSocket Origin 白名单、访客会话绑定和访客关闭会话权限校验
@@ -18,7 +18,7 @@ Go 后端服务入口。
 - `/metrics` Prometheus 文本指标
 - 节点级限流、登录接口独立限流、安全响应头、管理操作审计
 - 会话监控 CSV 导出、管理审计 CSV 导出
-- 客服 App 推送 token 注册和后台推送 webhook 对接
+- 飞书直连客服：访客消息入飞书、飞书回复回到访客
 - WebSocket 实时消息
 - OpenAI 原生/兼容接口适配
 - 内存仓库：本地演示和单元测试
@@ -50,7 +50,7 @@ go run ./cmd/server
 - `NODE_ID`：后端节点 ID，默认使用主机名和启动时间生成。
 - `DATA_ENCRYPTION_KEY`：敏感配置加密密钥，生产必须配置。
 - `ADMIN_BOOTSTRAP_PASSWORD`：首次初始化 `superadmin` 的密码，生产必须设置为非默认强密码。
-- `AGENT_BOOTSTRAP_PASSWORD`：首次初始化默认客服 `admin` 的密码，生产必须设置为非默认强密码。
+- `AGENT_BOOTSTRAP_PASSWORD`：首次初始化默认客服账号的密码，生产必须设置为非默认强密码；飞书主链路使用虚拟客服 `agent_feishu`。
 - `CORS_ALLOWED_ORIGINS`：允许跨域的前端域名，默认 `*` 仅用于开发。
 - `TRUSTED_PROXY_CIDRS`：可信反代 / 负载均衡 CIDR，只有来自这些地址的 `X-Forwarded-For` / `X-Real-IP` 会被采信。
 - `SECURITY_HEADERS`：是否输出基础安全响应头，默认 `true`。
@@ -68,9 +68,7 @@ go run ./cmd/server
 - `S3_FORCE_PATH_STYLE`：MinIO 等服务通常设为 `true`。
 - `S3_KEY_PREFIX`：对象 key 前缀，默认 `uploads`。
 - `S3_PUBLIC_BASE_URL`：对象/CDN 公开访问域名。
-- `PUSH_WEBHOOK_URL`：后台推送网关地址，可对接 uni-push 云函数、APNs/厂商推送适配服务。
-- `PUSH_WEBHOOK_BEARER_TOKEN`：调用推送网关时使用的 Bearer Token。
-- `PUSH_WEBHOOK_TIMEOUT_SECONDS`：推送网关调用超时，默认 `5`。
+- `FEISHU_*`：飞书直连客服首次启动兜底配置。生产建议通过 `PATCH /api/admin/integrations/feishu` 在后台保存到数据库。
 
 测试：
 

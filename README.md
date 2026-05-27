@@ -4,7 +4,7 @@
 
 - `frontend/`：Astro + React + Tailwind 静态独立站。
 - `admin-server/`：自研官网后台，维护站点文案、图片、视频、SEO、品类、产品、FAQ 和表单线索。
-- `servicebridge/`：基于 `HCRXchenghong/ServiceBridge` 的在线客服服务，客服端 App 和管理端 App 保持原结构，用户端 Web 增加嵌入模式。
+- `servicebridge/`：基于 `HCRXchenghong/ServiceBridge` 的在线客服服务；访客端仍为 Web，人工客服入口已改为飞书内直接回复。
 
 ## 本地运行
 

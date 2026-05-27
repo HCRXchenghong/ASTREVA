@@ -201,6 +201,32 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_account ON auth_sessions(kind, account_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
 
+CREATE TABLE IF NOT EXISTS feishu_message_bindings (
+    message_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    chat_id TEXT NOT NULL DEFAULT '',
+    root_message_id TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_feishu_bindings_conversation ON feishu_message_bindings(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_feishu_bindings_root ON feishu_message_bindings(root_message_id) WHERE root_message_id <> '';
+
+CREATE TABLE IF NOT EXISTS feishu_settings (
+    id SMALLINT PRIMARY KEY DEFAULT 1,
+    enabled BOOLEAN NOT NULL DEFAULT false,
+    base_url TEXT NOT NULL DEFAULT 'https://open.feishu.cn',
+    app_id TEXT NOT NULL DEFAULT '',
+    app_secret_ciphertext TEXT NOT NULL DEFAULT '',
+    verification_token_ciphertext TEXT NOT NULL DEFAULT '',
+    encrypt_key_ciphertext TEXT NOT NULL DEFAULT '',
+    default_chat_id TEXT NOT NULL DEFAULT '',
+    agent_id TEXT NOT NULL DEFAULT 'agent_feishu',
+    timeout_seconds INTEGER NOT NULL DEFAULT 8,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT feishu_settings_singleton CHECK (id = 1)
+);
+
 INSERT INTO keyword_rules (id, keyword, match_type, reply, enabled, priority, action)
 VALUES
     ('kw_phone', '电话', 'contains', '客服电话：400-123-4567', true, 90, 'phone'),

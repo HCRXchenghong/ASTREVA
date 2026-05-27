@@ -13,7 +13,6 @@ import (
 	"customer-service/backend/internal/app"
 	"customer-service/backend/internal/config"
 	"customer-service/backend/internal/httpx"
-	"customer-service/backend/internal/notify"
 	"customer-service/backend/internal/realtime"
 	"customer-service/backend/internal/store"
 )
@@ -33,13 +32,22 @@ func main() {
 	}
 
 	storeOptions := store.Options{
-		OpenAIAPIKey:           cfg.OpenAIAPIKey,
-		OpenAIBaseURL:          cfg.OpenAIBaseURL,
-		OpenAIModel:            cfg.OpenAIModel,
-		OpenAIAPIType:          cfg.OpenAIAPIType,
-		DataEncryptionKey:      cfg.DataEncryptionKey,
-		BootstrapAdminPassword: cfg.BootstrapAdminPassword,
-		BootstrapAgentPassword: cfg.BootstrapAgentPassword,
+		OpenAIAPIKey:            cfg.OpenAIAPIKey,
+		OpenAIBaseURL:           cfg.OpenAIBaseURL,
+		OpenAIModel:             cfg.OpenAIModel,
+		OpenAIAPIType:           cfg.OpenAIAPIType,
+		DataEncryptionKey:       cfg.DataEncryptionKey,
+		BootstrapAdminPassword:  cfg.BootstrapAdminPassword,
+		BootstrapAgentPassword:  cfg.BootstrapAgentPassword,
+		FeishuEnabled:           cfg.FeishuEnabled,
+		FeishuBaseURL:           cfg.FeishuBaseURL,
+		FeishuAppID:             cfg.FeishuAppID,
+		FeishuAppSecret:         cfg.FeishuAppSecret,
+		FeishuVerificationToken: cfg.FeishuVerificationToken,
+		FeishuEncryptKey:        cfg.FeishuEncryptKey,
+		FeishuDefaultChatID:     cfg.FeishuDefaultChatID,
+		FeishuAgentID:           cfg.FeishuAgentID,
+		FeishuTimeoutSeconds:    cfg.FeishuTimeoutSeconds,
 	}
 	dataStore, closeStore, err := buildStore(startupCtx, cfg, storeOptions, logger)
 	if err != nil {
@@ -60,13 +68,12 @@ func main() {
 		logger.Info("redis event bus enabled", "addr", cfg.RedisAddr, "channel", cfg.RedisChannel)
 	}
 	service := app.NewService(dataStore, hub, logger)
-	if notifier := notify.NewWebhookNotifier(
-		cfg.PushWebhookURL,
-		cfg.PushWebhookBearerToken,
-		time.Duration(cfg.PushWebhookTimeoutSeconds)*time.Second,
-	); notifier != nil {
-		service.SetNotifier(notifier)
-		logger.Info("push webhook enabled", "url", cfg.PushWebhookURL)
+	if err := service.EnsureFeishuAgent(); err != nil {
+		logger.Error("feishu integration initialization failed", "error", err)
+		os.Exit(1)
+	}
+	if settings := dataStore.FeishuSettings(); settings.Enabled {
+		logger.Info("feishu integration enabled", "chat_id", settings.DefaultChatID, "agent_id", settings.AgentID)
 	}
 	mux := httpx.NewRouter(cfg, logger, service)
 

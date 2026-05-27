@@ -22,6 +22,7 @@ import (
 	"customer-service/backend/internal/app"
 	"customer-service/backend/internal/config"
 	"customer-service/backend/internal/domain"
+	feishuapi "customer-service/backend/internal/feishu"
 	"customer-service/backend/internal/store"
 	"customer-service/backend/internal/upload"
 )
@@ -63,6 +64,28 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			return
 		}
 		writeMetrics(w, service)
+	})
+
+	mux.HandleFunc("POST /api/integrations/feishu/events", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxJSONBodyBytes))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_json", "message": err.Error()})
+			return
+		}
+		resp, err := service.HandleFeishuCallback(r.Context(), body)
+		if err != nil {
+			if errors.Is(err, feishuapi.ErrInvalidCallback) || errors.Is(err, feishuapi.ErrEncryptedCallback) {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_feishu_callback", "message": err.Error()})
+				return
+			}
+			if errors.Is(err, feishuapi.ErrDisabled) {
+				writeError(w, store.ErrNotFound)
+				return
+			}
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
 	})
 
 	mux.HandleFunc("POST /api/admin/login", func(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +323,11 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		aiConfigured := strings.TrimSpace(aiSettings.BaseURL) != "" &&
 			strings.TrimSpace(aiSettings.Model) != "" &&
 			strings.TrimSpace(aiSettings.APIKeyMasked) != ""
+		feishuSettings := service.Store().FeishuSettings()
+		feishuConfigured := strings.TrimSpace(feishuSettings.AppID) != "" &&
+			strings.TrimSpace(feishuSettings.AppSecretMasked) != "" &&
+			strings.TrimSpace(feishuSettings.VerificationTokenMasked) != "" &&
+			strings.TrimSpace(feishuSettings.DefaultChatID) != ""
 		writeJSON(w, http.StatusOK, map[string]any{
 			"database": database,
 			"ai": map[string]any{
@@ -310,6 +338,17 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 				"model":          aiSettings.Model,
 				"api_type":       aiSettings.APIType,
 				"api_key_masked": aiSettings.APIKeyMasked,
+			},
+			"feishu": map[string]any{
+				"enabled":                   feishuSettings.Enabled,
+				"configured":                feishuConfigured,
+				"base_url":                  feishuSettings.BaseURL,
+				"app_id":                    feishuSettings.AppID,
+				"app_secret_masked":         feishuSettings.AppSecretMasked,
+				"verification_token_masked": feishuSettings.VerificationTokenMasked,
+				"encrypt_key_masked":        feishuSettings.EncryptKeyMasked,
+				"default_chat_id":           feishuSettings.DefaultChatID,
+				"agent_id":                  feishuSettings.AgentID,
 			},
 			"websocket": service.Hub().Stats(),
 			"time":      time.Now().UTC().Format(time.RFC3339),
@@ -709,6 +748,70 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		writeJSON(w, http.StatusOK, map[string]any{"reply": reply})
 	})
 
+	mux.HandleFunc("GET /api/admin/integrations/feishu", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		writeJSON(w, http.StatusOK, service.Store().FeishuSettings())
+	})
+
+	mux.HandleFunc("PATCH /api/admin/integrations/feishu", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req feishuSettingsRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		updated, err := service.UpdateFeishuSettings(domain.FeishuSettings{
+			Enabled:           req.Enabled,
+			BaseURL:           req.BaseURL,
+			AppID:             req.AppID,
+			AppSecret:         req.AppSecret,
+			VerificationToken: req.VerificationToken,
+			EncryptKey:        req.EncryptKey,
+			DefaultChatID:     req.DefaultChatID,
+			AgentID:           req.AgentID,
+			TimeoutSeconds:    req.TimeoutSeconds,
+		})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "feishu_settings.update", "feishu_settings", "1", "更新飞书客服配置")
+		writeJSON(w, http.StatusOK, updated)
+	})
+
+	mux.HandleFunc("POST /api/admin/integrations/feishu/test", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req struct {
+			Text string `json:"text"`
+		}
+		if !decodeOptionalJSON(w, r, &req) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		sent, err := service.TestFeishu(ctx, req.Text)
+		if err != nil {
+			if errors.Is(err, feishuapi.ErrDisabled) {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error":   "feishu_not_configured",
+					"message": "飞书配置未启用或必填项不完整",
+				})
+				return
+			}
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"message": sent})
+	})
+
 	mux.HandleFunc("GET /api/admin/business-hours", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(service, r) {
 			writeError(w, store.ErrForbidden)
@@ -846,6 +949,18 @@ type aiSettingsRequest struct {
 	TimeoutSeconds        int                   `json:"timeout_seconds"`
 	SystemPrompt          string                `json:"system_prompt"`
 	NoReplyTimeoutSeconds int                   `json:"agent_no_reply_timeout_seconds"`
+}
+
+type feishuSettingsRequest struct {
+	Enabled           bool   `json:"enabled"`
+	BaseURL           string `json:"base_url"`
+	AppID             string `json:"app_id"`
+	AppSecret         string `json:"app_secret"`
+	VerificationToken string `json:"verification_token"`
+	EncryptKey        string `json:"encrypt_key"`
+	DefaultChatID     string `json:"default_chat_id"`
+	AgentID           string `json:"agent_id"`
+	TimeoutSeconds    int    `json:"timeout_seconds"`
 }
 
 const maxJSONBodyBytes = 1 << 20

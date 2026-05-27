@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -13,22 +14,18 @@ import (
 
 	"customer-service/backend/internal/ai"
 	"customer-service/backend/internal/domain"
+	feishuapi "customer-service/backend/internal/feishu"
 	"customer-service/backend/internal/realtime"
 	"customer-service/backend/internal/store"
 )
 
 type Service struct {
-	store    store.Store
-	hub      *realtime.Hub
-	ai       *ai.Client
-	notifier Notifier
-	logger   *slog.Logger
+	store  store.Store
+	hub    *realtime.Hub
+	ai     *ai.Client
+	logger *slog.Logger
 
 	websocketAllowedOrigins map[string]bool
-}
-
-type Notifier interface {
-	NotifyAgent(ctx context.Context, notification domain.AgentNotification, devices []domain.PushDevice) error
 }
 
 func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Service {
@@ -41,8 +38,34 @@ func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Serv
 	}
 }
 
-func (s *Service) SetNotifier(notifier Notifier) {
-	s.notifier = notifier
+func (s *Service) EnsureFeishuAgent() error {
+	settings := s.store.FeishuSettings()
+	if !settings.Enabled {
+		return nil
+	}
+	_, err := s.store.EnsureFeishuAgent(feishuAgentID(settings), "飞书客服")
+	return err
+}
+
+func (s *Service) UpdateFeishuSettings(next domain.FeishuSettings) (domain.FeishuSettings, error) {
+	updated, err := s.store.UpdateFeishuSettings(next)
+	if err != nil {
+		return updated, err
+	}
+	if updated.Enabled {
+		if _, err := s.store.EnsureFeishuAgent(feishuAgentID(updated), "飞书客服"); err != nil {
+			return updated, err
+		}
+	}
+	return updated, nil
+}
+
+func (s *Service) TestFeishu(ctx context.Context, text string) (feishuapi.SentMessage, error) {
+	client := s.feishuClient()
+	if text = strings.TrimSpace(text); text == "" {
+		text = "飞书客服接入测试：后台配置已保存并成功发送。"
+	}
+	return client.SendText(ctx, "", text)
 }
 
 func (s *Service) SetWebSocketAllowedOrigins(origins map[string]bool) {
@@ -234,6 +257,7 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 	}
 	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.status_changed", Data: result.Conversation})
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: result.Conversation})
+	s.notifyFeishu(result.Conversation, result.Input)
 	if result.Conversation.Status == domain.ConversationHumanRequested || result.Conversation.AssignedAgentID != "" {
 		s.notifyAgent(result.Conversation)
 	}
@@ -244,6 +268,135 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 		s.scheduleNoReplyAI(conversationID, result.AIText, result.VisitorMessageSentAt)
 	}
 	return result, nil
+}
+
+func (s *Service) HandleFeishuCallback(ctx context.Context, body []byte) (map[string]any, error) {
+	client := s.feishuClient()
+	if !client.Enabled() {
+		return nil, store.ErrNotFound
+	}
+	callback, err := client.ParseCallback(body)
+	if err != nil {
+		return nil, err
+	}
+	if callback.Challenge != "" {
+		return map[string]any{"challenge": callback.Challenge}, nil
+	}
+	if callback.Ignored || callback.Message == nil {
+		return map[string]any{"ok": true}, nil
+	}
+	event := callback.Message
+	if event.SenderType == "app" || event.SenderType == "bot" {
+		return map[string]any{"ok": true}, nil
+	}
+	conversationID := s.resolveFeishuConversation(event)
+	if conversationID == "" {
+		s.logger.Warn("feishu reply cannot be mapped to conversation", "message_id", event.MessageID, "parent_id", event.ParentID, "root_id", event.RootID)
+		return map[string]any{"ok": true, "ignored": "conversation_not_found"}, nil
+	}
+	text := stripConversationHint(event.Text, conversationID)
+	if strings.TrimSpace(text) == "" {
+		return map[string]any{"ok": true}, nil
+	}
+	agentID := client.AgentID()
+	if _, err := s.store.EnsureFeishuAgent(agentID, "飞书客服"); err != nil {
+		return nil, err
+	}
+	conversation, ok := s.store.Conversation(conversationID)
+	if !ok {
+		return map[string]any{"ok": true, "ignored": "conversation_not_found"}, nil
+	}
+	if conversation.AssignedAgentID != agentID {
+		if _, err := s.TransferConversation(domain.AuthSession{Kind: domain.AccountAdmin, AccountID: "feishu_bridge"}, conversationID, agentID, ""); err != nil {
+			return nil, err
+		}
+	}
+	feishuMessageID := firstNonEmpty(event.EventID, event.MessageID, fmt.Sprintf("%d", time.Now().UnixNano()))
+	clientMsgID := "feishu_" + feishuMessageID
+	if _, err := s.AddAgentMessage(agentID, conversationID, clientMsgID, text, domain.MessageText); err != nil {
+		return nil, err
+	}
+	if event.MessageID != "" {
+		_, _ = s.store.BindFeishuMessage(domain.FeishuMessageBinding{
+			MessageID:      event.MessageID,
+			ConversationID: conversationID,
+			ChatID:         event.ChatID,
+			RootMessageID:  firstNonEmpty(event.RootID, event.ParentID),
+		})
+	}
+	_ = ctx
+	return map[string]any{"ok": true}, nil
+}
+
+func (s *Service) notifyFeishu(conversation domain.Conversation, msg domain.Message) {
+	client := s.feishuClient()
+	if !client.Enabled() || msg.SenderType != domain.SenderVisitor {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		text := fmt.Sprintf(
+			"访客消息\n会话：#%s\n访客：%s\n来源：%s\n状态：%s\n内容：%s\n\n请直接回复本消息；如果不在回复线程里，也可以在消息中带 #%s。",
+			conversation.ID,
+			nonEmpty(conversation.VisitorRemark, conversation.VisitorIP),
+			conversation.Source,
+			conversation.Status,
+			msg.Content,
+			conversation.ID,
+		)
+		sent, err := client.SendText(ctx, client.DefaultChatID(), text)
+		if err != nil {
+			s.logger.Warn("send visitor message to feishu failed", "conversation_id", conversation.ID, "error", err)
+			return
+		}
+		if sent.MessageID == "" {
+			return
+		}
+		if _, err := s.store.BindFeishuMessage(domain.FeishuMessageBinding{
+			MessageID:      sent.MessageID,
+			ConversationID: conversation.ID,
+			ChatID:         sent.ChatID,
+		}); err != nil {
+			s.logger.Warn("bind feishu message failed", "conversation_id", conversation.ID, "message_id", sent.MessageID, "error", err)
+		}
+	}()
+}
+
+func (s *Service) resolveFeishuConversation(event *feishuapi.MessageEvent) string {
+	for _, messageID := range []string{event.ParentID, event.RootID, event.MessageID} {
+		if conversationID, ok := s.store.FeishuConversationByMessage(messageID); ok {
+			return conversationID
+		}
+	}
+	if conversationID := conversationIDFromText(event.Text); conversationID != "" {
+		if _, ok := s.store.Conversation(conversationID); ok {
+			return conversationID
+		}
+	}
+	return ""
+}
+
+func (s *Service) feishuClient() *feishuapi.Client {
+	settings := s.store.FeishuSettings()
+	return feishuapi.NewClient(feishuapi.Config{
+		Enabled:           settings.Enabled,
+		BaseURL:           settings.BaseURL,
+		AppID:             settings.AppID,
+		AppSecret:         settings.AppSecret,
+		VerificationToken: settings.VerificationToken,
+		EncryptKey:        settings.EncryptKey,
+		DefaultChatID:     settings.DefaultChatID,
+		AgentID:           feishuAgentID(settings),
+		Timeout:           time.Duration(positiveInt(settings.TimeoutSeconds, 8)) * time.Second,
+	}, s.logger)
+}
+
+func feishuAgentID(settings domain.FeishuSettings) string {
+	if strings.TrimSpace(settings.AgentID) == "" {
+		return "agent_feishu"
+	}
+	return strings.TrimSpace(settings.AgentID)
 }
 
 func (s *Service) scheduleNoReplyAI(conversationID, userText string, visitorMessageSentAt time.Time) {
@@ -502,20 +655,6 @@ func (s *Service) notifyAgent(conversation domain.Conversation) {
 		Status:         conversation.Status,
 	}
 	s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "agent.notification", Data: notification})
-	if s.notifier == nil {
-		return
-	}
-	devices := s.store.PushDevicesForAgent(conversation.AssignedAgentID)
-	if len(devices) == 0 {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := s.notifier.NotifyAgent(ctx, notification, devices); err != nil {
-			s.logger.Warn("push notification failed", "agent_id", notification.AgentID, "conversation_id", notification.ConversationID, "error", err)
-		}
-	}()
 }
 
 func bearerToken(r *http.Request) string {
@@ -524,6 +663,54 @@ func bearerToken(r *http.Request) string {
 		return strings.TrimSpace(header[7:])
 	}
 	return ""
+}
+
+func conversationIDFromText(text string) string {
+	text = strings.TrimSpace(text)
+	idx := strings.Index(text, "conv_")
+	if idx < 0 {
+		return ""
+	}
+	end := idx
+	for end < len(text) {
+		ch := text[end]
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' {
+			end++
+			continue
+		}
+		break
+	}
+	return text[idx:end]
+}
+
+func stripConversationHint(text, conversationID string) string {
+	text = strings.TrimSpace(text)
+	if conversationID == "" {
+		return text
+	}
+	text = strings.ReplaceAll(text, "#"+conversationID, "")
+	text = strings.ReplaceAll(text, conversationID, "")
+	return strings.TrimSpace(text)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func nonEmpty(values ...string) string {
+	return firstNonEmpty(values...)
+}
+
+func positiveInt(value, fallback int) int {
+	if value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 func errorEvent(err error) realtime.Event {

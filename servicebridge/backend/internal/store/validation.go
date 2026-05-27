@@ -149,6 +149,31 @@ func validateAISettings(next domain.AISettings) error {
 	return nil
 }
 
+func validateFeishuSettings(next domain.FeishuSettings) error {
+	if strings.TrimSpace(next.BaseURL) != "" {
+		parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(next.BaseURL), "/"))
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return ErrInvalidInput
+		}
+	}
+	for _, value := range []string{
+		next.AppID,
+		next.AppSecret,
+		next.VerificationToken,
+		next.EncryptKey,
+		next.DefaultChatID,
+		next.AgentID,
+	} {
+		if _, err := cleanOptionalText(value, 2048); err != nil {
+			return err
+		}
+	}
+	if next.TimeoutSeconds < 0 || next.TimeoutSeconds > 120 {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
 func validateBusinessHours(next domain.BusinessHours) error {
 	if _, err := cleanOptionalText(next.Timezone, 64); err != nil {
 		return err

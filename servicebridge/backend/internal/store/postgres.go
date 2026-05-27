@@ -22,12 +22,13 @@ var _ Store = (*PostgresStore)(nil)
 const (
 	defaultDBTimeout = 5 * time.Second
 
-	adminColumns        = `id, account, name, password_hash, created_at`
-	agentColumns        = `id, account, name, group_name, password_hash, status, max_conversations, current_conversations, disabled_at, created_at, updated_at`
-	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
-	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, created_at, revoked_at, revoked_by_kind, revoked_by_id`
-	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
-	auditColumns        = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
+	adminColumns         = `id, account, name, password_hash, created_at`
+	agentColumns         = `id, account, name, group_name, password_hash, status, max_conversations, current_conversations, disabled_at, created_at, updated_at`
+	conversationColumns  = `id, visitor_id, visitor_ip::text, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
+	messageColumns       = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, created_at, revoked_at, revoked_by_kind, revoked_by_id`
+	ratingColumns        = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
+	auditColumns         = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
+	feishuBindingColumns = `message_id, conversation_id, chat_id, root_message_id, created_at`
 )
 
 type PostgresStore struct {
@@ -1248,6 +1249,89 @@ func (s *PostgresStore) UpdateAISettings(next domain.AISettings) (domain.AISetti
 	return current, nil
 }
 
+func (s *PostgresStore) FeishuSettings() domain.FeishuSettings {
+	ctx, cancel := dbContext()
+	defer cancel()
+	settings, err := s.feishuSettingsTx(ctx, s.pool)
+	if err != nil {
+		return domain.FeishuSettings{}
+	}
+	return settings
+}
+
+func (s *PostgresStore) UpdateFeishuSettings(next domain.FeishuSettings) (domain.FeishuSettings, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+	current, _ := s.feishuSettingsTx(ctx, s.pool)
+	if err := validateFeishuSettings(next); err != nil {
+		return current, err
+	}
+	if strings.TrimSpace(next.BaseURL) != "" {
+		current.BaseURL = strings.TrimRight(strings.TrimSpace(next.BaseURL), "/")
+	}
+	if strings.TrimSpace(next.AppID) != "" {
+		current.AppID = strings.TrimSpace(next.AppID)
+	}
+	if strings.TrimSpace(next.AppSecret) != "" {
+		current.AppSecret = strings.TrimSpace(next.AppSecret)
+		current.AppSecretMasked = maskAPIKey(next.AppSecret)
+	}
+	if strings.TrimSpace(next.VerificationToken) != "" {
+		current.VerificationToken = strings.TrimSpace(next.VerificationToken)
+		current.VerificationTokenMasked = maskAPIKey(next.VerificationToken)
+	}
+	if strings.TrimSpace(next.EncryptKey) != "" {
+		current.EncryptKey = strings.TrimSpace(next.EncryptKey)
+		current.EncryptKeyMasked = maskAPIKey(next.EncryptKey)
+	}
+	if strings.TrimSpace(next.DefaultChatID) != "" {
+		current.DefaultChatID = strings.TrimSpace(next.DefaultChatID)
+	}
+	if strings.TrimSpace(next.AgentID) != "" {
+		current.AgentID = strings.TrimSpace(next.AgentID)
+	}
+	if next.TimeoutSeconds > 0 {
+		current.TimeoutSeconds = next.TimeoutSeconds
+	}
+	current.Enabled = next.Enabled
+	current.UpdatedAt = dbNow()
+
+	protectedAppSecret, err := protectSecret(s.options.DataEncryptionKey, current.AppSecret)
+	if err != nil {
+		return current, err
+	}
+	protectedVerificationToken, err := protectSecret(s.options.DataEncryptionKey, current.VerificationToken)
+	if err != nil {
+		return current, err
+	}
+	protectedEncryptKey, err := protectSecret(s.options.DataEncryptionKey, current.EncryptKey)
+	if err != nil {
+		return current, err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO feishu_settings (
+			id, enabled, base_url, app_id, app_secret_ciphertext, verification_token_ciphertext,
+			encrypt_key_ciphertext, default_chat_id, agent_id, timeout_seconds, updated_at
+		)
+		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (id) DO UPDATE SET
+			enabled=EXCLUDED.enabled,
+			base_url=EXCLUDED.base_url,
+			app_id=EXCLUDED.app_id,
+			app_secret_ciphertext=EXCLUDED.app_secret_ciphertext,
+			verification_token_ciphertext=EXCLUDED.verification_token_ciphertext,
+			encrypt_key_ciphertext=EXCLUDED.encrypt_key_ciphertext,
+			default_chat_id=EXCLUDED.default_chat_id,
+			agent_id=EXCLUDED.agent_id,
+			timeout_seconds=EXCLUDED.timeout_seconds,
+			updated_at=EXCLUDED.updated_at
+	`, current.Enabled, current.BaseURL, current.AppID, protectedAppSecret, protectedVerificationToken, protectedEncryptKey, current.DefaultChatID, current.AgentID, current.TimeoutSeconds, current.UpdatedAt)
+	if err != nil {
+		return current, err
+	}
+	return current, nil
+}
+
 func (s *PostgresStore) BusinessHours() domain.BusinessHours {
 	ctx, cancel := dbContext()
 	defer cancel()
@@ -1591,6 +1675,78 @@ func (s *PostgresStore) DeleteAgent(id string) (domain.Agent, error) {
 		return err
 	})
 	return out, err
+}
+
+func (s *PostgresStore) EnsureFeishuAgent(id, name string) (domain.Agent, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	id = strings.TrimSpace(id)
+	name = strings.TrimSpace(name)
+	if id == "" {
+		id = "agent_feishu"
+	}
+	if name == "" {
+		name = "飞书客服"
+	}
+	passwordHash, err := hashPassword("feishu-bridge-disabled-login")
+	if err != nil {
+		return domain.Agent{}, err
+	}
+	row := s.pool.QueryRow(ctx, `
+		INSERT INTO agents (id, account, name, group_name, password_hash, status, max_conversations)
+		VALUES ($1, $2, $3, '飞书', $4, $5, 10000)
+		ON CONFLICT (id) DO UPDATE
+		SET name=EXCLUDED.name,
+			group_name=EXCLUDED.group_name,
+			disabled_at=NULL,
+			updated_at=now()
+		RETURNING `+agentColumns,
+		id, id, name, passwordHash, domain.AgentOffline)
+	return scanAgent(row)
+}
+
+func (s *PostgresStore) BindFeishuMessage(binding domain.FeishuMessageBinding) (domain.FeishuMessageBinding, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	binding.MessageID = strings.TrimSpace(binding.MessageID)
+	binding.ConversationID = strings.TrimSpace(binding.ConversationID)
+	binding.ChatID = strings.TrimSpace(binding.ChatID)
+	binding.RootMessageID = strings.TrimSpace(binding.RootMessageID)
+	if binding.MessageID == "" || binding.ConversationID == "" {
+		return domain.FeishuMessageBinding{}, ErrInvalidInput
+	}
+	if binding.CreatedAt.IsZero() {
+		binding.CreatedAt = dbNow()
+	}
+	row := s.pool.QueryRow(ctx, `
+		INSERT INTO feishu_message_bindings (message_id, conversation_id, chat_id, root_message_id, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (message_id) DO UPDATE
+		SET conversation_id=EXCLUDED.conversation_id,
+			chat_id=EXCLUDED.chat_id,
+			root_message_id=EXCLUDED.root_message_id
+		RETURNING `+feishuBindingColumns,
+		binding.MessageID, binding.ConversationID, binding.ChatID, binding.RootMessageID, binding.CreatedAt)
+	return scanFeishuMessageBinding(row)
+}
+
+func (s *PostgresStore) FeishuConversationByMessage(messageID string) (string, bool) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return "", false
+	}
+	var conversationID string
+	err := s.pool.QueryRow(ctx, `
+		SELECT conversation_id
+		FROM feishu_message_bindings
+		WHERE message_id=$1
+	`, messageID).Scan(&conversationID)
+	return conversationID, err == nil && strings.TrimSpace(conversationID) != ""
 }
 
 func (s *PostgresStore) RegisterAgentPushDevice(agentID string, device domain.PushDevice) (domain.PushDevice, error) {
@@ -2126,6 +2282,71 @@ func (s *PostgresStore) aiSettingsTx(ctx context.Context, exec dbTx) (domain.AIS
 	return out, err
 }
 
+func (s *PostgresStore) feishuSettingsTx(ctx context.Context, exec dbTx) (domain.FeishuSettings, error) {
+	var out domain.FeishuSettings
+	var appSecret, verificationToken, encryptKey string
+	err := exec.QueryRow(ctx, `
+		SELECT enabled, base_url, app_id, app_secret_ciphertext, verification_token_ciphertext,
+			encrypt_key_ciphertext, default_chat_id, agent_id, timeout_seconds, updated_at
+		FROM feishu_settings WHERE id=1
+	`).Scan(
+		&out.Enabled,
+		&out.BaseURL,
+		&out.AppID,
+		&appSecret,
+		&verificationToken,
+		&encryptKey,
+		&out.DefaultChatID,
+		&out.AgentID,
+		&out.TimeoutSeconds,
+		&out.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.FeishuSettings{
+			Enabled:                 s.options.FeishuEnabled,
+			BaseURL:                 nonEmpty(s.options.FeishuBaseURL, "https://open.feishu.cn"),
+			AppID:                   strings.TrimSpace(s.options.FeishuAppID),
+			AppSecret:               strings.TrimSpace(s.options.FeishuAppSecret),
+			AppSecretMasked:         maskAPIKey(s.options.FeishuAppSecret),
+			VerificationToken:       strings.TrimSpace(s.options.FeishuVerificationToken),
+			VerificationTokenMasked: maskAPIKey(s.options.FeishuVerificationToken),
+			EncryptKey:              strings.TrimSpace(s.options.FeishuEncryptKey),
+			EncryptKeyMasked:        maskAPIKey(s.options.FeishuEncryptKey),
+			DefaultChatID:           strings.TrimSpace(s.options.FeishuDefaultChatID),
+			AgentID:                 nonEmpty(s.options.FeishuAgentID, "agent_feishu"),
+			TimeoutSeconds:          positiveInt(s.options.FeishuTimeoutSeconds, 8),
+		}, nil
+	}
+	if err != nil {
+		return domain.FeishuSettings{}, err
+	}
+	out.AppSecret, err = revealSecret(s.options.DataEncryptionKey, appSecret)
+	if err != nil {
+		return domain.FeishuSettings{}, err
+	}
+	out.VerificationToken, err = revealSecret(s.options.DataEncryptionKey, verificationToken)
+	if err != nil {
+		return domain.FeishuSettings{}, err
+	}
+	out.EncryptKey, err = revealSecret(s.options.DataEncryptionKey, encryptKey)
+	if err != nil {
+		return domain.FeishuSettings{}, err
+	}
+	out.AppSecretMasked = maskAPIKey(out.AppSecret)
+	out.VerificationTokenMasked = maskAPIKey(out.VerificationToken)
+	out.EncryptKeyMasked = maskAPIKey(out.EncryptKey)
+	if strings.TrimSpace(out.BaseURL) == "" {
+		out.BaseURL = "https://open.feishu.cn"
+	}
+	if strings.TrimSpace(out.AgentID) == "" {
+		out.AgentID = "agent_feishu"
+	}
+	if out.TimeoutSeconds <= 0 {
+		out.TimeoutSeconds = 8
+	}
+	return out, nil
+}
+
 func (s *PostgresStore) businessHoursTx(ctx context.Context, exec dbTx) (domain.BusinessHours, error) {
 	var out domain.BusinessHours
 	err := exec.QueryRow(ctx, `SELECT timezone, start_time, end_time, enabled FROM business_hours WHERE id=1`).
@@ -2266,6 +2487,29 @@ func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_events_actor ON audit_events(actor_kind, actor_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_events_resource ON audit_events(resource, resource_id, created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS feishu_message_bindings (
+			message_id TEXT PRIMARY KEY,
+			conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+			chat_id TEXT NOT NULL DEFAULT '',
+			root_message_id TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_feishu_bindings_conversation ON feishu_message_bindings(conversation_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_feishu_bindings_root ON feishu_message_bindings(root_message_id) WHERE root_message_id <> ''`,
+		`CREATE TABLE IF NOT EXISTS feishu_settings (
+			id SMALLINT PRIMARY KEY DEFAULT 1,
+			enabled BOOLEAN NOT NULL DEFAULT false,
+			base_url TEXT NOT NULL DEFAULT 'https://open.feishu.cn',
+			app_id TEXT NOT NULL DEFAULT '',
+			app_secret_ciphertext TEXT NOT NULL DEFAULT '',
+			verification_token_ciphertext TEXT NOT NULL DEFAULT '',
+			encrypt_key_ciphertext TEXT NOT NULL DEFAULT '',
+			default_chat_id TEXT NOT NULL DEFAULT '',
+			agent_id TEXT NOT NULL DEFAULT 'agent_feishu',
+			timeout_seconds INTEGER NOT NULL DEFAULT 8,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT feishu_settings_singleton CHECK (id = 1)
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.pool.Exec(ctx, statement); err != nil {
@@ -2446,6 +2690,12 @@ func scanAuditEvents(rows pgx.Rows) ([]domain.AuditEvent, error) {
 func scanPushDevice(row scanTarget) (domain.PushDevice, error) {
 	var out domain.PushDevice
 	err := row.Scan(&out.ID, &out.AgentID, &out.Platform, &out.Token, &out.Provider, &out.Enabled, &out.UpdatedAt, &out.CreatedAt)
+	return out, err
+}
+
+func scanFeishuMessageBinding(row scanTarget) (domain.FeishuMessageBinding, error) {
+	var out domain.FeishuMessageBinding
+	err := row.Scan(&out.MessageID, &out.ConversationID, &out.ChatID, &out.RootMessageID, &out.CreatedAt)
 	return out, err
 }
 
