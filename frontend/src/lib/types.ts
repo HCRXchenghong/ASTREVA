@@ -36,7 +36,6 @@ export type SiteSettings = {
     homeLabel: string;
     productsLabel: string;
     solutionsLabel: string;
-    projectsLabel: string;
     supportLabel: string;
     aboutLabel: string;
     categoryPrompt: string;
@@ -235,7 +234,7 @@ export type FAQ = {
 };
 
 export type StaticPage = {
-  slug: 'about' | 'solutions' | 'projects' | 'faq' | 'warranty' | 'install' | 'privacy' | 'agreement';
+  slug: 'about' | 'solutions' | 'faq' | 'warranty' | 'install' | 'privacy' | 'agreement';
   title: string;
   hero?: {
     eyebrow?: string;

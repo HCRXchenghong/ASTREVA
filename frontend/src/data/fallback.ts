@@ -1,4 +1,4 @@
-import type { SiteContent } from '../lib/types';
+import type { Product, SiteContent } from '../lib/types';
 
 const HERO_VIDEOS = {
   home: 'https://assets.mixkit.co/videos/4010/4010-1080.mp4',
@@ -10,7 +10,7 @@ const HERO_VIDEOS = {
   support: 'https://assets.mixkit.co/videos/22032/22032-720.mp4',
   about: 'https://assets.mixkit.co/videos/21226/21226-720.mp4',
   solutions: 'https://assets.mixkit.co/videos/1439/1439-1080.mp4',
-  projects: 'https://assets.mixkit.co/videos/4401/4401-1080.mp4',
+  stainless: 'https://assets.mixkit.co/videos/4401/4401-1080.mp4',
   faq: 'https://assets.mixkit.co/videos/1457/1457-720.mp4',
   warranty: 'https://assets.mixkit.co/videos/25480/25480-720.mp4',
   install: 'https://assets.mixkit.co/videos/23511/23511-720.mp4',
@@ -18,6 +18,31 @@ const HERO_VIDEOS = {
   agreement: 'https://assets.mixkit.co/videos/21226/21226-720.mp4',
   industrialDetail: 'https://assets.mixkit.co/videos/4380/4380-1080.mp4'
 } as const;
+
+type CatalogProductSeed = Pick<Product, 'name' | 'slug' | 'categorySlug' | 'coverImage' | 'summary' | 'features' | 'specifications' | 'isFeatured' | 'sortOrder'> & {
+  videoUrl?: string;
+};
+
+const catalogProduct = (seed: CatalogProductSeed): Product => ({
+  id: `prod_${seed.slug.replaceAll('-', '_')}`,
+  name: seed.name,
+  slug: seed.slug,
+  categorySlug: seed.categorySlug,
+  coverImage: seed.coverImage,
+  galleryImages: [],
+  videoUrl: seed.videoUrl || HERO_VIDEOS.products,
+  summary: seed.summary,
+  features: seed.features,
+  specifications: seed.specifications,
+  downloads: [],
+  body: `${seed.summary} 支持根据项目尺寸、材质、荷载与安装条件进行定制，具体参数请联系星渡 ASTREVA 工程团队。`,
+  isFeatured: seed.isFeatured,
+  sortOrder: seed.sortOrder,
+  seo: {
+    title: `${seed.name} | 星渡ASTREVA`,
+    description: seed.summary
+  }
+});
 
 export const fallbackContent: SiteContent = {
   site: {
@@ -55,7 +80,6 @@ export const fallbackContent: SiteContent = {
       homeLabel: '首页',
       productsLabel: '产品中心',
       solutionsLabel: '解决方案',
-      projectsLabel: '工程案例',
       supportLabel: '服务支持',
       aboutLabel: '关于我们',
       categoryPrompt: '选择业务分类 :',
@@ -74,7 +98,6 @@ export const fallbackContent: SiteContent = {
         { label: '首页', href: '/' },
         { label: '产品中心', href: '/products/' },
         { label: '解决方案', href: '/solutions/' },
-        { label: '工程案例', href: '/projects/' },
         { label: '关于我们', href: '/about/' }
       ],
       supportLinks: [
@@ -159,22 +182,22 @@ export const fallbackContent: SiteContent = {
   productCenter: {
     seo: {
       title: '产品中心 | 星渡ASTREVA',
-      description: '按应用场景浏览星渡ASTREVA 模块化排水系统、格栅、井盖和景观排水产品。'
+      description: '按产品类型浏览星渡ASTREVA 地漏、盖板、排水沟、隔油沉淀设备与不锈钢井盖。'
     },
     hero: {
       title: '产品中心',
-      description: '探索我们的系统在各核心领域的应用，选择您的业务板块以查看专属方案。',
+      description: '按产品类型快速查找专业不锈钢排水产品与系统组件。',
       backgroundImage: 'https://images.unsplash.com/photo-1504307651254-35680f356fce?auto=format&fit=crop&q=80&w=2000',
       backgroundVideo: HERO_VIDEOS.products
     },
     intro: {
-      title: '请选择应用场景与业务板块',
-      description: '我们将为您精确匹配最合适的系统解决方案',
-      categoryCtaLabel: '查看相关产品'
+      title: '产品分类',
+      description: '选择产品体系，查看对应系列产品与组件。',
+      categoryCtaLabel: '查看全部产品'
     },
     categoryPage: {
-      titleTemplate: '{category} - 专属产品方案',
-      backLabel: '返回重新选择业务板块',
+      titleTemplate: '{category} - 系列产品',
+      backLabel: '返回产品分类',
       backIcon: '←',
       productHoverLabel: '查看详情',
       categoryCtaIcon: '→'
@@ -199,187 +222,147 @@ export const fallbackContent: SiteContent = {
   },
   categories: [
     {
-      id: 'cat_municipal',
-      name: '市政与公共工程',
-      slug: 'municipal-public-works',
-      description: '面向道路、广场、公共设施的高承载排水系统。',
+      id: 'cat_floor_drain_system',
+      name: '地漏系统',
+      slug: 'floor-drain-system',
+      description: '面向商业、住宅及工业空间的防臭、排水和过滤组件。',
       coverImage: 'https://images.unsplash.com/photo-1541888086425-d81bb19240f5?auto=format&fit=crop&q=80&w=800',
       heroVideo: HERO_VIDEOS.municipal,
       sortOrder: 10,
-      seo: { title: '市政与公共工程排水系统 | 星渡ASTREVA', description: '适用于市政道路、公共广场和大型基础设施的模块化不锈钢排水方案。' }
+      seo: { title: '地漏系统 | 星渡ASTREVA', description: '防臭水封地漏、简易地漏、地漏箱体与滤网系列。' }
     },
     {
-      id: 'cat_commercial',
-      name: '商业与高端住宅',
-      slug: 'commercial-premium-residential',
-      description: '兼顾建筑美学、隐形排水与长期耐用性的高端场景方案。',
+      id: 'cat_cover_grating',
+      name: '盖板与格栅',
+      slug: 'cover-grating',
+      description: '缝隙、激光开孔、格栅及冲压成型盖板系列。',
       coverImage: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=800',
       heroVideo: HERO_VIDEOS.commercial,
       sortOrder: 20,
-      seo: { title: '商业与高端住宅排水系统 | 星渡ASTREVA', description: '服务商业综合体、高端住宅和景观空间的隐形排水系统。' }
+      seo: { title: '盖板与格栅 | 星渡ASTREVA', description: '缝隙式、激光开孔、格栅与冲压拉伸盖板系列。' }
     },
     {
-      id: 'cat_industrial',
-      name: '工业与仓储设施',
-      slug: 'industrial-warehouse',
-      description: '适合重载、腐蚀和高频通行环境的工业排水系统。',
+      id: 'cat_drainage_channel',
+      name: '排水沟系统',
+      slug: 'drainage-channel',
+      description: '模块化不锈钢沟体、沟盖板与成品线性排水系统。',
       coverImage: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ece?auto=format&fit=crop&q=80&w=800',
       heroVideo: HERO_VIDEOS.industrial,
       sortOrder: 30,
-      seo: { title: '工业与仓储排水系统 | 星渡ASTREVA', description: '用于工业厂房、仓储物流和重载区域的不锈钢排水产品。' }
+      seo: { title: '排水沟系统 | 星渡ASTREVA', description: '不锈钢排水沟、水沟盖板与成品线性排水沟。' }
     },
     {
-      id: 'cat_landscape',
-      name: '景观与特殊排水',
-      slug: 'landscape-special-drainage',
-      description: '支持曲线、异形、生态透水和特殊节点的定制化排水。',
+      id: 'cat_oil_sedimentation',
+      name: '隔油与沉淀设备',
+      slug: 'oil-sedimentation',
+      description: '用于餐饮、食品及工业场景的排水预处理设备。',
       coverImage: 'https://images.unsplash.com/photo-1572120360610-d971b9d7767c?auto=format&fit=crop&q=80&w=800',
       heroVideo: HERO_VIDEOS.landscape,
       sortOrder: 40,
-      seo: { title: '景观与特殊排水系统 | 星渡ASTREVA', description: '用于景观、公园、庭院和异形地坪的定制排水解决方案。' }
+      seo: { title: '隔油与沉淀设备 | 星渡ASTREVA', description: '不锈钢隔油池与沉淀池预处理设备。' }
+    },
+    {
+      id: 'cat_stainless_manhole',
+      name: '不锈钢井盖',
+      slug: 'stainless-manhole',
+      description: '隐形、可填充及定制检修井盖系列。',
+      coverImage: 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&q=80&w=800',
+      heroVideo: HERO_VIDEOS.stainless,
+      sortOrder: 50,
+      seo: { title: '不锈钢井盖 | 星渡ASTREVA', description: '不锈钢隐形井盖与可填充式井盖系列。' }
     }
   ],
   products: [
-    {
-      id: 'prod_heavy_modular_stainless',
-      name: '重型模块化不锈钢排水沟',
-      slug: 'heavy-modular-stainless-drain',
-      categorySlug: 'municipal-public-works',
-      coverImage: 'https://images.unsplash.com/photo-1504307651254-35680f356fce?auto=format&fit=crop&q=80&w=800',
-      galleryImages: [],
-      videoUrl: HERO_VIDEOS.products,
-      summary: '采用顶级 316/316L 不锈钢精密制造，结合专利 Click 咔哒锁扣技术。',
-      features: ['专利无缝拼接技术，100% 防渗漏', '符合 EN1433 国际承载标准', '一体成型结构，有效防止异物堵塞', '表面防滑处理，符合 ADA 建筑安全规范'],
-      specifications: [
-        { label: '主体材质', value: 'AISI 304 或 AISI 316L 级不锈钢' },
-        { label: '内部宽度', value: '100mm / 150mm / 200mm / 300mm' },
-        { label: '承载等级', value: 'A15 - F900' }
-      ],
-      downloads: [{ label: '下载 CAD / BIM', url: '#' }],
-      body: '该系统不仅具备极致的耐腐蚀性和水力学性能，更能在最严苛的环境下提供长达 50 年的可靠服役周期。',
-      isFeatured: true,
-      sortOrder: 10,
-      seo: { title: '重型模块化不锈钢排水沟 | 星渡ASTREVA', description: '适用于市政和公共工程的重型模块化不锈钢排水沟。' }
-    },
-    {
-      id: 'prod_municipal_grate',
-      name: '高承载定制化市政格栅',
-      slug: 'high-load-custom-municipal-grate',
-      categorySlug: 'municipal-public-works',
-      coverImage: 'https://images.unsplash.com/photo-1517581177682-a085bb7ffb15?auto=format&fit=crop&q=80&w=800',
-      galleryImages: [],
-      videoUrl: HERO_VIDEOS.municipal,
-      summary: '为市政道路和公共空间提供高承载、易维护的格栅系统。',
-      features: ['高承载结构', '快速检修', '耐腐蚀表面处理'],
-      specifications: [{ label: '承载等级', value: 'D400 - F900' }],
-      downloads: [],
-      body: '适合高频交通和长期暴露环境，支持工程定制。',
-      isFeatured: true,
-      sortOrder: 20,
-      seo: { title: '高承载定制化市政格栅 | 星渡ASTREVA', description: '高承载市政格栅和排水盖板定制方案。' }
-    },
-    {
-      id: 'prod_slot_drain',
-      name: '隐形缝隙式树脂排水系统',
-      slug: 'invisible-slot-resin-drainage-system',
-      categorySlug: 'commercial-premium-residential',
+    catalogProduct({
+      name: '防臭水封地漏', slug: 'anti-odor-water-seal-floor-drain', categorySlug: 'floor-drain-system',
+      coverImage: 'https://images.unsplash.com/photo-1541888086425-d81bb19240f5?auto=format&fit=crop&q=80&w=900',
+      summary: '利用稳定水封结构阻隔异味与害虫，适用于卫生间、厨房及公共空间。',
+      features: ['稳定水封防臭', '可拆卸清洁', '304/316L 不锈钢'], specifications: [{ label: '出水口径', value: 'DN50 / DN75 / DN100' }], isFeatured: true, sortOrder: 10
+    }),
+    catalogProduct({
+      name: '简易地漏', slug: 'simple-floor-drain', categorySlug: 'floor-drain-system',
+      coverImage: 'https://images.unsplash.com/photo-1517581177682-a085bb7ffb15?auto=format&fit=crop&q=80&w=900',
+      summary: '无防臭结构并配备可拆卸滤网，适合设备间、阳台及一般排水点。',
+      features: ['结构简洁', '内置滤网', '维护方便'], specifications: [{ label: '材质', value: '304 / 316L 不锈钢' }], isFeatured: true, sortOrder: 20
+    }),
+    catalogProduct({
+      name: '地漏箱体', slug: 'floor-drain-box', categorySlug: 'floor-drain-system',
+      coverImage: 'https://images.unsplash.com/photo-1504307651254-35680f356fce?auto=format&fit=crop&q=80&w=900',
+      summary: '模块化不锈钢地漏箱体，支持多种盖板、出水方向及现场安装条件。',
+      features: ['一体成型箱体', '多规格接口', '支持定制深度'], specifications: [{ label: '接口方向', value: '底出 / 侧出' }], isFeatured: false, sortOrder: 30
+    }),
+    catalogProduct({
+      name: '地漏滤网', slug: 'floor-drain-filter', categorySlug: 'floor-drain-system',
+      coverImage: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ece?auto=format&fit=crop&q=80&w=900',
+      summary: '拦截毛发、残渣和较大杂物的可拆卸不锈钢过滤组件。',
+      features: ['精细过滤', '快速拆装', '耐腐蚀'], specifications: [{ label: '过滤精度', value: '按使用场景定制' }], isFeatured: false, sortOrder: 40
+    }),
+    catalogProduct({
+      name: '缝隙式盖板', slug: 'slot-cover', categorySlug: 'cover-grating',
       coverImage: 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&q=80&w=900',
-      galleryImages: [],
-      videoUrl: HERO_VIDEOS.commercial,
-      summary: '适合商业广场、高端住宅和景观地坪的低视觉干扰排水系统。',
-      features: ['隐形缝隙外观', '适配石材和地砖', '排水性能稳定'],
-      specifications: [{ label: '缝隙宽度', value: '8mm / 12mm / 20mm' }],
-      downloads: [],
-      body: '通过窄缝收水和模块化沟体兼顾美观与效率。',
-      isFeatured: true,
-      sortOrder: 10,
-      seo: { title: '隐形缝隙式排水系统 | 星渡ASTREVA', description: '用于商业与高端住宅的隐形缝隙式排水系统。' }
-    },
-    {
-      id: 'prod_rain_collector',
-      name: '景观级雨水收集器',
-      slug: 'landscape-rainwater-collector',
-      categorySlug: 'commercial-premium-residential',
+      summary: '以窄缝收水降低视觉干扰，适配商业、住宅与景观铺装。',
+      features: ['低视觉干扰', '适配多种铺装', '模块化安装'], specifications: [{ label: '缝隙宽度', value: '8mm / 12mm / 20mm' }], isFeatured: true, sortOrder: 10
+    }),
+    catalogProduct({
+      name: '激光开孔盖板', slug: 'laser-perforated-cover', categorySlug: 'cover-grating',
       coverImage: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=900',
-      galleryImages: [],
-      videoUrl: HERO_VIDEOS.about,
-      summary: '面向景观雨水组织与收集的建筑级节点产品。',
-      features: ['易清洁', '可定制面层', '与铺装协调'],
-      specifications: [{ label: '面层', value: '不锈钢 / 石材嵌入式' }],
-      downloads: [],
-      body: '让雨水管理与景观设计自然融合。',
-      isFeatured: false,
-      sortOrder: 20,
-      seo: { title: '景观级雨水收集器 | 星渡ASTREVA', description: '适用于景观空间的雨水收集和排水节点。' }
-    },
-    {
-      id: 'prod_industrial_channel',
-      name: '防腐蚀工业级不锈钢明沟',
-      slug: 'anti-corrosion-industrial-stainless-channel',
-      categorySlug: 'industrial-warehouse',
-      coverImage: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ece?auto=format&fit=crop&q=80&w=800',
-      galleryImages: [],
-      videoUrl: HERO_VIDEOS.industrial,
-      summary: '为工业腐蚀环境和高强度清洗场景设计。',
-      features: ['316L 耐腐蚀', '卫生级焊接', '可承受高压冲洗'],
-      specifications: [{ label: '材质', value: '316L 不锈钢' }],
-      downloads: [],
-      body: '适合食品、化工、物流和制造场景。',
-      isFeatured: false,
-      sortOrder: 10,
-      seo: { title: '防腐蚀工业级不锈钢明沟 | 星渡ASTREVA', description: '工业级防腐不锈钢明沟排水系统。' }
-    },
-    {
-      id: 'prod_industrial_cover',
-      name: '工业级承重井盖',
-      slug: 'industrial-heavy-duty-manhole-cover',
-      categorySlug: 'industrial-warehouse',
-      coverImage: 'https://images.unsplash.com/photo-1541888086425-d81bb19240f5?auto=format&fit=crop&q=80&w=800',
-      galleryImages: [],
-      videoUrl: HERO_VIDEOS.industrialDetail,
-      summary: '用于仓储、工业厂区和重型车辆区域的承重井盖。',
-      features: ['高承载', '防滑表面', '易维护开启'],
-      specifications: [{ label: '承载', value: 'D400 - F900' }],
-      downloads: [],
-      body: '根据场地荷载和检修频率定制。',
-      isFeatured: false,
-      sortOrder: 20,
-      seo: { title: '工业级承重井盖 | 星渡ASTREVA', description: '工业与仓储设施重载井盖产品。' }
-    },
-    {
-      id: 'prod_curve_drain',
-      name: '曲线定制地坪排水系统',
-      slug: 'custom-curved-floor-drainage-system',
-      categorySlug: 'landscape-special-drainage',
-      coverImage: 'https://images.unsplash.com/photo-1572120360610-d971b9d7767c?auto=format&fit=crop&q=80&w=800',
-      galleryImages: [],
-      videoUrl: HERO_VIDEOS.landscape,
-      summary: '支持曲线、异形和复杂地坪边界的定制排水。',
-      features: ['曲线定制', '适合景观空间', '模块精确拼接'],
-      specifications: [{ label: '定制半径', value: '按项目图纸加工' }],
-      downloads: [],
-      body: '用于广场、公园、庭院和特殊建筑节点。',
-      isFeatured: false,
-      sortOrder: 10,
-      seo: { title: '曲线定制地坪排水系统 | 星渡ASTREVA', description: '曲线和异形地坪排水定制方案。' }
-    },
-    {
-      id: 'prod_permeable_well',
-      name: '生态透水材料与检查井',
-      slug: 'ecological-permeable-materials-and-inspection-well',
-      categorySlug: 'landscape-special-drainage',
-      coverImage: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=800',
-      galleryImages: [],
-      videoUrl: HERO_VIDEOS.projects,
-      summary: '结合生态透水铺装和可维护检查井的雨水管理节点。',
-      features: ['生态透水', '检修便利', '适合海绵城市'],
-      specifications: [{ label: '应用', value: '海绵城市 / 景观改造' }],
-      downloads: [],
-      body: '支持城市雨水滞蓄、渗透与排放的综合设计。',
-      isFeatured: false,
-      sortOrder: 20,
-      seo: { title: '生态透水材料与检查井 | 星渡ASTREVA', description: '生态透水材料与检查井排水节点。' }
-    }
+      summary: '激光精密开孔，可按排水能力、图案和防滑要求定制。',
+      features: ['精密激光加工', '孔型可定制', '表面平整'], specifications: [{ label: '板厚', value: '1.5mm - 5mm' }], isFeatured: true, sortOrder: 20
+    }),
+    catalogProduct({
+      name: '格栅盖板', slug: 'grating-cover', categorySlug: 'cover-grating',
+      coverImage: 'https://images.unsplash.com/photo-1572120360610-d971b9d7767c?auto=format&fit=crop&q=80&w=900',
+      summary: '兼顾快速收水、承载与检修效率的不锈钢格栅盖板。',
+      features: ['高效过水', '多级承载', '便于检修'], specifications: [{ label: '承载等级', value: 'A15 - D400' }], isFeatured: false, sortOrder: 30
+    }),
+    catalogProduct({
+      name: '冲压拉伸盖板', slug: 'stamped-stretched-cover', categorySlug: 'cover-grating',
+      coverImage: 'https://images.unsplash.com/photo-1541888086425-d81bb19240f5?auto=format&fit=crop&q=80&w=900',
+      summary: '冲压拉伸一体成型，强度稳定并适合标准化批量应用。',
+      features: ['一体成型', '稳定耐用', '标准化生产'], specifications: [{ label: '表面处理', value: '拉丝 / 喷砂 / 防滑' }], isFeatured: false, sortOrder: 40
+    }),
+    catalogProduct({
+      name: '不锈钢排水沟', slug: 'stainless-drainage-channel', categorySlug: 'drainage-channel',
+      coverImage: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ece?auto=format&fit=crop&q=80&w=900',
+      summary: '适用于商业、食品、工业与公共工程的模块化不锈钢排水沟体。',
+      features: ['模块化拼接', '耐腐蚀', '截面可定制'], specifications: [{ label: '主体材质', value: '304 / 316L 不锈钢' }], isFeatured: true, sortOrder: 10
+    }),
+    catalogProduct({
+      name: '水沟盖板', slug: 'channel-cover', categorySlug: 'drainage-channel',
+      coverImage: 'https://images.unsplash.com/photo-1517581177682-a085bb7ffb15?auto=format&fit=crop&q=80&w=900',
+      summary: '与排水沟体配套的盖板系统，支持缝隙、格栅及开孔等形式。',
+      features: ['多种面板形式', '快速开启', '承载可选'], specifications: [{ label: '适配沟宽', value: '100mm - 600mm' }], isFeatured: true, sortOrder: 20
+    }),
+    catalogProduct({
+      name: '成品线性排水沟', slug: 'finished-linear-drain', categorySlug: 'drainage-channel',
+      coverImage: 'https://images.unsplash.com/photo-1504307651254-35680f356fce?auto=format&fit=crop&q=80&w=900',
+      summary: '沟体、盖板与连接件成套交付，缩短现场安装时间。',
+      features: ['系统化交付', '安装高效', '节点完整'], specifications: [{ label: '标准长度', value: '500mm / 1000mm' }], isFeatured: false, sortOrder: 30
+    }),
+    catalogProduct({
+      name: '隔油池', slug: 'grease-interceptor', categorySlug: 'oil-sedimentation',
+      coverImage: 'https://images.unsplash.com/photo-1572120360610-d971b9d7767c?auto=format&fit=crop&q=80&w=900',
+      summary: '用于餐饮与食品场景的油水分离设备，支持地上或地埋安装。',
+      features: ['油水分离', '易清掏维护', '容量可定制'], specifications: [{ label: '安装方式', value: '地上 / 地埋' }], isFeatured: true, sortOrder: 10
+    }),
+    catalogProduct({
+      name: '沉淀池', slug: 'sedimentation-tank', categorySlug: 'oil-sedimentation',
+      coverImage: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=900',
+      summary: '对排水中的颗粒、泥沙与悬浮物进行预沉淀处理。',
+      features: ['颗粒沉淀', '多级结构可选', '检修清理方便'], specifications: [{ label: '有效容积', value: '按流量设计' }], isFeatured: false, sortOrder: 20
+    }),
+    catalogProduct({
+      name: '不锈钢隐形井盖', slug: 'stainless-concealed-manhole-cover', categorySlug: 'stainless-manhole',
+      coverImage: 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&q=80&w=900',
+      summary: '与石材、地砖及景观铺装融合的不锈钢隐形检修井盖。',
+      features: ['隐藏式外观', '防臭防水', '开启便利'], specifications: [{ label: '常用尺寸', value: '600×600 / 800×800mm' }], isFeatured: true, sortOrder: 10
+    }),
+    catalogProduct({
+      name: '可填充式井盖', slug: 'infill-manhole-cover', categorySlug: 'stainless-manhole',
+      coverImage: 'https://images.unsplash.com/photo-1541888086425-d81bb19240f5?auto=format&fit=crop&q=80&w=900',
+      summary: '托盘内可填充石材、混凝土或地砖，兼顾承载与环境一致性。',
+      features: ['多种填充面层', '高承载框体', '防跳动设计'], specifications: [{ label: '填充深度', value: '30mm - 100mm' }], isFeatured: false, sortOrder: 20
+    })
   ],
   support: {
     seo: { title: '服务与支持 | 星渡ASTREVA', description: '获取星渡ASTREVA 产品报价、技术支持、安装指南和售后质保服务。' },
@@ -540,94 +523,6 @@ export const fallbackContent: SiteContent = {
       },
       body: '<p>星渡ASTREVA 将排水系统拆解为可组合的模块化方案，帮助工程团队更快完成选型、深化与现场安装。</p>',
       seo: { title: '解决方案 | 星渡ASTREVA', description: '浏览星渡ASTREVA 市政、商业、工业、景观、海绵城市等排水系统解决方案。' }
-    },
-    {
-      slug: 'projects',
-      title: '工程案例',
-      hero: {
-        eyebrow: 'Projects',
-        title: '工程案例与应用实录',
-        description: '每一个项目都是我们对品质的承诺。从地下深处到城市核心，星渡系统正在默默守护每一寸地表的干爽。',
-        backgroundImage: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ece?auto=format&fit=crop&q=80&w=2000',
-        backgroundVideo: HERO_VIDEOS.projects
-      },
-      sections: {
-        introTitle: '工程案例与应用实录',
-        introDescription: '每一个项目都记录真实挑战、星渡方案和交付结果。',
-        ctaLabel: '查看完整结项报告',
-        backLabel: '返回案例列表',
-        breadcrumbLabel: '工程案例',
-        reportLabel: '详情报告',
-        detailIntroTitle: '01. 项目背景与设计参数',
-        specTitle: '技术规格清单 (Technical Specs)',
-        processTitle: '02. 施工与深化过程 (Construction Process)',
-        reviewTitle: '03. 交付实测与评价 (Review)',
-        detailCtaTitle: '想了解相似项目在您的场景下如何落地？',
-        detailCtaDescription: '我们的资深工程顾问可为您提供 1 对 1 技术咨询与 CAD 深化图纸。',
-        detailPrimaryLabel: '咨询该案例专家',
-        detailPrimaryHref: '/support/',
-        filters: [
-          { label: '全部项目' },
-          { label: '北京' },
-          { label: '上海' },
-          { label: '市政工程' },
-          { label: '商业地标' },
-          { label: '工业仓储' },
-          { label: '景观项目' }
-        ],
-        cases: [
-          {
-            id: 'hongqiao-hub',
-            title: '上海虹桥枢纽航站区排水系统改造工程',
-            location: '中国 · 上海',
-            type: '大型交通枢纽 / 市政重载',
-            year: '2023',
-            image: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=1200',
-            challenge: '作为繁忙交通枢纽之一，该项目面临超大汇水面积、F900 顶级承载要求，以及施工窗口期仅有凌晨 4 小时的限制。',
-            solution: '采用星渡 AST-300 型模块化不锈钢一体化系统。通过预先在 BIM 环境下进行模数化分段，现场采用 Click 咔哒锁扣实现无焊连接。',
-            results: '交付后历经多次强降水考验，路面无明显积水，不锈钢盖板稳固如新。',
-            tags: ['F900级', 'BIM深化', '极速安装']
-          },
-          {
-            id: 'beijing-cbd-plaza',
-            title: '北京某 CBD 顶级商业中心景观广场',
-            location: '中国 · 北京',
-            type: '商业综合体 / 景观美学',
-            year: '2023',
-            image: 'https://images.unsplash.com/photo-1577086664693-894d8405334a?auto=format&fit=crop&q=80&w=1200',
-            challenge: '建筑师要求广场铺装实现视觉对齐，传统排水格栅会破坏花岗岩质感，同时需考虑融雪盐腐蚀。',
-            solution: '提供 15mm 极窄缝隙式系统，配合 SS316L 级抗盐腐蚀材质。检修口采用填充式盖板设计。',
-            results: '实现了隐身排水效果，广场铺装完成后排水节点几乎不可见。',
-            tags: ['隐形缝隙', 'SS316L', '定制美学']
-          },
-          {
-            id: 'industrial-logistics',
-            title: '华东工业物流园重载排水改造项目',
-            location: '中国 · 华东',
-            type: '工业仓储 / 重载排水',
-            year: '2024',
-            image: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ece?auto=format&fit=crop&q=80&w=1200',
-            challenge: '园区叉车与货车高频通行，原排水沟盖板松动、沉降，雨季局部仓储区积水。',
-            solution: '使用工业级承重井盖与加厚不锈钢明沟组合，节点处增加抗剪支撑和可检修沉砂模块。',
-            results: '改造后通行区域稳定，维护频次下降，雨季积水问题得到解决。',
-            tags: ['工业重载', '沉砂模块', '快速改造']
-          },
-          {
-            id: 'garden-residence',
-            title: '高端住宅景观排水节点定制项目',
-            location: '中国 · 华南',
-            type: '高端住宅 / 景观定制',
-            year: '2024',
-            image: 'https://images.unsplash.com/photo-1572120360610-d971b9d7767c?auto=format&fit=crop&q=80&w=1200',
-            challenge: '庭院铺装存在多处曲线边界，常规直线排水沟无法与景观线条自然融合。',
-            solution: '采用曲线定制地坪排水系统，预制弧形沟体并与石材铺装模数同步深化。',
-            results: '排水缝与景观线条统一，雨后庭院无明显积水，后期检修口隐藏自然。',
-            tags: ['曲线定制', '高端住宅', '隐藏检修']
-          }
-        ]
-      },
-      body: '<p>工程案例页用于展示项目背景、产品应用、施工效果和相关资料，帮助客户判断方案适配度。</p>',
-      seo: { title: '工程案例 | 星渡ASTREVA', description: '查看星渡ASTREVA 模块化排水系统在市政、商业、工业和景观项目中的应用案例。' }
     },
     {
       slug: 'faq',

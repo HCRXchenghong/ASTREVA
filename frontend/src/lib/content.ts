@@ -326,7 +326,7 @@ export async function getContent(): Promise<SiteContent> {
       products: mappedProducts.length ? mappedProducts : fallbackContent.products,
       support: mapSupportPage(support),
       faqs: entities<any>(faqs).map(mapFAQ).filter((item) => item.enabled),
-      staticPages: entities<any>(staticPages).map(mapStaticPage)
+      staticPages: entities<any>(staticPages).filter((item) => item.slug !== 'projects').map(mapStaticPage)
     };
   } catch (error) {
     console.warn('[content] Falling back to seed content:', error);

@@ -4,6 +4,7 @@
 
 :root {
   color-scheme: light;
+  --radius-ui: 10px;
 }
 
 html {

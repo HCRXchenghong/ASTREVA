@@ -82,7 +82,7 @@ export default function VideoModal({ primaryLabel, primaryHref = '/support/', se
             href={embed.originalUrl}
             target="_blank"
             rel="noreferrer"
-            className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-bold text-[#0a4d8c] shadow-lg shadow-black/20 transition-colors hover:bg-blue-50"
+            className="mt-5 inline-flex items-center gap-2 rounded-lg bg-white px-6 py-3 text-sm font-bold text-[#0a4d8c] shadow-lg shadow-black/20 transition-colors hover:bg-blue-50"
           >
             {openExternalLabel}
             <ArrowUpRight size={16} />
@@ -95,7 +95,7 @@ export default function VideoModal({ primaryLabel, primaryHref = '/support/', se
   return (
     <>
       <div className="flex flex-col sm:flex-row gap-6 items-start sm:items-center">
-        <a href={primaryHref} className="bg-[#0a66c2] hover:bg-[#084b8c] text-white px-8 py-3.5 rounded-full font-medium transition-all flex items-center gap-2 shadow-lg shadow-blue-500/30">
+        <a href={primaryHref} className="bg-[#0a66c2] hover:bg-[#084b8c] text-white px-8 py-3.5 rounded-lg font-medium transition-all flex items-center gap-2 shadow-lg shadow-blue-500/30">
           {primaryLabel} <ArrowUpRight size={20} />
         </a>
         <button onClick={() => setOpen(true)} className="text-white flex items-center gap-3 font-semibold hover:text-blue-300 transition-colors group">

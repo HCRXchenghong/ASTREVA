@@ -33,7 +33,7 @@ const jsonLd = [breadcrumbJsonLd([{ name: content.site.navigation.homeLabel, url
       <div class="max-w-7xl mx-auto px-6">
         <div class="flex flex-col md:flex-row justify-between items-center mb-12 border-b border-gray-200 pb-6">
           <h2 class="text-3xl font-bold text-gray-800 border-l-4 border-[#0a4d8c] pl-4">{categoryTitle}</h2>
-          <a href="/products/" class="mt-4 md:mt-0 flex items-center gap-2 text-[#0a4d8c] font-bold hover:bg-blue-50 px-5 py-2.5 rounded-full transition-colors border border-blue-200">
+          <a href="/products/" class="mt-4 md:mt-0 flex items-center gap-2 text-[#0a4d8c] font-bold hover:bg-blue-50 px-5 py-2.5 rounded-lg transition-colors border border-blue-200">
             <span aria-hidden="true">{backIcon}</span> {productCenter.categoryPage.backLabel}
           </a>
         </div>
@@ -42,7 +42,7 @@ const jsonLd = [breadcrumbJsonLd([{ name: content.site.navigation.homeLabel, url
             <a href={`/products/${category.slug}/${item.slug}/`} class="group bg-white rounded-3xl overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-300 border border-gray-100 flex flex-col">
               <div class="h-64 overflow-hidden relative">
                 <div class="absolute inset-0 bg-[#0a4d8c]/0 group-hover:bg-[#0a4d8c]/20 transition-colors z-10 flex items-center justify-center">
-                  <span class="bg-white text-[#0a4d8c] px-6 py-2 rounded-full font-bold opacity-0 group-hover:opacity-100 transform translate-y-4 group-hover:translate-y-0 transition-all">{productCenter.categoryPage.productHoverLabel}</span>
+                  <span class="bg-white text-[#0a4d8c] px-6 py-2 rounded-lg font-bold opacity-0 group-hover:opacity-100 transform translate-y-4 group-hover:translate-y-0 transition-all">{productCenter.categoryPage.productHoverLabel}</span>
                 </div>
                 <img src={item.coverImage} alt={item.name} class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
               </div>

@@ -29,8 +29,7 @@
       "categoryPrompt": "选择业务分类 :",
       "productDetailLabel": "进入产品详情",
       "mobileMenuLabel": "打开导航",
-      "solutionsLabel": "解决方案",
-      "projectsLabel": "工程案例"
+      "solutionsLabel": "解决方案"
     },
     "footer": {
       "description": "建筑与市政排水领域的创新方案引领者。提供最高效、最模块化的不锈钢排水系统。",
@@ -56,10 +55,6 @@
         {
           "label": "解决方案",
           "href": "/solutions/"
-        },
-        {
-          "label": "工程案例",
-          "href": "/projects/"
         }
       ],
       "supportLinks": [
@@ -873,172 +868,6 @@
       "seo": {
         "title": "解决方案 | 星渡ASTREVA",
         "description": "浏览星渡ASTREVA 市政、商业、工业、景观、海绵城市等排水系统解决方案。"
-      }
-    },
-    {
-      "slug": "projects",
-      "title": "工程案例",
-      "hero": {
-        "eyebrow": "Projects",
-        "title": "工程案例与应用实录",
-        "subtitle": "用真实项目场景展示星渡ASTREVA 排水系统在不同空间中的应用方式。",
-        "backgroundImage": "https://images.unsplash.com/photo-1581094288338-2314dddb7ece?auto=format&fit=crop&q=80&w=2000",
-        "description": "每一个项目都是我们对品质的承诺。从地下深处到城市核心，星渡系统正在默默守护每一寸地表的干爽。",
-        "backgroundVideo": "https://assets.mixkit.co/videos/4401/4401-1080.mp4"
-      },
-      "sections": {
-        "introTitle": "工程案例与应用实录",
-        "introDescription": "通过真实项目场景，了解星渡排水系统在不同空间中的应用方式、施工效率与长期表现。",
-        "ctaLabel": "查看完整结项报告",
-        "filters": [
-          {
-            "label": "全部项目"
-          },
-          {
-            "label": "北京"
-          },
-          {
-            "label": "上海"
-          },
-          {
-            "label": "市政工程"
-          },
-          {
-            "label": "商业地标"
-          },
-          {
-            "label": "工业仓储"
-          },
-          {
-            "label": "景观项目"
-          }
-        ],
-        "cases": [
-          {
-            "specs": "材质等级：AISI 304L / 316L 可选\n承载等级：EN 1433 - F900\n沟体长度：1.0m / 2.0m 模块化\n连接技术：Click-System 咔哒锁扣",
-            "detailIntroExtra": "针对该项目的极端环境，星渡工程师联合设计团队，先通过水力模拟计算峰值排水量，再根据承载、铺装和维护需求确定模块尺寸与节点构造。",
-            "processOneVisual": "BIM Modeling Process",
-            "processOneTitle": "BIM 前置深化设计",
-            "processOneDescription": "通过 BIM 技术对地下管线、结构柱梁进行避让，自动生成预制件清单，降低现场返工概率。",
-            "processTwoVisual": "On-site Installation",
-            "processTwoTitle": "模块化极速安装",
-            "processTwoDescription": "现场无需专业焊工。Click 锁扣配合星渡专用密封件，在保证强度的同时实现防渗漏和快速拼接。",
-            "reviewQuote": "星渡不仅提供了产品，更解决了我们的工期焦虑。",
-            "reviewAuthor": "项目总包方工程部负责人",
-            "metrics": "0 渗漏：贯通闭水测试结论\n75%：后期维护成本降低\n50 年：预期设计寿命",
-            "id": "hongqiao-hub",
-            "title": "上海虹桥枢纽航站区排水系统改造工程",
-            "location": "中国 · 上海",
-            "type": "大型交通枢纽 / 市政重载",
-            "year": "2023",
-            "image": "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=1200",
-            "challenge": "作为全球繁忙的交通枢纽之一，该项目面临超大汇水面积、F900 顶级承载要求，以及施工窗口期仅有凌晨 4 小时的极端限制。",
-            "solution": "采用星渡 AST-300 型模块化不锈钢一体化系统。通过预先在 BIM 环境下进行模数化分段，现场采用 Click 咔哒锁扣实现无焊连接，效率提升显著。",
-            "results": "交付后历经多次强降水考验，路面无明显积水，不锈钢盖板稳固如新。",
-            "tags": [
-              "F900级",
-              "BIM深化",
-              "极速安装"
-            ]
-          },
-          {
-            "specs": "材质等级：AISI 304L / 316L 可选\n承载等级：EN 1433 - F900\n沟体长度：1.0m / 2.0m 模块化\n连接技术：Click-System 咔哒锁扣",
-            "detailIntroExtra": "针对该项目的极端环境，星渡工程师联合设计团队，先通过水力模拟计算峰值排水量，再根据承载、铺装和维护需求确定模块尺寸与节点构造。",
-            "processOneVisual": "BIM Modeling Process",
-            "processOneTitle": "BIM 前置深化设计",
-            "processOneDescription": "通过 BIM 技术对地下管线、结构柱梁进行避让，自动生成预制件清单，降低现场返工概率。",
-            "processTwoVisual": "On-site Installation",
-            "processTwoTitle": "模块化极速安装",
-            "processTwoDescription": "现场无需专业焊工。Click 锁扣配合星渡专用密封件，在保证强度的同时实现防渗漏和快速拼接。",
-            "reviewQuote": "星渡不仅提供了产品，更解决了我们的工期焦虑。",
-            "reviewAuthor": "项目总包方工程部负责人",
-            "metrics": "0 渗漏：贯通闭水测试结论\n75%：后期维护成本降低\n50 年：预期设计寿命",
-            "id": "beijing-cbd-plaza",
-            "title": "北京某 CBD 顶级商业中心景观广场",
-            "location": "中国 · 北京",
-            "type": "商业综合体 / 景观美学",
-            "year": "2023",
-            "image": "https://images.unsplash.com/photo-1577086664693-894d8405334a?auto=format&fit=crop&q=80&w=1200",
-            "challenge": "建筑师要求广场铺装实现视觉对齐，传统排水格栅会破坏花岗岩质感。北方冬季严寒，还需要考虑融雪盐腐蚀。",
-            "solution": "提供定制 15mm 极窄缝隙式系统，配合 SS316L 级抗盐腐蚀材质。检修口采用填充式盖板设计，铺装完成后视觉存在感极低。",
-            "results": "实现了真正的隐身排水，景观铺装完整度与后期维护效率同步提升。",
-            "tags": [
-              "隐形缝隙",
-              "SS316L",
-              "定制美学"
-            ]
-          },
-          {
-            "specs": "材质等级：AISI 304L / 316L 可选\n承载等级：EN 1433 - F900\n沟体长度：1.0m / 2.0m 模块化\n连接技术：Click-System 咔哒锁扣",
-            "detailIntroExtra": "针对该项目的极端环境，星渡工程师联合设计团队，先通过水力模拟计算峰值排水量，再根据承载、铺装和维护需求确定模块尺寸与节点构造。",
-            "processOneVisual": "BIM Modeling Process",
-            "processOneTitle": "BIM 前置深化设计",
-            "processOneDescription": "通过 BIM 技术对地下管线、结构柱梁进行避让，自动生成预制件清单，降低现场返工概率。",
-            "processTwoVisual": "On-site Installation",
-            "processTwoTitle": "模块化极速安装",
-            "processTwoDescription": "现场无需专业焊工。Click 锁扣配合星渡专用密封件，在保证强度的同时实现防渗漏和快速拼接。",
-            "reviewQuote": "星渡不仅提供了产品，更解决了我们的工期焦虑。",
-            "reviewAuthor": "项目总包方工程部负责人",
-            "metrics": "0 渗漏：贯通闭水测试结论\n75%：后期维护成本降低\n50 年：预期设计寿命",
-            "id": "industrial-logistics",
-            "title": "华东工业物流园重载排水改造项目",
-            "location": "中国 · 华东",
-            "type": "工业仓储 / 重载通行",
-            "year": "2024",
-            "image": "https://images.unsplash.com/photo-1581094288338-2314dddb7ece?auto=format&fit=crop&q=80&w=1200",
-            "challenge": "重型叉车和货车长期频繁转向，原有混凝土沟体出现边缘破损、盖板松动和维护成本升高。",
-            "solution": "采用高强不锈钢沟体和重载格栅组合，局部节点使用可开启检修盖板，便于后期清淤和巡检。",
-            "results": "改造后通行区域稳定性提升，维护频次降低，排水沟边缘破损问题得到控制。",
-            "tags": [
-              "工业重载",
-              "高强格栅",
-              "可维护"
-            ]
-          },
-          {
-            "specs": "材质等级：AISI 304L / 316L 可选\n承载等级：EN 1433 - F900\n沟体长度：1.0m / 2.0m 模块化\n连接技术：Click-System 咔哒锁扣",
-            "detailIntroExtra": "针对该项目的极端环境，星渡工程师联合设计团队，先通过水力模拟计算峰值排水量，再根据承载、铺装和维护需求确定模块尺寸与节点构造。",
-            "processOneVisual": "BIM Modeling Process",
-            "processOneTitle": "BIM 前置深化设计",
-            "processOneDescription": "通过 BIM 技术对地下管线、结构柱梁进行避让，自动生成预制件清单，降低现场返工概率。",
-            "processTwoVisual": "On-site Installation",
-            "processTwoTitle": "模块化极速安装",
-            "processTwoDescription": "现场无需专业焊工。Click 锁扣配合星渡专用密封件，在保证强度的同时实现防渗漏和快速拼接。",
-            "reviewQuote": "星渡不仅提供了产品，更解决了我们的工期焦虑。",
-            "reviewAuthor": "项目总包方工程部负责人",
-            "metrics": "0 渗漏：贯通闭水测试结论\n75%：后期维护成本降低\n50 年：预期设计寿命",
-            "id": "garden-residence",
-            "title": "高端住宅景观排水节点定制项目",
-            "location": "中国 · 华南",
-            "type": "高端住宅 / 景观定制",
-            "year": "2024",
-            "image": "https://images.unsplash.com/photo-1572120360610-d971b9d7767c?auto=format&fit=crop&q=80&w=1200",
-            "challenge": "庭院铺装存在多处曲线边界，常规直线排水沟无法与景观线条自然融合。",
-            "solution": "星渡根据景观图纸进行曲线模数拆分，定制窄缝收水和隐藏检修节点。",
-            "results": "排水系统融入铺装缝线，暴雨后庭院积水明显改善，景观完整度保持稳定。",
-            "tags": [
-              "曲线定制",
-              "景观排水",
-              "隐藏节点"
-            ]
-          }
-        ],
-        "backLabel": "返回案例列表",
-        "breadcrumbLabel": "工程案例",
-        "reportLabel": "详情报告",
-        "detailIntroTitle": "01. 项目背景与设计参数",
-        "specTitle": "技术规格清单 (Technical Specs)",
-        "processTitle": "02. 施工与深化过程 (Construction Process)",
-        "reviewTitle": "03. 交付实测与评价 (Review)",
-        "detailCtaTitle": "想了解相似项目在您的场景下如何落地？",
-        "detailCtaDescription": "我们的资深工程顾问可为您提供 1 对 1 技术咨询与 CAD 深化图纸。",
-        "detailPrimaryLabel": "咨询该案例专家",
-        "detailPrimaryHref": "/support/"
-      },
-      "body": "",
-      "seo": {
-        "title": "工程案例 | 星渡ASTREVA",
-        "description": "查看星渡ASTREVA 排水系统在交通枢纽、商业广场、工业仓储和景观项目中的应用案例。"
       }
     }
   ]
