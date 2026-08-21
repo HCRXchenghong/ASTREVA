@@ -13,6 +13,7 @@ import (
 	"customer-service/backend/internal/app"
 	"customer-service/backend/internal/config"
 	"customer-service/backend/internal/httpx"
+	"customer-service/backend/internal/notify"
 	"customer-service/backend/internal/realtime"
 	"customer-service/backend/internal/store"
 )
@@ -32,22 +33,13 @@ func main() {
 	}
 
 	storeOptions := store.Options{
-		OpenAIAPIKey:            cfg.OpenAIAPIKey,
-		OpenAIBaseURL:           cfg.OpenAIBaseURL,
-		OpenAIModel:             cfg.OpenAIModel,
-		OpenAIAPIType:           cfg.OpenAIAPIType,
-		DataEncryptionKey:       cfg.DataEncryptionKey,
-		BootstrapAdminPassword:  cfg.BootstrapAdminPassword,
-		BootstrapAgentPassword:  cfg.BootstrapAgentPassword,
-		FeishuEnabled:           cfg.FeishuEnabled,
-		FeishuBaseURL:           cfg.FeishuBaseURL,
-		FeishuAppID:             cfg.FeishuAppID,
-		FeishuAppSecret:         cfg.FeishuAppSecret,
-		FeishuVerificationToken: cfg.FeishuVerificationToken,
-		FeishuEncryptKey:        cfg.FeishuEncryptKey,
-		FeishuDefaultChatID:     cfg.FeishuDefaultChatID,
-		FeishuAgentID:           cfg.FeishuAgentID,
-		FeishuTimeoutSeconds:    cfg.FeishuTimeoutSeconds,
+		OpenAIAPIKey:           cfg.OpenAIAPIKey,
+		OpenAIBaseURL:          cfg.OpenAIBaseURL,
+		OpenAIModel:            cfg.OpenAIModel,
+		OpenAIAPIType:          cfg.OpenAIAPIType,
+		DataEncryptionKey:      cfg.DataEncryptionKey,
+		BootstrapAdminPassword: cfg.BootstrapAdminPassword,
+		BootstrapAgentPassword: cfg.BootstrapAgentPassword,
 	}
 	dataStore, closeStore, err := buildStore(startupCtx, cfg, storeOptions, logger)
 	if err != nil {
@@ -68,13 +60,7 @@ func main() {
 		logger.Info("redis event bus enabled", "addr", cfg.RedisAddr, "channel", cfg.RedisChannel)
 	}
 	service := app.NewService(dataStore, hub, logger)
-	if err := service.EnsureFeishuAgent(); err != nil {
-		logger.Error("feishu integration initialization failed", "error", err)
-		os.Exit(1)
-	}
-	if settings := dataStore.FeishuSettings(); settings.Enabled {
-		logger.Info("feishu integration enabled", "chat_id", settings.DefaultChatID, "agent_id", settings.AgentID)
-	}
+	service.SetNotifier(buildNotifier(cfg, logger))
 	mux := httpx.NewRouter(cfg, logger, service)
 
 	server := &http.Server{
@@ -129,4 +115,15 @@ func buildStore(ctx context.Context, cfg config.Config, options store.Options, l
 	memoryStore := store.NewMemoryStore(options)
 	logger.Info("store initialized", "driver", "memory", "database_configured", cfg.DatabaseURL != "")
 	return memoryStore, func() {}, nil
+}
+
+func buildNotifier(cfg config.Config, logger *slog.Logger) notify.Notifier {
+	if strings.TrimSpace(cfg.FCMAccessToken) != "" {
+		return notify.FCMNotifier{
+			Endpoint:    cfg.FCMEndpoint,
+			AccessToken: cfg.FCMAccessToken,
+			Logger:      logger,
+		}
+	}
+	return notify.LoggingNotifier{Logger: logger}
 }

@@ -1,114 +1,66 @@
-# 在线客服系统
+# ServiceBridge 在线客服
 
-轻量、高效、纯自研在线客服系统。当前方向已调整为：网站访客在 Web 聊天窗口咨询，人工客服直接在飞书里接待和回复，不再维护独立客服 App / 管理 App。
+ServiceBridge 是 ASTREVA 自研在线客服子系统，包括访客聊天端、Go 实时后端、统一管理后台中的客服模块，以及 iOS/Android “在线客服”App。
 
-当前已确定：
+## 结构
 
-- 用户端：Web，支持手机浏览器和电脑浏览器。
-- 人工客服端：飞书群 / 飞书应用消息事件。
-- 主通信：访客侧 WebSocket，客服侧飞书事件回调。
-- 后端：Go。
-- 状态与跨节点投递：Redis Pub/Sub。
-- 数据库：PostgreSQL。
-- 上传存储：本地/共享卷或 S3/MinIO 兼容对象存储。
-- AI：OpenAI 原生 API 和 OpenAI 兼容协议适配。
-- 并发目标：不考虑带宽瓶颈时，按 5000 WebSocket 并发连接容灾设计。
-
-核心文档：
-
-- `客服系统边界说明.md`
-- `项目总计划.md`
-- `docs/API与WebSocket协议.md`
-- `docs/飞书直连客服.md`
-
-项目目录：
-
-- `backend/`：Go 后端。
-- `apps/user-web/`：用户端 Web。
-- `deployments/`：部署配置。
-- `scripts/`：脚本。
-- `docs/`：技术文档。
+- `apps/user-web/`：访客独立页和官网 iframe 页面。
+- `apps/agent-mobile/`：Flutter 客服 App，支持 iOS 和 Android。
+- `backend/`：Go HTTP/WebSocket 服务。
+- `backend/migrations/`：PostgreSQL 初始化和增量 SQL。
+- `deployments/`：开发/生产 Compose 与 Nginx 示例。
+- `scripts/`：冒烟、运维、容量测试和商业验收脚本。
+- `docs/`：接口、数据、部署和验收说明。
 
 ## 本地运行
 
-后端：
-
 ```bash
 cd backend
+STORE_DRIVER=memory \
+HTTP_ADDR=0.0.0.0:8080 \
+CORS_ALLOWED_ORIGINS=http://127.0.0.1:4321,http://127.0.0.1:5173 \
 go run ./cmd/server
 ```
 
-用户端 Web：
+另开终端运行访客端：
 
 ```bash
-cd apps/user-web
-python3 -m http.server 5173
+python3 -m http.server 5173 --bind 127.0.0.1 --directory apps/user-web
 ```
 
-访问：
+访客端地址为 `http://127.0.0.1:5173/?embed=1`。统一后台位于仓库根服务的 `http://127.0.0.1:1337/site-admin/`；客服账号在后台“客服管理”中创建。
 
-- 用户端：`http://localhost:5173`
-- 后端健康检查：`http://localhost:8080/healthz`
-- 运维指标：`http://localhost:8080/metrics`
+仓库根目录的 `bash scripts/run-local-stack.sh` 会同时启动官网、统一后台、访客端和 Go 后端。
 
-## 飞书直连
+## 已实现
 
-启用飞书前，需要在飞书开放平台创建自建应用，开启机器人能力和消息事件订阅，并把回调地址配置为：
+- 访客创建/恢复会话、历史分页、文本/表情/图片/语音、撤回、结束和评价。
+- 客服 App 账号密码登录、在线状态、会话与未读、历史消息、文本/图片回复、结束会话和改密。
+- 客服 App WebSocket 心跳、断线重连、会话事件刷新和 15 秒历史补偿轮询。
+- 统一后台客服账号新增、编辑、重置密码、禁用和删除。
+- 统一后台数据概览、会话消息、转接、结束、CSV 导出，以及营业时间、欢迎语、联系方式和 AI 设置。
+- WebSocket 鉴权、消息幂等、登录态撤销、Redis 跨节点广播、PostgreSQL 持久化、S3/MinIO 上传、安全响应头和限流。
+- 统一后台关键词规则、服务评价、审计日志和 App 版本管理页面。
+- Android 自建更新通道，包括后台上传 APK、强制/可选更新配置、App 内检测、下载和安装引导。
+- 后端 FCM HTTP v1 通知通道、客服设备 token 上报接口，以及新会话分配和访客新消息推送触发点。
+- 访客到客服的 Go 端自动化闭环测试，覆盖建会话、WebSocket 消息、幂等、转接、关闭、评价、审计、关键词和 App 更新。
 
-```text
-https://service.example.com/api/integrations/feishu/events
-```
+## 尚需完善
 
-飞书配置保存在 ServiceBridge 后端数据库中，环境变量只做首次启动兜底。管理员登录后调用后台接口保存：
+- APNs/FCM 生产凭据、真机后台/锁屏/进程回收推送验证，以及 iOS APNs 后端签名通道。
+- App Store/Google Play 正式签名、隐私清单、商店素材和发布流程。
+- 浏览器端到端自动化、生产备份监控、故障演练和容量验收。
 
-```http
-PATCH /api/admin/integrations/feishu
-```
+这些增强项不影响当前前台发起咨询、后台管理客服账号、客服 App 在线接待的本地闭环，但完成前不能判定为商业上线。详见 [功能完善任务.md](../功能完善任务.md)。
 
-访客发送消息后，后端会把消息推到默认飞书群。客服直接回复该飞书消息，或在任意消息里带上 `#conv_xxx`，后端会把飞书回复落库为客服消息并推回网站访客。
-
-## 商业部署样例
-
-生产镜像构建：
-
-```bash
-docker build -t customer-service-backend:latest ./backend
-```
-
-生产 Compose 样例：
-
-```bash
-cp deployments/.env.example deployments/.env
-# 修改 deployments/.env 中的数据库密码、DATA_ENCRYPTION_KEY、
-# ADMIN_BOOTSTRAP_PASSWORD、AGENT_BOOTSTRAP_PASSWORD、CORS 域名、可信代理网段、OpenAI Key 和飞书应用配置
-scripts/ops/preflight-prod.sh deployments/.env
-docker compose --env-file deployments/.env -f deployments/docker-compose.prod.example.yml up -d --build
-```
-
-局域网运行：
-
-```bash
-make lan-start
-make lan-status
-make lan-stop
-```
-
-工程验收快捷命令：
+## 验证与部署
 
 ```bash
 make test
 make compose-check
-make build
-make preflight-prod
-
-# 后端已启动后执行
-HTTP_BASE=http://localhost:8080 WS_BASE=ws://localhost:8080 make smoke
-```
-
-商业交付总验收：
-
-```bash
+make smoke
 make commercial-acceptance
+cd apps/agent-mobile && dart analyze && flutter test
 ```
 
-上线前按 `docs/商业上线验收清单.md` 逐项确认生产资源、配置底线、飞书回调和 5000 WebSocket 容量验收。
+接口见 `docs/API与WebSocket协议.md`，生产要求见 `docs/生产部署与容量规划.md` 和 `docs/商业上线验收清单.md`。

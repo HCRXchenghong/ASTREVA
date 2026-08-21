@@ -1,153 +1,64 @@
-# ASTREVA 独立站（Astreva Independent Site）
+# ASTREVA 独立站
 
-这是一个“前台独立站 + 自研官网后台 + 可选在线客服”组合仓库。
+本仓库包含 Astro 官网、统一管理后台、构建发布服务和 ServiceBridge 在线客服。后台统一使用 `1337` 端口和一次 2FA 登录，左侧分为内容管理、客服管理、工作台、系统设置；客服使用 Flutter “在线客服”App 接待访客。
 
-- `frontend/`：Astro + React + Tailwind 的静态官网（当前仓库内置中文内容示例可直接预览）。
-- `admin-server/`：Node 纯后端，提供官网内容配置、媒体库、咨询单管理和重建触发。
-- `servicebridge/`：独立客服体系（可选启用，默认本地也可单独联调）。
-- `scripts/`：本地一键启动脚本与重建 webhook。
+当前发布标签：`v1.1.3`（2026-08-21）。本次版本把本地客服闭环、统一后台、App 更新和推送准备整理为正式发布，完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
-## 仓库结构
+## 目录
 
-```text
-.
-├─ frontend/                  前端站点代码与构建配置
-├─ admin-server/              自研管理后台服务（Node）
-├─ servicebridge/             在线客服子系统（可选）
-├─ scripts/                   本地/运维辅助脚本
-├─ deployments/               部署模板
-└─ data / uploads/            后台数据持久化（本地默认示例与演示数据）
-```
+- `frontend/`：Astro + React + Tailwind 官网，构建产物位于 `frontend/dist/`。
+- `admin-server/`：统一后台、官网内容、媒体、咨询单、2FA 和发布管理。
+- `servicebridge/backend/`：Go API、WebSocket、PostgreSQL/Redis、AI 和上传服务。
+- `servicebridge/apps/user-web/`：官网嵌入的访客聊天端。
+- `servicebridge/apps/agent-mobile/`：iOS/Android 客服 App。
+- `deployments/ubuntu/`：官网、后台和客服系统的生产 Compose。
+- `data/`、`uploads/`：本地内容与上传文件，敏感运行数据不提交 Git。
 
-## 本地快速开始（推荐）
-
-### 1）安装依赖
+## 本地运行
 
 ```bash
 npm install
-```
-
-### 2）准备环境变量
-
-```bash
 cp .env.example .env
-```
-
-然后按实际环境调整 `.env`。
-
-### 3）启动独立站（开发模式）
-
-建议用两个终端并行启动：
-
-```bash
-node admin-server/server.mjs
-```
-
-```bash
-npm run dev:frontend
-```
-
-也可以使用 npm 脚本：
-
-```bash
-npm run dev:admin
-npm run dev:frontend
-```
-
-如果你只想一次性拉起前端静态服务（基于 `frontend/dist`）、后台、重建服务和客服联调栈，使用：
-
-```bash
+npm run build:frontend
 bash scripts/run-local-stack.sh
 ```
 
-### 4）检查服务是否可用
+启动后访问：
 
-- 前台独立站：`http://127.0.0.1:4321/`
-- 后台登录（2FA）：`http://127.0.0.1:1337/admin-2fa`
-- 后台编辑页：`http://127.0.0.1:1337/site-admin/`
-- 后台接口健康：`http://127.0.0.1:1337/healthz`
-- 重建服务：`http://127.0.0.1:8787/healthz`
-- ServiceBridge 用户端（若启用）：`http://127.0.0.1:5173/?embed=1`
+- 官网：`http://127.0.0.1:4321/`
+- 统一后台：`http://127.0.0.1:1337/site-admin/`
+- 后台首次注册/登录：`http://127.0.0.1:1337/admin-2fa`
+- 客服访客端：`http://127.0.0.1:5173/?embed=1`
+- 客服 API：`http://127.0.0.1:8080/healthz`
+- 构建服务：`http://127.0.0.1:8787/healthz`
 
-第一次登录后台时会要求先创建管理员帐号并绑定 Microsoft Authenticator（2FA）。
+首次进入后台时，由站点管理员创建自己的邮箱、密码并绑定 2FA。客服账号在“客服管理”中新建，随后用于登录“在线客服”App。`scripts/run-local-stack.sh` 默认使用内存客服仓库，并让客服 API 监听 `0.0.0.0:8080` 供同一局域网的真机访问。重启后本地客服账号和会话会清空；生产 Compose 使用 PostgreSQL。
 
-## 管理后台和前端闭环说明
+## 内容与客服
 
-前端运行时会从 `PUBLIC_ADMIN_URL/site-admin-api/public-content` 拉取内容。
+前端构建从 `PUBLIC_ADMIN_URL/site-admin-api/public-content` 获取内容；接口不可用时使用 `frontend/src/data/fallback.ts`。后台保存只更新内容，点击“发布官网”才调用重建 webhook。
 
-- 保存内容后先点击**保存当前模块**，确认无误后点击**发布官网**。
-- 后台会请求 `FRONTEND_REBUILD_WEBHOOK_URL`，调用 `scripts/rebuild-webhook.mjs` 执行 `npm run build:frontend`。
-- 构建完成后，前端会展示更新后的静态内容。
+统一后台通过服务端代理访问客服引擎，浏览器不会保存客服引擎管理员密码。相关变量：
 
-`PUBLIC_ADMIN_URL`、`PUBLIC_SITE_URL`、`PUBLIC_SERVICEBRIDGE_URL` 和 `/site-admin-api/` 相关参数都在运行时按环境变量注入。
+- `SERVICEBRIDGE_API_URL`：客服 Go API 内网地址。
+- `SERVICEBRIDGE_ADMIN_ACCOUNT`、`SERVICEBRIDGE_ADMIN_PASSWORD`：统一后台代理使用的客服引擎管理员凭证。
+- `PUBLIC_SERVICEBRIDGE_URL`：官网访客聊天公开地址。
+- `ADMIN_2FA_SESSION_SECRET`：统一后台登录会话签名密钥。
+- `SERVICEBRIDGE_CORS_ALLOWED_ORIGINS`：客服 API/WebSocket 允许来源。
 
-## 生产构建与预览
+生产环境必须使用强随机密码和密钥，不能沿用 `.env.example` 的本地示例值。内容闭环见 [docs/CMS_CLOSED_LOOP.md](docs/CMS_CLOSED_LOOP.md)，客服与 App 说明见 [servicebridge/README.md](servicebridge/README.md)。
+
+## App 更新与推送
+
+客服 App 通过自建通道更新：统一后台左侧“App 版本”上传 APK 并配置强制/可选更新；App 启动时调用客服引擎 `GET /api/app-update/latest` 检测，Android 下载后自动拉起系统安装。签名、发布与 FCM 推送接入步骤见 [docs/APP_RELEASE.md](docs/APP_RELEASE.md)。
+
+## 验证
 
 ```bash
-npm run build:frontend   # 生成 frontend/dist
-npm run preview:frontend # 预览生产构建
+npm run build:frontend
+node --check admin-server/server.mjs
+cd servicebridge/backend && go test ./... && go vet ./...
+cd ../apps/agent-mobile && dart analyze && flutter test
 ```
 
-生产镜像使用 `frontend/Dockerfile` 与 `deployments/*` 目录中的 compose/样例。
-`scripts/run-local-stack.sh` 依赖本地已有 `frontend/dist`；开发环境建议先执行一次 `npm run build:frontend`。
-
-## 常用环境变量
-
-### 前端
-
-| 变量 | 说明 |
-| --- | --- |
-| `PUBLIC_SITE_URL` | 站点公开 URL（默认值如 `https://www.example.com`）；用于 sitemap、robots、站点元信息 |
-| `PUBLIC_ADMIN_URL` | 管理后台根地址（如 `http://127.0.0.1:1337`）。前端内容接口与表单提交都基于此地址 |
-| `PUBLIC_SERVICEBRIDGE_URL` | ServiceBridge 用户端地址，前端/后台聊天窗口会引用 |
-| `CONTENT_API_TOKEN` | 可选：如果你给后台接口加了鉴权，可放在这里 |
-
-### `admin-server`（后台服务）
-
-| 变量 | 说明 |
-| --- | --- |
-| `PORT` | 管理后台监听端口，默认 `1337` |
-| `HOST` | 管理后台监听主机，默认 `127.0.0.1` |
-| `PUBLIC_ADMIN_URL` | 后台对外公开域名（例如生产环境） |
-| `PUBLIC_SITE_URL` | 前台站点域名 |
-| `PUBLIC_SERVICEBRIDGE_URL` | 聊天入口域名 |
-| `FRONTEND_REBUILD_WEBHOOK_URL` | 重建 webhook 地址（默认 `http://127.0.0.1:8787/rebuild`） |
-| `REBUILD_WEBHOOK_SECRET` | 重建 webhook 鉴权密钥；前端后台发布时会带 `Authorization: Bearer <secret>` |
-| `ADMIN_2FA_SESSION_SECRET` | 2FA 会话签名密钥 |
-| `ADMIN_2FA_ISSUER` | 2FA 二维码显示名称（默认 `星渡官网账号`） |
-| `ADMIN_2FA_SESSION_TTL_MS` | 2FA 会话有效时长（毫秒） |
-| `SERVICEBRIDGE_CORS_ALLOWED_ORIGINS` | 供前端脚本启动时透传给客服相关服务 |
-
-### 其他启动变量
-
-- `REBUILD_WEBHOOK_SECRET` 与 `REBUILD_WEBHOOK_PORT`：用于 `scripts/rebuild-webhook.mjs`。
-- 若联调 ServiceBridge：见 `servicebridge` 下的 README 与 `servicebridge/deployments/.env.example`。
-
-## 本地数据存储说明
-
-- `data/site-content.json`：网站内容快照（可编辑）
-- `data/leads.json`：客户咨询记录
-- `data/admin-users.json`：管理员账户与 2FA 信息
-- `uploads/site-admin/`：后台上传资源（图片/视频/PDF/压缩包/CAD）
-
-## 健康检查入口
-
-- `GET /healthz`：admin-server 健康检查
-- `GET /site-admin-api/public-content`：前端内容接口（未配置时自动回退到 seed 数据）
-- `GET /site-admin-api/status`：重建状态面板
-- `POST /site-admin-api/publish`：触发前端构建
-- `POST /site-admin-api/leads`：前端提交咨询单
-
-可直接参考更完整的闭环文档： [docs/CMS_CLOSED_LOOP.md](docs/CMS_CLOSED_LOOP.md)
-
-## 常见问题
-
-- **为什么前台会出现示例内容？**
-  - 通常是 `PUBLIC_ADMIN_URL` 未配置或后端未启动。前端会自动降级到内置示例内容避免白屏。
-
-- **为什么发布后不生效？**
-  - 确认 `scripts/rebuild-webhook.mjs` 是否在 8787 端口启动。
-  - 确认后台点击“发布官网”后，`/site-admin-api/status` 显示构建结果。
-
-- **我只想跑独立站前台+后台，不要 servicebridge？**
-  - 可以只启动 `admin-server` 与 `frontend`，跳过 `scripts/run-local-stack.sh`（它会同时起客服相关服务）。
+商业上线前仍需完成推送真机验证、浏览器/真机端到端自动化、备份监控和容量验收，统一记录在 [功能完善任务.md](功能完善任务.md)。

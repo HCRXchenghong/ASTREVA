@@ -22,13 +22,12 @@ var _ Store = (*PostgresStore)(nil)
 const (
 	defaultDBTimeout = 5 * time.Second
 
-	adminColumns         = `id, account, name, password_hash, created_at`
-	agentColumns         = `id, account, name, group_name, password_hash, status, max_conversations, current_conversations, disabled_at, created_at, updated_at`
-	conversationColumns  = `id, visitor_id, visitor_ip::text, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
-	messageColumns       = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, created_at, revoked_at, revoked_by_kind, revoked_by_id`
-	ratingColumns        = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
-	auditColumns         = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
-	feishuBindingColumns = `message_id, conversation_id, chat_id, root_message_id, created_at`
+	adminColumns        = `id, account, name, password_hash, created_at`
+	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate`
+	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
+	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, created_at, revoked_at, revoked_by_kind, revoked_by_id`
+	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
+	auditColumns        = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
 )
 
 type PostgresStore struct {
@@ -940,6 +939,82 @@ func (s *PostgresStore) RatingSummary() domain.RatingSummary {
 	}
 }
 
+func (s *PostgresStore) RatingSummaryForAgent(agentID string) domain.RatingSummary {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	var total int
+	var average float64
+	var satisfied int
+	var neutral int
+	var unsatisfied int
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*)::int,
+			COALESCE(AVG(score), 0)::float8,
+			COUNT(*) FILTER (WHERE score >= 4)::int,
+			COUNT(*) FILTER (WHERE score = 3)::int,
+			COUNT(*) FILTER (WHERE score <= 2)::int
+		FROM service_ratings
+		WHERE assigned_agent_id = $1
+	`, agentID).Scan(&total, &average, &satisfied, &neutral, &unsatisfied)
+	if err != nil || total == 0 {
+		return domain.RatingSummary{}
+	}
+	return domain.RatingSummary{
+		Total:            total,
+		Average:          average,
+		Satisfied:        satisfied,
+		Neutral:          neutral,
+		Unsatisfied:      unsatisfied,
+		SatisfactionRate: float64(satisfied) / float64(total),
+	}
+}
+
+func (s *PostgresStore) RatingSummariesByAgent() map[string]domain.RatingSummary {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	rows, err := s.pool.Query(ctx, `SELECT `+ratingColumns+` FROM service_ratings`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	grouped := make(map[string][]domain.ServiceRating)
+	for rows.Next() {
+		rating, err := scanRating(rows)
+		if err != nil || rating.AssignedAgentID == "" {
+			continue
+		}
+		grouped[rating.AssignedAgentID] = append(grouped[rating.AssignedAgentID], rating)
+	}
+	result := make(map[string]domain.RatingSummary, len(grouped))
+	for agentID, ratings := range grouped {
+		result[agentID] = buildRatingSummary(ratings)
+	}
+	return result
+}
+
+func (s *PostgresStore) RatingsForAgent(agentID string) []domain.ServiceRating {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+ratingColumns+` FROM service_ratings
+		WHERE assigned_agent_id = $1
+		ORDER BY created_at DESC
+	`, agentID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	ratings, err := scanRatings(rows)
+	if err != nil {
+		return nil
+	}
+	return ratings
+}
+
 func (s *PostgresStore) RecentRatings(limit int) []domain.ServiceRating {
 	ctx, cancel := dbContext()
 	defer cancel()
@@ -1138,6 +1213,19 @@ func (s *PostgresStore) CreateKeywordRule(next domain.KeywordRule) (domain.Keywo
 	return next, err
 }
 
+func (s *PostgresStore) DeleteKeywordRule(id string) (domain.KeywordRule, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+	current, err := s.keywordRuleByID(ctx, s.pool, id)
+	if err != nil {
+		return domain.KeywordRule{}, mapNoRows(err)
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM keyword_rules WHERE id = func (s *PostgresStore) UpdateKeywordRule(id string, next domain.KeywordRule) (domain.KeywordRule, error) {`, id); err != nil {
+		return domain.KeywordRule{}, err
+	}
+	return current, nil
+}
+
 func (s *PostgresStore) UpdateKeywordRule(id string, next domain.KeywordRule) (domain.KeywordRule, error) {
 	ctx, cancel := dbContext()
 	defer cancel()
@@ -1246,89 +1334,6 @@ func (s *PostgresStore) UpdateAISettings(next domain.AISettings) (domain.AISetti
 			agent_no_reply_timeout_seconds=EXCLUDED.agent_no_reply_timeout_seconds,
 			updated_at=EXCLUDED.updated_at
 	`, current.Enabled, current.Mode, current.BaseURL, protectedKey, current.Model, current.APIType, current.Temperature, current.MaxOutputTokens, current.TimeoutSeconds, current.SystemPrompt, current.NoReplyTimeoutSeconds, dbNow())
-	return current, nil
-}
-
-func (s *PostgresStore) FeishuSettings() domain.FeishuSettings {
-	ctx, cancel := dbContext()
-	defer cancel()
-	settings, err := s.feishuSettingsTx(ctx, s.pool)
-	if err != nil {
-		return domain.FeishuSettings{}
-	}
-	return settings
-}
-
-func (s *PostgresStore) UpdateFeishuSettings(next domain.FeishuSettings) (domain.FeishuSettings, error) {
-	ctx, cancel := dbContext()
-	defer cancel()
-	current, _ := s.feishuSettingsTx(ctx, s.pool)
-	if err := validateFeishuSettings(next); err != nil {
-		return current, err
-	}
-	if strings.TrimSpace(next.BaseURL) != "" {
-		current.BaseURL = strings.TrimRight(strings.TrimSpace(next.BaseURL), "/")
-	}
-	if strings.TrimSpace(next.AppID) != "" {
-		current.AppID = strings.TrimSpace(next.AppID)
-	}
-	if strings.TrimSpace(next.AppSecret) != "" {
-		current.AppSecret = strings.TrimSpace(next.AppSecret)
-		current.AppSecretMasked = maskAPIKey(next.AppSecret)
-	}
-	if strings.TrimSpace(next.VerificationToken) != "" {
-		current.VerificationToken = strings.TrimSpace(next.VerificationToken)
-		current.VerificationTokenMasked = maskAPIKey(next.VerificationToken)
-	}
-	if strings.TrimSpace(next.EncryptKey) != "" {
-		current.EncryptKey = strings.TrimSpace(next.EncryptKey)
-		current.EncryptKeyMasked = maskAPIKey(next.EncryptKey)
-	}
-	if strings.TrimSpace(next.DefaultChatID) != "" {
-		current.DefaultChatID = strings.TrimSpace(next.DefaultChatID)
-	}
-	if strings.TrimSpace(next.AgentID) != "" {
-		current.AgentID = strings.TrimSpace(next.AgentID)
-	}
-	if next.TimeoutSeconds > 0 {
-		current.TimeoutSeconds = next.TimeoutSeconds
-	}
-	current.Enabled = next.Enabled
-	current.UpdatedAt = dbNow()
-
-	protectedAppSecret, err := protectSecret(s.options.DataEncryptionKey, current.AppSecret)
-	if err != nil {
-		return current, err
-	}
-	protectedVerificationToken, err := protectSecret(s.options.DataEncryptionKey, current.VerificationToken)
-	if err != nil {
-		return current, err
-	}
-	protectedEncryptKey, err := protectSecret(s.options.DataEncryptionKey, current.EncryptKey)
-	if err != nil {
-		return current, err
-	}
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO feishu_settings (
-			id, enabled, base_url, app_id, app_secret_ciphertext, verification_token_ciphertext,
-			encrypt_key_ciphertext, default_chat_id, agent_id, timeout_seconds, updated_at
-		)
-		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (id) DO UPDATE SET
-			enabled=EXCLUDED.enabled,
-			base_url=EXCLUDED.base_url,
-			app_id=EXCLUDED.app_id,
-			app_secret_ciphertext=EXCLUDED.app_secret_ciphertext,
-			verification_token_ciphertext=EXCLUDED.verification_token_ciphertext,
-			encrypt_key_ciphertext=EXCLUDED.encrypt_key_ciphertext,
-			default_chat_id=EXCLUDED.default_chat_id,
-			agent_id=EXCLUDED.agent_id,
-			timeout_seconds=EXCLUDED.timeout_seconds,
-			updated_at=EXCLUDED.updated_at
-	`, current.Enabled, current.BaseURL, current.AppID, protectedAppSecret, protectedVerificationToken, protectedEncryptKey, current.DefaultChatID, current.AgentID, current.TimeoutSeconds, current.UpdatedAt)
-	if err != nil {
-		return current, err
-	}
 	return current, nil
 }
 
@@ -1457,6 +1462,76 @@ func (s *PostgresStore) UpdateAgent(id string, next domain.Agent) (domain.Agent,
 		return err
 	})
 	return out, err
+}
+
+func (s *PostgresStore) UpdateAgentAvatar(agentID, avatarURL string) (domain.Agent, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	row := s.pool.QueryRow(ctx, `
+		UPDATE agents SET avatar_url=$2, updated_at=$3 WHERE id=$1
+		RETURNING `+agentColumns, strings.TrimSpace(agentID), strings.TrimSpace(avatarURL), dbNow())
+	agent, err := scanAgent(row)
+	if err != nil {
+		return domain.Agent{}, mapNoRows(err)
+	}
+	return agent, nil
+}
+
+func (s *PostgresStore) SetAgentManualRating(agentID string, rate float64) (domain.Agent, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	if rate < 0 || rate > 1 {
+		return domain.Agent{}, ErrInvalidInput
+	}
+	row := s.pool.QueryRow(ctx, `
+		UPDATE agents SET manual_satisfaction_rate=$2, updated_at=$3 WHERE id=$1
+		RETURNING `+agentColumns, strings.TrimSpace(agentID), rate, dbNow())
+	agent, err := scanAgent(row)
+	if err != nil {
+		return domain.Agent{}, mapNoRows(err)
+	}
+	return agent, nil
+}
+
+func (s *PostgresStore) ClearAgentManualRating(agentID string) (domain.Agent, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	row := s.pool.QueryRow(ctx, `
+		UPDATE agents SET manual_satisfaction_rate=NULL, updated_at=$2 WHERE id=$1
+		RETURNING `+agentColumns, strings.TrimSpace(agentID), dbNow())
+	agent, err := scanAgent(row)
+	if err != nil {
+		return domain.Agent{}, mapNoRows(err)
+	}
+	return agent, nil
+}
+
+func (s *PostgresStore) ResetAgentRatings(agentID string) (domain.Agent, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	var out domain.Agent
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM service_ratings WHERE assigned_agent_id=$1`, agentID); err != nil {
+			return err
+		}
+		row := tx.QueryRow(ctx, `
+			UPDATE agents SET manual_satisfaction_rate=NULL, updated_at=$2 WHERE id=$1
+			RETURNING `+agentColumns, agentID, dbNow())
+		agent, err := scanAgent(row)
+		if err != nil {
+			return mapNoRows(err)
+		}
+		out = agent
+		return nil
+	})
+	if err != nil {
+		return domain.Agent{}, err
+	}
+	return out, nil
 }
 
 func (s *PostgresStore) ResetAgentPassword(id, password string) (domain.Agent, error) {
@@ -1675,132 +1750,6 @@ func (s *PostgresStore) DeleteAgent(id string) (domain.Agent, error) {
 		return err
 	})
 	return out, err
-}
-
-func (s *PostgresStore) EnsureFeishuAgent(id, name string) (domain.Agent, error) {
-	ctx, cancel := dbContext()
-	defer cancel()
-
-	id = strings.TrimSpace(id)
-	name = strings.TrimSpace(name)
-	if id == "" {
-		id = "agent_feishu"
-	}
-	if name == "" {
-		name = "飞书客服"
-	}
-	passwordHash, err := hashPassword("feishu-bridge-disabled-login")
-	if err != nil {
-		return domain.Agent{}, err
-	}
-	row := s.pool.QueryRow(ctx, `
-		INSERT INTO agents (id, account, name, group_name, password_hash, status, max_conversations)
-		VALUES ($1, $2, $3, '飞书', $4, $5, 10000)
-		ON CONFLICT (id) DO UPDATE
-		SET name=EXCLUDED.name,
-			group_name=EXCLUDED.group_name,
-			disabled_at=NULL,
-			updated_at=now()
-		RETURNING `+agentColumns,
-		id, id, name, passwordHash, domain.AgentOffline)
-	return scanAgent(row)
-}
-
-func (s *PostgresStore) BindFeishuMessage(binding domain.FeishuMessageBinding) (domain.FeishuMessageBinding, error) {
-	ctx, cancel := dbContext()
-	defer cancel()
-
-	binding.MessageID = strings.TrimSpace(binding.MessageID)
-	binding.ConversationID = strings.TrimSpace(binding.ConversationID)
-	binding.ChatID = strings.TrimSpace(binding.ChatID)
-	binding.RootMessageID = strings.TrimSpace(binding.RootMessageID)
-	if binding.MessageID == "" || binding.ConversationID == "" {
-		return domain.FeishuMessageBinding{}, ErrInvalidInput
-	}
-	if binding.CreatedAt.IsZero() {
-		binding.CreatedAt = dbNow()
-	}
-	row := s.pool.QueryRow(ctx, `
-		INSERT INTO feishu_message_bindings (message_id, conversation_id, chat_id, root_message_id, created_at)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (message_id) DO UPDATE
-		SET conversation_id=EXCLUDED.conversation_id,
-			chat_id=EXCLUDED.chat_id,
-			root_message_id=EXCLUDED.root_message_id
-		RETURNING `+feishuBindingColumns,
-		binding.MessageID, binding.ConversationID, binding.ChatID, binding.RootMessageID, binding.CreatedAt)
-	return scanFeishuMessageBinding(row)
-}
-
-func (s *PostgresStore) FeishuConversationByMessage(messageID string) (string, bool) {
-	ctx, cancel := dbContext()
-	defer cancel()
-
-	messageID = strings.TrimSpace(messageID)
-	if messageID == "" {
-		return "", false
-	}
-	var conversationID string
-	err := s.pool.QueryRow(ctx, `
-		SELECT conversation_id
-		FROM feishu_message_bindings
-		WHERE message_id=$1
-	`, messageID).Scan(&conversationID)
-	return conversationID, err == nil && strings.TrimSpace(conversationID) != ""
-}
-
-func (s *PostgresStore) RegisterAgentPushDevice(agentID string, device domain.PushDevice) (domain.PushDevice, error) {
-	ctx, cancel := dbContext()
-	defer cancel()
-	if _, err := s.agentByID(ctx, agentID); err != nil {
-		return domain.PushDevice{}, mapNoRows(err)
-	}
-	device.Token = strings.TrimSpace(device.Token)
-	device.Platform = strings.TrimSpace(device.Platform)
-	device.Provider = strings.TrimSpace(device.Provider)
-	if err := validatePushDevice(device); err != nil {
-		return domain.PushDevice{}, err
-	}
-	if device.ID == "" {
-		device.ID = "push_" + randomID(8)
-	}
-	if device.Provider == "" {
-		device.Provider = "uni-push"
-	}
-	now := dbNow()
-	row := s.pool.QueryRow(ctx, `
-		INSERT INTO push_devices (id, agent_id, platform, provider, token, enabled, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, true, $6, $6)
-		ON CONFLICT (agent_id, provider, platform, token) DO UPDATE
-		SET enabled=true, updated_at=EXCLUDED.updated_at
-		RETURNING id, agent_id, platform, token, provider, enabled, updated_at, created_at
-	`, device.ID, agentID, device.Platform, device.Provider, device.Token, now)
-	return scanPushDevice(row)
-}
-
-func (s *PostgresStore) PushDevicesForAgent(agentID string) []domain.PushDevice {
-	ctx, cancel := dbContext()
-	defer cancel()
-
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, agent_id, platform, token, provider, enabled, updated_at, created_at
-		FROM push_devices
-		WHERE agent_id=$1 AND enabled=true
-		ORDER BY updated_at DESC
-	`, agentID)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	devices := []domain.PushDevice{}
-	for rows.Next() {
-		device, err := scanPushDevice(rows)
-		if err != nil {
-			return devices
-		}
-		devices = append(devices, device)
-	}
-	return devices
 }
 
 func (s *PostgresStore) adminByAccount(ctx context.Context, account string) (domain.AdminUser, error) {
@@ -2282,71 +2231,6 @@ func (s *PostgresStore) aiSettingsTx(ctx context.Context, exec dbTx) (domain.AIS
 	return out, err
 }
 
-func (s *PostgresStore) feishuSettingsTx(ctx context.Context, exec dbTx) (domain.FeishuSettings, error) {
-	var out domain.FeishuSettings
-	var appSecret, verificationToken, encryptKey string
-	err := exec.QueryRow(ctx, `
-		SELECT enabled, base_url, app_id, app_secret_ciphertext, verification_token_ciphertext,
-			encrypt_key_ciphertext, default_chat_id, agent_id, timeout_seconds, updated_at
-		FROM feishu_settings WHERE id=1
-	`).Scan(
-		&out.Enabled,
-		&out.BaseURL,
-		&out.AppID,
-		&appSecret,
-		&verificationToken,
-		&encryptKey,
-		&out.DefaultChatID,
-		&out.AgentID,
-		&out.TimeoutSeconds,
-		&out.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.FeishuSettings{
-			Enabled:                 s.options.FeishuEnabled,
-			BaseURL:                 nonEmpty(s.options.FeishuBaseURL, "https://open.feishu.cn"),
-			AppID:                   strings.TrimSpace(s.options.FeishuAppID),
-			AppSecret:               strings.TrimSpace(s.options.FeishuAppSecret),
-			AppSecretMasked:         maskAPIKey(s.options.FeishuAppSecret),
-			VerificationToken:       strings.TrimSpace(s.options.FeishuVerificationToken),
-			VerificationTokenMasked: maskAPIKey(s.options.FeishuVerificationToken),
-			EncryptKey:              strings.TrimSpace(s.options.FeishuEncryptKey),
-			EncryptKeyMasked:        maskAPIKey(s.options.FeishuEncryptKey),
-			DefaultChatID:           strings.TrimSpace(s.options.FeishuDefaultChatID),
-			AgentID:                 nonEmpty(s.options.FeishuAgentID, "agent_feishu"),
-			TimeoutSeconds:          positiveInt(s.options.FeishuTimeoutSeconds, 8),
-		}, nil
-	}
-	if err != nil {
-		return domain.FeishuSettings{}, err
-	}
-	out.AppSecret, err = revealSecret(s.options.DataEncryptionKey, appSecret)
-	if err != nil {
-		return domain.FeishuSettings{}, err
-	}
-	out.VerificationToken, err = revealSecret(s.options.DataEncryptionKey, verificationToken)
-	if err != nil {
-		return domain.FeishuSettings{}, err
-	}
-	out.EncryptKey, err = revealSecret(s.options.DataEncryptionKey, encryptKey)
-	if err != nil {
-		return domain.FeishuSettings{}, err
-	}
-	out.AppSecretMasked = maskAPIKey(out.AppSecret)
-	out.VerificationTokenMasked = maskAPIKey(out.VerificationToken)
-	out.EncryptKeyMasked = maskAPIKey(out.EncryptKey)
-	if strings.TrimSpace(out.BaseURL) == "" {
-		out.BaseURL = "https://open.feishu.cn"
-	}
-	if strings.TrimSpace(out.AgentID) == "" {
-		out.AgentID = "agent_feishu"
-	}
-	if out.TimeoutSeconds <= 0 {
-		out.TimeoutSeconds = 8
-	}
-	return out, nil
-}
-
 func (s *PostgresStore) businessHoursTx(ctx context.Context, exec dbTx) (domain.BusinessHours, error) {
 	var out domain.BusinessHours
 	err := exec.QueryRow(ctx, `SELECT timezone, start_time, end_time, enabled FROM business_hours WHERE id=1`).
@@ -2441,6 +2325,9 @@ func (s *PostgresStore) seedDefaults(ctx context.Context) error {
 
 func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 	statements := []string{
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS device_token TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS manual_satisfaction_rate DOUBLE PRECISION`,
 		`ALTER TABLE contact_settings ADD COLUMN IF NOT EXISTS wechat_reply_type TEXT NOT NULL DEFAULT 'image'`,
 		`ALTER TABLE contact_settings ADD COLUMN IF NOT EXISTS wechat_image_url TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE contact_settings ADD COLUMN IF NOT EXISTS qq_reply_type TEXT NOT NULL DEFAULT 'text'`,
@@ -2487,29 +2374,24 @@ func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_events_actor ON audit_events(actor_kind, actor_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_events_resource ON audit_events(resource, resource_id, created_at DESC)`,
-		`CREATE TABLE IF NOT EXISTS feishu_message_bindings (
-			message_id TEXT PRIMARY KEY,
-			conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-			chat_id TEXT NOT NULL DEFAULT '',
-			root_message_id TEXT NOT NULL DEFAULT '',
-			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		`CREATE TABLE IF NOT EXISTS app_releases (
+			id TEXT PRIMARY KEY,
+			platform TEXT NOT NULL,
+			version_name TEXT NOT NULL,
+			version_code BIGINT NOT NULL,
+			file_name TEXT NOT NULL DEFAULT '',
+			file_path TEXT NOT NULL,
+			download_url TEXT NOT NULL DEFAULT '',
+			file_size BIGINT NOT NULL DEFAULT 0,
+			checksum TEXT NOT NULL DEFAULT '',
+			release_notes TEXT NOT NULL DEFAULT '',
+			force_update BOOLEAN NOT NULL DEFAULT false,
+			enabled BOOLEAN NOT NULL DEFAULT true,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT app_releases_platform_check CHECK (platform IN ('android', 'ios')),
+			UNIQUE (platform, version_code)
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_feishu_bindings_conversation ON feishu_message_bindings(conversation_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_feishu_bindings_root ON feishu_message_bindings(root_message_id) WHERE root_message_id <> ''`,
-		`CREATE TABLE IF NOT EXISTS feishu_settings (
-			id SMALLINT PRIMARY KEY DEFAULT 1,
-			enabled BOOLEAN NOT NULL DEFAULT false,
-			base_url TEXT NOT NULL DEFAULT 'https://open.feishu.cn',
-			app_id TEXT NOT NULL DEFAULT '',
-			app_secret_ciphertext TEXT NOT NULL DEFAULT '',
-			verification_token_ciphertext TEXT NOT NULL DEFAULT '',
-			encrypt_key_ciphertext TEXT NOT NULL DEFAULT '',
-			default_chat_id TEXT NOT NULL DEFAULT '',
-			agent_id TEXT NOT NULL DEFAULT 'agent_feishu',
-			timeout_seconds INTEGER NOT NULL DEFAULT 8,
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-			CONSTRAINT feishu_settings_singleton CHECK (id = 1)
-		)`,
+		`CREATE INDEX IF NOT EXISTS idx_app_releases_platform ON app_releases(platform, version_code DESC)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.pool.Exec(ctx, statement); err != nil {
@@ -2528,6 +2410,7 @@ func scanAdmin(row scanTarget) (domain.AdminUser, error) {
 func scanAgent(row scanTarget) (domain.Agent, error) {
 	var out domain.Agent
 	var disabled sql.NullTime
+	var manualRate sql.NullFloat64
 	err := row.Scan(
 		&out.ID,
 		&out.Account,
@@ -2535,14 +2418,21 @@ func scanAgent(row scanTarget) (domain.Agent, error) {
 		&out.Group,
 		&out.Password,
 		&out.Status,
+		&out.DeviceToken,
 		&out.MaxConversations,
 		&out.CurrentConversations,
 		&disabled,
 		&out.Created,
 		&out.Updated,
+		&out.AvatarURL,
+		&manualRate,
 	)
 	if disabled.Valid {
 		out.DisabledAt = &disabled.Time
+	}
+	if manualRate.Valid {
+		rate := manualRate.Float64
+		out.ManualSatisfactionRate = &rate
 	}
 	return out, err
 }
@@ -2687,18 +2577,6 @@ func scanAuditEvents(rows pgx.Rows) ([]domain.AuditEvent, error) {
 	return result, rows.Err()
 }
 
-func scanPushDevice(row scanTarget) (domain.PushDevice, error) {
-	var out domain.PushDevice
-	err := row.Scan(&out.ID, &out.AgentID, &out.Platform, &out.Token, &out.Provider, &out.Enabled, &out.UpdatedAt, &out.CreatedAt)
-	return out, err
-}
-
-func scanFeishuMessageBinding(row scanTarget) (domain.FeishuMessageBinding, error) {
-	var out domain.FeishuMessageBinding
-	err := row.Scan(&out.MessageID, &out.ConversationID, &out.ChatID, &out.RootMessageID, &out.CreatedAt)
-	return out, err
-}
-
 func dbContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), defaultDBTimeout)
 }
@@ -2752,4 +2630,150 @@ func isBusinessTime(business domain.BusinessHours, now time.Time) bool {
 		return currentMinutes >= startMinutes && currentMinutes < endMinutes
 	}
 	return currentMinutes >= startMinutes || currentMinutes < endMinutes
+}
+
+const appReleaseColumns = `id, platform, version_name, version_code, file_name, file_path, download_url, file_size, checksum, release_notes, force_update, enabled, created_at`
+
+func (s *PostgresStore) AppReleases(platform string) []domain.AppRelease {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBTimeout)
+	defer cancel()
+
+	query := `SELECT ` + appReleaseColumns + ` FROM app_releases`
+	args := []any{}
+	if platform != "" {
+		query += ` WHERE platform = $1`
+		args = append(args, platform)
+	}
+	query += ` ORDER BY version_code DESC, created_at DESC`
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return []domain.AppRelease{}
+	}
+	defer rows.Close()
+	result := []domain.AppRelease{}
+	for rows.Next() {
+		var release domain.AppRelease
+		if err := rows.Scan(
+			&release.ID, &release.Platform, &release.VersionName, &release.VersionCode,
+			&release.FileName, &release.FilePath, &release.DownloadURL, &release.FileSize, &release.Checksum,
+			&release.ReleaseNotes, &release.ForceUpdate, &release.Enabled, &release.CreatedAt,
+		); err != nil {
+			return []domain.AppRelease{}
+		}
+		result = append(result, release)
+	}
+	return result
+}
+
+func (s *PostgresStore) AppReleaseByID(id string) (domain.AppRelease, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBTimeout)
+	defer cancel()
+
+	var release domain.AppRelease
+	err := s.pool.QueryRow(ctx, `SELECT `+appReleaseColumns+` FROM app_releases WHERE id = $1`, id).Scan(
+		&release.ID, &release.Platform, &release.VersionName, &release.VersionCode,
+		&release.FileName, &release.FilePath, &release.FileSize, &release.Checksum,
+		&release.ReleaseNotes, &release.ForceUpdate, &release.Enabled, &release.CreatedAt,
+	)
+	if err != nil {
+		return domain.AppRelease{}, false
+	}
+	return release, true
+}
+
+func (s *PostgresStore) CreateAppRelease(next domain.AppRelease) (domain.AppRelease, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBTimeout)
+	defer cancel()
+
+	next.Platform = strings.TrimSpace(next.Platform)
+	next.VersionName = strings.TrimSpace(next.VersionName)
+	if next.Platform != "android" && next.Platform != "ios" {
+		return domain.AppRelease{}, ErrInvalidInput
+	}
+	if next.VersionName == "" || next.VersionCode <= 0 || strings.TrimSpace(next.FilePath) == "" {
+		return domain.AppRelease{}, ErrInvalidInput
+	}
+	if next.ID == "" {
+		next.ID = "rel_" + randomID(10)
+	}
+	if next.CreatedAt.IsZero() {
+		next.CreatedAt = time.Now().UTC()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO app_releases (`+appReleaseColumns+`)
+		VALUES (, , , , , , , , , , , , )
+	`, next.ID, next.Platform, next.VersionName, next.VersionCode, next.FileName, next.FilePath,
+		next.DownloadURL, next.FileSize, next.Checksum, next.ReleaseNotes, next.ForceUpdate, next.Enabled, next.CreatedAt)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return domain.AppRelease{}, ErrConflict
+		}
+		return domain.AppRelease{}, err
+	}
+	return next, nil
+}
+
+func (s *PostgresStore) UpdateAppRelease(id string, next domain.AppRelease) (domain.AppRelease, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBTimeout)
+	defer cancel()
+
+	current, ok := s.AppReleaseByID(id)
+	if !ok {
+		return domain.AppRelease{}, ErrNotFound
+	}
+	if strings.TrimSpace(next.VersionName) != "" {
+		current.VersionName = strings.TrimSpace(next.VersionName)
+	}
+	if next.VersionCode > 0 {
+		current.VersionCode = next.VersionCode
+	}
+	if strings.TrimSpace(next.ReleaseNotes) != "" {
+		current.ReleaseNotes = strings.TrimSpace(next.ReleaseNotes)
+	}
+	current.ForceUpdate = next.ForceUpdate
+	current.Enabled = next.Enabled
+	_, err := s.pool.Exec(ctx, `
+		UPDATE app_releases
+		SET version_name = $2, version_code = $3, release_notes = $4, force_update = $5, enabled = $6
+		WHERE id = $1
+	`, id, current.VersionName, current.VersionCode, current.ReleaseNotes, current.ForceUpdate, current.Enabled)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return domain.AppRelease{}, ErrConflict
+		}
+		return domain.AppRelease{}, err
+	}
+	return current, nil
+}
+
+func (s *PostgresStore) DeleteAppRelease(id string) (domain.AppRelease, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBTimeout)
+	defer cancel()
+
+	current, ok := s.AppReleaseByID(id)
+	if !ok {
+		return domain.AppRelease{}, ErrNotFound
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM app_releases WHERE id = $1`, id); err != nil {
+		return domain.AppRelease{}, err
+	}
+	return current, nil
+}
+
+func (s *PostgresStore) RegisterAgentDeviceToken(agentID, deviceToken string) (domain.Agent, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	agent, err := s.agentByID(ctx, agentID)
+	if err != nil {
+		return domain.Agent{}, mapNoRows(err)
+	}
+	if agent.DisabledAt != nil {
+		return domain.Agent{}, ErrForbidden
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE agents SET device_token=$2, updated_at=$3 WHERE id=$1`, agentID, strings.TrimSpace(deviceToken), dbNow()); err != nil {
+		return domain.Agent{}, err
+	}
+	agent.DeviceToken = strings.TrimSpace(deviceToken)
+	return agent, nil
 }

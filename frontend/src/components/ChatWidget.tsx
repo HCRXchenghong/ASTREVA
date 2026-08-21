@@ -1,5 +1,5 @@
 import { MessageCircle, X } from 'lucide-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 type ChatCopy = {
   title: string;
@@ -14,38 +14,39 @@ export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUr
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(Number(chat.initialUnreadCount ?? 1));
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const envBridgeUrl = (import.meta.env.PUBLIC_SERVICEBRIDGE_URL || '').trim().replace(/\/$/, '');
 
   const normalizeBridgeUrl = (value: string) => {
     const candidate = `${value || ''}`.trim().replace(/\/$/, '');
     if (!candidate) return '';
-    const lower = candidate.toLowerCase();
-    if (lower === '127.0.0.1' || lower === 'localhost' || lower === '::1' || lower.startsWith('127.0.0.1:') || lower.startsWith('localhost:') || lower.startsWith('[::1]') || lower.startsWith('[::1]:')) {
-      return '';
-    }
-    if (!candidate.includes('://')) return candidate;
     try {
-      const host = new URL(candidate).hostname.toLowerCase();
-      if (host === '127.0.0.1' || host === 'localhost' || host === '::1') return '';
-      return candidate;
+      const url = new URL(candidate);
+      return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString().replace(/\/$/, '') : '';
     } catch {
       return '';
     }
   };
 
   const iframeUrl = useMemo(() => {
-    const base = normalizeBridgeUrl(serviceBridgeUrl) || normalizeBridgeUrl(envBridgeUrl) || window.location.origin;
+    const base =
+      normalizeBridgeUrl(serviceBridgeUrl) || normalizeBridgeUrl(envBridgeUrl) || window.location.origin;
     try {
       const url = new URL(base);
+      if (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1") {
+        url.hostname = window.location.hostname;
+      }
       url.searchParams.set('embed', '1');
       return url.toString();
     } catch {
       return `${base.replace(/\/$/, '')}/?embed=1`;
     }
-  }, [serviceBridgeUrl]);
+  }, [serviceBridgeUrl, envBridgeUrl]);
 
   useEffect(() => {
+    const expectedOrigin = new URL(iframeUrl).origin;
     const onMessage = (event: MessageEvent) => {
+      if (event.origin !== expectedOrigin || event.source !== iframeRef.current?.contentWindow) return;
       const data = event.data || {};
       if (data.type === 'servicebridge:ready') {
         setLoadState('ready');
@@ -56,7 +57,7 @@ export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUr
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [isOpen]);
+  }, [iframeUrl, isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -83,6 +84,7 @@ export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUr
       {isOpen && (
         <div className="relative w-[360px] max-w-[calc(100vw-32px)] h-[620px] max-h-[calc(100vh-112px)] bg-white rounded-2xl shadow-2xl mb-4 overflow-hidden border border-gray-100">
           <iframe
+            ref={iframeRef}
             src={iframeUrl}
             title={chat.title}
             className="w-full h-full border-0 bg-white"

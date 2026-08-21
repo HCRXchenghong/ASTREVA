@@ -39,6 +39,9 @@ const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_ORIGIN = process.env.PUBLIC_ADMIN_ORIGIN || `http://${HOST}:${PORT}`;
 const SITE_ORIGIN = process.env.PUBLIC_SITE_URL || process.env.FRONTEND_SITE_ORIGIN || 'http://127.0.0.1:4321';
 const REBUILD_URL = process.env.FRONTEND_REBUILD_WEBHOOK_URL || 'http://127.0.0.1:8787/rebuild';
+const SERVICEBRIDGE_API_URL = normalizeServiceBridgeUrl(process.env.SERVICEBRIDGE_API_URL || 'http://127.0.0.1:8080');
+const SERVICEBRIDGE_ADMIN_ACCOUNT = process.env.SERVICEBRIDGE_ADMIN_ACCOUNT || 'superadmin';
+const SERVICEBRIDGE_ADMIN_PASSWORD = process.env.SERVICEBRIDGE_ADMIN_PASSWORD || '123456';
 const SESSION_COOKIE = 'astreva_admin_session';
 const ISSUER = process.env.ADMIN_2FA_ISSUER || '星渡官网账号';
 const SESSION_TTL_MS = Number(process.env.ADMIN_2FA_SESSION_TTL_MS || 12 * 60 * 60 * 1000);
@@ -49,6 +52,7 @@ const SESSION_SECRET =
 
 const pendingSetups = new Map();
 const pendingLogins = new Map();
+let serviceBridgeAdminSession = { token: '', expiresAt: 0 };
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -127,16 +131,9 @@ async function loadFallbackContent() {
 function normalizeServiceBridgeUrl(value) {
   const candidate = `${value || ''}`.trim().replace(/\/$/, '');
   if (!candidate) return '';
-  const lower = candidate.toLowerCase();
-  if (lower === '127.0.0.1' || lower === 'localhost' || lower === '::1' || lower.startsWith('127.0.0.1:') || lower.startsWith('localhost:') || lower.startsWith('[::1]') || lower.startsWith('[::1]:')) {
-    return '';
-  }
-  if (!candidate.includes('://')) return candidate;
   try {
     const url = new URL(candidate);
-    const host = String(url.hostname || '').toLowerCase();
-    if (host === '127.0.0.1' || host === 'localhost' || host === '::1') return '';
-    return candidate;
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString().replace(/\/$/, '') : '';
   } catch {
     return '';
   }
@@ -212,6 +209,24 @@ async function readLeads() {
 
 async function saveLeads(leads) {
   await writeJson(LEADS_FILE, leads);
+}
+
+function bodyRaw(req, maxBytes = 250 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(new Error('请求体太大'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
 }
 
 function bodyJson(req) {
@@ -630,6 +645,68 @@ async function checkUrl(url) {
   }
 }
 
+async function serviceBridgeAdminToken(forceRefresh = false) {
+  if (!forceRefresh && serviceBridgeAdminSession.token && serviceBridgeAdminSession.expiresAt > Date.now()) {
+    return serviceBridgeAdminSession.token;
+  }
+  const response = await fetch(`${SERVICEBRIDGE_API_URL}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ account: SERVICEBRIDGE_ADMIN_ACCOUNT, password: SERVICEBRIDGE_ADMIN_PASSWORD })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.token) {
+    throw new Error(payload.message || payload.error?.message || `客服引擎管理员登录失败（HTTP ${response.status}）`);
+  }
+  serviceBridgeAdminSession = { token: payload.token, expiresAt: Date.now() + 12 * 60 * 60 * 1000 };
+  return payload.token;
+}
+
+function isAllowedServiceBridgePath(pathname) {
+  return pathname === '/api/contact-settings' ||
+    pathname.startsWith('/api/admin/') ||
+    /^\/api\/conversations\/[^/]+\/(messages|read|remark|close)(?:\/[^/]+\/revoke)?$/.test(pathname);
+}
+
+async function proxyServiceBridge(req, res, pathname) {
+  const prefix = '/site-admin-api/servicebridge';
+  const targetPath = pathname.slice(prefix.length);
+  if (!isAllowedServiceBridgePath(targetPath)) {
+    json(res, 403, { error: { message: '该客服接口未开放给统一后台。' } });
+    return;
+  }
+
+  const query = new URL(req.url || '/', PUBLIC_ORIGIN).search;
+  const contentType = req.headers['content-type'] || '';
+  const isMultipart = contentType.startsWith('multipart/form-data');
+  const writeMethods = ['POST', 'PATCH', 'PUT'].includes(req.method || '');
+  const rawBody = writeMethods && isMultipart ? await bodyRaw(req) : null;
+  const requestBody = writeMethods && !isMultipart ? await bodyJson(req) : null;
+  const call = async (forceRefresh = false) => fetch(`${SERVICEBRIDGE_API_URL}${targetPath}${query}`, {
+    method: req.method,
+    headers: {
+      Authorization: `Bearer ${await serviceBridgeAdminToken(forceRefresh)}`,
+      ...(isMultipart ? { 'Content-Type': contentType } : {}),
+      ...(requestBody ? { 'Content-Type': 'application/json' } : {})
+    },
+    body: isMultipart ? rawBody : (requestBody ? JSON.stringify(requestBody) : undefined)
+  });
+
+  try {
+    let response = await call(false);
+    if (response.status === 401 || response.status === 403) response = await call(true);
+    const body = await response.text();
+    const headers = {
+      'Content-Type': response.headers.get('content-type') || 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store'
+    };
+    if (response.headers.get('content-disposition')) headers['Content-Disposition'] = response.headers.get('content-disposition');
+    send(res, response.status, body, headers);
+  } catch (error) {
+    json(res, 503, { error: { message: `客服引擎不可用：${error.message}` } });
+  }
+}
+
 async function statusPayload() {
   const rebuildStatusUrl = new URL('/last-build', REBUILD_URL).toString();
   const [preview, rebuildResponse] = await Promise.all([
@@ -808,7 +885,7 @@ function renderLoginPage() {
 </html>`;
 }
 
-function renderAdminPage(bootstrap) {
+function renderAdminPage(bootstrap, embedded = false) {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -866,9 +943,15 @@ function renderAdminPage(bootstrap) {
     .media-item img, .media-item video { width: 100%; aspect-ratio: 1.5; object-fit: cover; display: block; background: #eef3f8; } .media-item div { padding: 9px; font-size: 12px; color: #5f6f86; word-break: break-all; }
     .error-panel { position: fixed; left: 300px; right: 24px; bottom: 22px; z-index: 50; display: none; padding: 14px 16px; border: 1px solid #ffd1d1; border-radius: 10px; color: #941b1b; background: #fff4f4; font-weight: 800; box-shadow: 0 12px 30px rgba(100,20,20,.12); }
     .error-panel.show { display: block; }
+    body.embedded .app { grid-template-columns: 238px minmax(520px, 1fr) 520px; grid-template-rows: minmax(0, 1fr); }
+    body.embedded .sidebar { grid-row: 1; padding-top: 10px; }
+    body.embedded .brand, body.embedded .topbar { display: none; }
+    body.embedded .preview-pane { grid-column: 2; }
+    body.embedded .editor { grid-column: 3; }
+    body.embedded .error-panel { left: 258px; }
   </style>
 </head>
-<body>
+<body class="${embedded ? 'embedded' : ''}">
   <div class="app">
     <aside class="sidebar">
       <div class="brand"><img src="/assets/astreva-logo-transparent.png" alt="星渡" /><span>星渡官网后台</span></div>
@@ -1213,6 +1296,10 @@ async function handleAdminApi(req, res, pathname) {
     json(res, 401, { error: { message: '请先登录。' } });
     return true;
   }
+  if (pathname.startsWith('/site-admin-api/servicebridge/')) {
+    await proxyServiceBridge(req, res, pathname);
+    return true;
+  }
   if (pathname === '/site-admin-api/bootstrap' && req.method === 'GET') {
     json(res, 200, { data: await getBootstrap(), meta: { previewUrl: SITE_ORIGIN } });
     return true;
@@ -1262,6 +1349,13 @@ const server = http.createServer(async (req, res) => {
       const file = path.join(ROOT, 'frontend', 'public', pathname);
       return serveFile(res, file, true);
     }
+    if (pathname.startsWith('/site-admin-assets/')) {
+      const relative = pathname.slice('/site-admin-assets/'.length);
+      const file = path.join(ROOT, 'admin-server', 'public', relative);
+      const publicRoot = path.join(ROOT, 'admin-server', 'public');
+      if (!file.startsWith(publicRoot)) return send(res, 403, 'forbidden');
+      return serveFile(res, file, false);
+    }
     if (pathname.startsWith('/uploads/site-admin/')) {
       const file = path.join(ROOT, pathname);
       if (!file.startsWith(UPLOAD_DIR)) return send(res, 403, 'forbidden');
@@ -1275,8 +1369,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/site-admin' || pathname === '/site-admin/') {
       if (!verifySession(req)) return redirect(res, '/admin-2fa');
+      return serveFile(res, path.join(ROOT, 'admin-server', 'public', 'unified-admin.html'), false);
+    }
+    if (pathname === '/site-admin/content' || pathname === '/site-admin/content/') {
+      if (!verifySession(req)) return redirect(res, '/admin-2fa');
       const boot = await getBootstrap();
-      send(res, 200, renderAdminPage(boot), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      send(res, 200, renderAdminPage(boot, url.searchParams.get('embed') === '1'), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       return;
     }
     if (pathname === '/site-admin/help') {
@@ -1291,6 +1389,10 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: true, service: 'astreva-admin-server' });
       return;
     }
+    if (pathname === '/') {
+      redirect(res, '/site-admin/');
+      return;
+    }
     send(res, 404, 'not found');
   } catch (error) {
     console.error(error);
@@ -1303,5 +1405,5 @@ await readContent();
 server.listen(PORT, HOST, () => {
   console.log(`Astreva admin server listening on http://${HOST}:${PORT}`);
   console.log(`Login: http://${HOST}:${PORT}/admin-2fa`);
-  console.log(`Site admin: http://${HOST}:${PORT}/site-admin/`);
+  console.log(`Unified admin: http://${HOST}:${PORT}/site-admin/`);
 });

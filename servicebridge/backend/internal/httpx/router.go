@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -22,10 +23,36 @@ import (
 	"customer-service/backend/internal/app"
 	"customer-service/backend/internal/config"
 	"customer-service/backend/internal/domain"
-	feishuapi "customer-service/backend/internal/feishu"
 	"customer-service/backend/internal/store"
 	"customer-service/backend/internal/upload"
 )
+
+type agentRatingSummary struct {
+	domain.RatingSummary
+	ManualSatisfactionRate  *float64 `json:"manual_satisfaction_rate,omitempty"`
+	DisplaySatisfactionRate float64  `json:"display_satisfaction_rate"`
+}
+
+func buildAgentRatingSummary(agent domain.Agent, summary domain.RatingSummary) agentRatingSummary {
+	display := summary.SatisfactionRate
+	if agent.ManualSatisfactionRate != nil {
+		display = *agent.ManualSatisfactionRate
+	}
+	return agentRatingSummary{
+		RatingSummary:           summary,
+		ManualSatisfactionRate:  agent.ManualSatisfactionRate,
+		DisplaySatisfactionRate: display,
+	}
+}
+
+func findAgentByID(agents []domain.Agent, id string) (domain.Agent, bool) {
+	for _, agent := range agents {
+		if agent.ID == id {
+			return agent, true
+		}
+	}
+	return domain.Agent{}, false
+}
 
 func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) http.Handler {
 	mux := http.NewServeMux()
@@ -64,28 +91,6 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			return
 		}
 		writeMetrics(w, service)
-	})
-
-	mux.HandleFunc("POST /api/integrations/feishu/events", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxJSONBodyBytes))
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_json", "message": err.Error()})
-			return
-		}
-		resp, err := service.HandleFeishuCallback(r.Context(), body)
-		if err != nil {
-			if errors.Is(err, feishuapi.ErrInvalidCallback) || errors.Is(err, feishuapi.ErrEncryptedCallback) {
-				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_feishu_callback", "message": err.Error()})
-				return
-			}
-			if errors.Is(err, feishuapi.ErrDisabled) {
-				writeError(w, store.ErrNotFound)
-				return
-			}
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, resp)
 	})
 
 	mux.HandleFunc("POST /api/admin/login", func(w http.ResponseWriter, r *http.Request) {
@@ -187,6 +192,30 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		writeJSON(w, http.StatusOK, settings)
 	})
 
+	mux.HandleFunc("POST /api/agent/device-token", func(w http.ResponseWriter, r *http.Request) {
+		session, err := service.AuthFromRequest(r)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if session.Kind != domain.AccountAgent {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req struct {
+			DeviceToken string `json:"device_token"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		agent, err := service.Store().RegisterAgentDeviceToken(session.AccountID, req.DeviceToken)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"agent": agent})
+	})
+
 	mux.HandleFunc("GET /api/agent/conversations", func(w http.ResponseWriter, r *http.Request) {
 		session, err := service.AuthFromRequest(r)
 		if err != nil {
@@ -227,7 +256,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		writeJSON(w, http.StatusOK, map[string]any{"agent": agent})
 	})
 
-	mux.HandleFunc("POST /api/agent/push-device", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/agent/avatar", func(w http.ResponseWriter, r *http.Request) {
 		session, err := service.AuthFromRequest(r)
 		if err != nil {
 			writeError(w, err)
@@ -237,20 +266,37 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			writeError(w, store.ErrForbidden)
 			return
 		}
-		var req pushDeviceRequest
+		var req struct {
+			AvatarURL string `json:"avatar_url"`
+		}
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		device, err := service.RegisterAgentPushDevice(session.AccountID, domain.PushDevice{
-			Platform: req.Platform,
-			Token:    req.Token,
-			Provider: req.Provider,
-		})
+		agent, err := service.Store().UpdateAgentAvatar(session.AccountID, req.AvatarURL)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"device": device})
+		writeJSON(w, http.StatusOK, map[string]any{"agent": agent})
+	})
+
+	mux.HandleFunc("GET /api/agent/ratings/summary", func(w http.ResponseWriter, r *http.Request) {
+		session, err := service.AuthFromRequest(r)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if session.Kind != domain.AccountAgent {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		agent, ok := findAgentByID(service.Store().AllAgents(), session.AccountID)
+		if !ok {
+			writeError(w, store.ErrNotFound)
+			return
+		}
+		summary := service.Store().RatingSummaryForAgent(session.AccountID)
+		writeJSON(w, http.StatusOK, buildAgentRatingSummary(agent, summary))
 	})
 
 	mux.HandleFunc("POST /api/account/password", func(w http.ResponseWriter, r *http.Request) {
@@ -323,11 +369,6 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		aiConfigured := strings.TrimSpace(aiSettings.BaseURL) != "" &&
 			strings.TrimSpace(aiSettings.Model) != "" &&
 			strings.TrimSpace(aiSettings.APIKeyMasked) != ""
-		feishuSettings := service.Store().FeishuSettings()
-		feishuConfigured := strings.TrimSpace(feishuSettings.AppID) != "" &&
-			strings.TrimSpace(feishuSettings.AppSecretMasked) != "" &&
-			strings.TrimSpace(feishuSettings.VerificationTokenMasked) != "" &&
-			strings.TrimSpace(feishuSettings.DefaultChatID) != ""
 		writeJSON(w, http.StatusOK, map[string]any{
 			"database": database,
 			"ai": map[string]any{
@@ -338,17 +379,6 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 				"model":          aiSettings.Model,
 				"api_type":       aiSettings.APIType,
 				"api_key_masked": aiSettings.APIKeyMasked,
-			},
-			"feishu": map[string]any{
-				"enabled":                   feishuSettings.Enabled,
-				"configured":                feishuConfigured,
-				"base_url":                  feishuSettings.BaseURL,
-				"app_id":                    feishuSettings.AppID,
-				"app_secret_masked":         feishuSettings.AppSecretMasked,
-				"verification_token_masked": feishuSettings.VerificationTokenMasked,
-				"encrypt_key_masked":        feishuSettings.EncryptKeyMasked,
-				"default_chat_id":           feishuSettings.DefaultChatID,
-				"agent_id":                  feishuSettings.AgentID,
 			},
 			"websocket": service.Hub().Stats(),
 			"time":      time.Now().UTC().Format(time.RFC3339),
@@ -361,6 +391,103 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"agents": service.Store().AllAgents()})
+	})
+
+	mux.HandleFunc("GET /api/admin/ratings/summaries", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		agents := service.Store().AllAgents()
+		byAgent := service.Store().RatingSummariesByAgent()
+		items := make([]map[string]any, 0, len(agents))
+		for _, agent := range agents {
+			summary := byAgent[agent.ID]
+			item := buildAgentRatingSummary(agent, summary)
+			items = append(items, map[string]any{
+				"agent_id":                  agent.ID,
+				"agent_name":                agent.Name,
+				"agent_account":             agent.Account,
+				"summary":                   item,
+				"manual_satisfaction_rate":  item.ManualSatisfactionRate,
+				"display_satisfaction_rate": item.DisplaySatisfactionRate,
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	})
+
+	mux.HandleFunc("GET /api/admin/agents/{id}/ratings", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		agentID := r.PathValue("id")
+		agent, ok := findAgentByID(service.Store().AllAgents(), agentID)
+		if !ok {
+			writeError(w, store.ErrNotFound)
+			return
+		}
+		summary := service.Store().RatingSummaryForAgent(agentID)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"agent":   agent,
+			"summary": buildAgentRatingSummary(agent, summary),
+			"ratings": service.Store().RatingsForAgent(agentID),
+		})
+	})
+
+	mux.HandleFunc("POST /api/admin/agents/{id}/rating", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req struct {
+			SatisfactionRate *float64 `json:"satisfaction_rate"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.SatisfactionRate == nil || *req.SatisfactionRate < 0 || *req.SatisfactionRate > 100 {
+			writeError(w, store.ErrInvalidInput)
+			return
+		}
+		agentID := r.PathValue("id")
+		agent, err := service.Store().SetAgentManualRating(agentID, *req.SatisfactionRate/100)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "agent.set_rating", "agent", agent.ID, "手动设置客服好评率 "+agent.Account)
+		writeJSON(w, http.StatusOK, map[string]any{"agent": agent})
+	})
+
+	mux.HandleFunc("DELETE /api/admin/agents/{id}/rating", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		agentID := r.PathValue("id")
+		agent, err := service.Store().ClearAgentManualRating(agentID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "agent.clear_rating", "agent", agent.ID, "清除客服手动好评率 "+agent.Account)
+		writeJSON(w, http.StatusOK, map[string]any{"agent": agent})
+	})
+
+	mux.HandleFunc("POST /api/admin/agents/{id}/ratings/reset", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		agentID := r.PathValue("id")
+		agent, err := service.Store().ResetAgentRatings(agentID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "agent.reset_ratings", "agent", agent.ID, "重置客服真实评价 "+agent.Account)
+		writeJSON(w, http.StatusOK, map[string]any{"agent": agent})
 	})
 
 	mux.HandleFunc("GET /api/admin/ratings/summary", func(w http.ResponseWriter, r *http.Request) {
@@ -548,6 +675,181 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		}
 		recordAuditFromRequest(service, r, trustedProxies, "keyword_rule.update", "keyword_rule", rule.ID, "更新关键词规则 "+rule.Keyword)
 		writeJSON(w, http.StatusOK, map[string]any{"rule": rule})
+	})
+
+	mux.HandleFunc("DELETE /api/admin/keyword-rules/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		rule, err := service.Store().DeleteKeywordRule(r.PathValue("id"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "keyword_rule.delete", "keyword_rule", rule.ID, "删除关键词规则 "+rule.Keyword)
+		writeJSON(w, http.StatusOK, map[string]any{"rule": rule})
+	})
+
+	mux.HandleFunc("GET /api/app-update/latest", func(w http.ResponseWriter, r *http.Request) {
+		platform := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("platform")))
+		versionCode, _ := strconv.ParseInt(r.URL.Query().Get("version_code"), 10, 64)
+		releases := service.Store().AppReleases(platform)
+		var latest *domain.AppRelease
+		for i := range releases {
+			if releases[i].Enabled {
+				latest = &releases[i]
+				break
+			}
+		}
+		payload := map[string]any{
+			"platform":              platform,
+			"current_version_code":  versionCode,
+			"latest":                nil,
+			"update_available":      false,
+			"force_update":          false,
+			"required_version_code": int64(0),
+		}
+		if latest != nil {
+			payload["latest"] = latest
+			payload["update_available"] = latest.VersionCode > versionCode
+			payload["force_update"] = latest.VersionCode > versionCode && latest.ForceUpdate
+			if latest.ForceUpdate {
+				payload["required_version_code"] = latest.VersionCode
+			}
+		}
+		writeJSON(w, http.StatusOK, payload)
+	})
+
+	mux.HandleFunc("GET /api/app-update/download/{id}", func(w http.ResponseWriter, r *http.Request) {
+		release, ok := service.Store().AppReleaseByID(r.PathValue("id"))
+		if !ok {
+			writeError(w, store.ErrNotFound)
+			return
+		}
+		downloadURL := strings.TrimSpace(release.DownloadURL)
+		filePath := strings.TrimPrefix(strings.TrimSpace(release.FilePath), "/")
+		if filePath != "" {
+			fullPath := filepath.Join(cfg.UploadDir, filepath.FromSlash(filePath))
+			file, err := os.Open(fullPath)
+			if err == nil {
+				defer file.Close()
+				stat, err := file.Stat()
+				if err != nil {
+					writeError(w, store.ErrNotFound)
+					return
+				}
+				w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+				w.Header().Set("Content-Disposition", "attachment; filename=\""+release.FileName+"\"")
+				w.Header().Set("Content-Length", strconv.FormatInt(stat.Size(), 10))
+				w.Header().Set("Cache-Control", "no-store")
+				http.ServeContent(w, r, release.FileName, stat.ModTime(), file)
+				return
+			}
+		}
+		if downloadURL != "" && !strings.HasPrefix(downloadURL, "/uploads/") {
+			http.Redirect(w, r, downloadURL, http.StatusFound)
+			return
+		}
+		writeError(w, store.ErrNotFound)
+	})
+
+	mux.HandleFunc("GET /api/admin/app-releases", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		platform := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("platform")))
+		writeJSON(w, http.StatusOK, map[string]any{"releases": service.Store().AppReleases(platform)})
+	})
+
+	mux.HandleFunc("POST /api/admin/app-releases", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		platform := strings.ToLower(strings.TrimSpace(r.FormValue("platform")))
+		versionName := strings.TrimSpace(r.FormValue("version_name"))
+		versionCode, versionErr := strconv.ParseInt(strings.TrimSpace(r.FormValue("version_code")), 10, 64)
+		if platform == "" || versionName == "" || versionErr != nil || versionCode <= 0 {
+			writeError(w, store.ErrInvalidInput)
+			return
+		}
+		saved, err := upload.SaveAppReleaseHTTP(w, r, cfg, cfg.AppReleaseMaxBytes)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		release, err := service.Store().CreateAppRelease(domain.AppRelease{
+			Platform:     platform,
+			VersionName:  versionName,
+			VersionCode:  versionCode,
+			FileName:     sanitizeFilename(versionName),
+			FilePath:     saved.Path,
+			FileSize:     int64(saved.Size),
+			Checksum:     saved.Checksum,
+			ReleaseNotes: strings.TrimSpace(r.FormValue("release_notes")),
+			ForceUpdate:  r.FormValue("force_update") == "true" || r.FormValue("force_update") == "1",
+			Enabled:      true,
+			DownloadURL:  saved.URL,
+		})
+		if err != nil {
+			removeUploadedRelease(cfg, saved.Path)
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "app_release.create", "app_release", release.ID, "上传 App 版本 "+release.VersionName)
+		writeJSON(w, http.StatusCreated, map[string]any{"release": release})
+	})
+
+	mux.HandleFunc("PATCH /api/admin/app-releases/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req appReleaseUpdateRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		current, found := service.Store().AppReleaseByID(r.PathValue("id"))
+		if !found {
+			writeError(w, store.ErrNotFound)
+			return
+		}
+		if req.ForceUpdate != nil {
+			current.ForceUpdate = *req.ForceUpdate
+		}
+		if req.Enabled != nil {
+			current.Enabled = *req.Enabled
+		}
+		release, err := service.Store().UpdateAppRelease(current.ID, domain.AppRelease{
+			VersionName:  req.VersionName,
+			VersionCode:  req.VersionCode,
+			ReleaseNotes: req.ReleaseNotes,
+			ForceUpdate:  current.ForceUpdate,
+			Enabled:      current.Enabled,
+		})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "app_release.update", "app_release", release.ID, "更新 App 版本配置 "+release.VersionName)
+		writeJSON(w, http.StatusOK, map[string]any{"release": release})
+	})
+
+	mux.HandleFunc("DELETE /api/admin/app-releases/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		release, err := service.Store().DeleteAppRelease(r.PathValue("id"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		removeUploadedRelease(cfg, release.FilePath)
+		recordAuditFromRequest(service, r, trustedProxies, "app_release.delete", "app_release", release.ID, "删除 App 版本 "+release.VersionName)
+		writeJSON(w, http.StatusOK, map[string]any{"release": release})
 	})
 
 	mux.HandleFunc("GET /api/conversations/{id}/messages", func(w http.ResponseWriter, r *http.Request) {
@@ -748,70 +1050,6 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		writeJSON(w, http.StatusOK, map[string]any{"reply": reply})
 	})
 
-	mux.HandleFunc("GET /api/admin/integrations/feishu", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(service, r) {
-			writeError(w, store.ErrForbidden)
-			return
-		}
-		writeJSON(w, http.StatusOK, service.Store().FeishuSettings())
-	})
-
-	mux.HandleFunc("PATCH /api/admin/integrations/feishu", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(service, r) {
-			writeError(w, store.ErrForbidden)
-			return
-		}
-		var req feishuSettingsRequest
-		if !decodeJSON(w, r, &req) {
-			return
-		}
-		updated, err := service.UpdateFeishuSettings(domain.FeishuSettings{
-			Enabled:           req.Enabled,
-			BaseURL:           req.BaseURL,
-			AppID:             req.AppID,
-			AppSecret:         req.AppSecret,
-			VerificationToken: req.VerificationToken,
-			EncryptKey:        req.EncryptKey,
-			DefaultChatID:     req.DefaultChatID,
-			AgentID:           req.AgentID,
-			TimeoutSeconds:    req.TimeoutSeconds,
-		})
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		recordAuditFromRequest(service, r, trustedProxies, "feishu_settings.update", "feishu_settings", "1", "更新飞书客服配置")
-		writeJSON(w, http.StatusOK, updated)
-	})
-
-	mux.HandleFunc("POST /api/admin/integrations/feishu/test", func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(service, r) {
-			writeError(w, store.ErrForbidden)
-			return
-		}
-		var req struct {
-			Text string `json:"text"`
-		}
-		if !decodeOptionalJSON(w, r, &req) {
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-		defer cancel()
-		sent, err := service.TestFeishu(ctx, req.Text)
-		if err != nil {
-			if errors.Is(err, feishuapi.ErrDisabled) {
-				writeJSON(w, http.StatusBadRequest, map[string]any{
-					"error":   "feishu_not_configured",
-					"message": "飞书配置未启用或必填项不完整",
-				})
-				return
-			}
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"message": sent})
-	})
-
 	mux.HandleFunc("GET /api/admin/business-hours", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(service, r) {
 			writeError(w, store.ErrForbidden)
@@ -883,6 +1121,14 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+type appReleaseUpdateRequest struct {
+	VersionName  string `json:"version_name"`
+	VersionCode  int64  `json:"version_code"`
+	ReleaseNotes string `json:"release_notes"`
+	ForceUpdate  *bool  `json:"force_update"`
+	Enabled      *bool  `json:"enabled"`
+}
+
 type createConversationRequest struct {
 	Source string `json:"source"`
 }
@@ -918,12 +1164,6 @@ type transferRequest struct {
 	Group   string `json:"group"`
 }
 
-type pushDeviceRequest struct {
-	Platform string `json:"platform"`
-	Token    string `json:"token"`
-	Provider string `json:"provider"`
-}
-
 type ratingRequest struct {
 	Score   int      `json:"score"`
 	Tags    []string `json:"tags"`
@@ -949,18 +1189,6 @@ type aiSettingsRequest struct {
 	TimeoutSeconds        int                   `json:"timeout_seconds"`
 	SystemPrompt          string                `json:"system_prompt"`
 	NoReplyTimeoutSeconds int                   `json:"agent_no_reply_timeout_seconds"`
-}
-
-type feishuSettingsRequest struct {
-	Enabled           bool   `json:"enabled"`
-	BaseURL           string `json:"base_url"`
-	AppID             string `json:"app_id"`
-	AppSecret         string `json:"app_secret"`
-	VerificationToken string `json:"verification_token"`
-	EncryptKey        string `json:"encrypt_key"`
-	DefaultChatID     string `json:"default_chat_id"`
-	AgentID           string `json:"agent_id"`
-	TimeoutSeconds    int    `json:"timeout_seconds"`
 }
 
 const maxJSONBodyBytes = 1 << 20
@@ -1440,4 +1668,33 @@ func logRequests(logger *slog.Logger, next http.Handler) http.Handler {
 			"duration_ms", time.Since(start).Milliseconds(),
 		)
 	})
+}
+
+func sanitizeFilename(versionName string) string {
+	name := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_' {
+			return r
+		}
+		return '-'
+	}, strings.TrimSpace(versionName))
+	name = strings.Trim(name, ".-_")
+	if name == "" {
+		name = "app"
+	}
+	return "astreva-online-service-" + name + ".apk"
+}
+
+func removeUploadedRelease(cfg config.Config, filePath string) {
+	filePath = strings.TrimPrefix(strings.TrimSpace(filePath), "/")
+	if filePath == "" {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(cfg.UploadDriver), "s3") {
+		return
+	}
+	fullPath := filepath.Join(cfg.UploadDir, filepath.FromSlash(filePath))
+	if !strings.HasPrefix(fullPath, filepath.Clean(cfg.UploadDir)) {
+		return
+	}
+	_ = os.Remove(fullPath)
 }

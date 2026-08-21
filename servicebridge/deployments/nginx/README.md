@@ -1,13 +1,10 @@
-# Nginx
+# ServiceBridge Nginx
 
-这里放 WebSocket 反向代理和静态前端部署配置。
+`nginx.conf` 配置 worker 和连接参数，`customer-service.conf` 提供：
 
-第一阶段目标：
+- `/`：访客静态页面。
+- `/assets/`：带长期缓存的静态资源。
+- `/api/`、`/uploads/`：反代两个 Go 后端。
+- `/ws`：WebSocket 升级和长连接超时。
 
-- 用户端 Web 静态资源代理。
-- 后端 HTTP API 代理。
-- WebSocket 升级头配置。
-- 多后端节点负载均衡配置。
-- `nginx.conf` 已把 `worker_connections` 提到 65535，便于 5000 WebSocket 并发压测。
-
-生产入口建议用云负载均衡或证书网关终止 TLS，然后转发到本 Nginx；如果直接由本 Nginx 终止 TLS，需要另加 `listen 443 ssl` 和证书挂载。
+生产必须将 CSP `frame-ancestors` 中的示例站点替换为实际官网域名，且与后端 `CORS_ALLOWED_ORIGINS`/`FRAME_ANCESTORS` 一致。上传体积同时受 Nginx `client_max_body_size` 和后端 `UPLOAD_MAX_BYTES` 限制。

@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ASTREVA 统一管理后台</title>
+  <style>
+    :root {
+      --navy: #07345f;
+      --navy-deep: #042744;
+      --blue: #0878dc;
+      --cyan: #18b7d8;
+      --ink: #142033;
+      --muted: #68778c;
+      --line: #dbe5ee;
+      --paper: #fff;
+      --wash: #f2f6f9;
+      --green: #16835c;
+      --red: #b42318;
+      --amber: #9b6100;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; overflow: hidden; color: var(--ink); background: var(--wash); font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .app { height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
+    .sidebar { position: relative; overflow: hidden; padding: 24px 16px; color: #fff; background: radial-gradient(circle at 16% 5%, rgba(24,183,216,.38), transparent 19rem), linear-gradient(160deg, var(--navy), var(--navy-deep)); }
+    .sidebar::after { content: ""; position: absolute; width: 280px; height: 280px; left: 86px; bottom: -150px; border: 1px solid rgba(255,255,255,.14); border-radius: 50%; box-shadow: 0 0 0 38px rgba(255,255,255,.025), 0 0 0 76px rgba(255,255,255,.018); }
+    .brand { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; padding: 2px 10px 26px; border-bottom: 1px solid rgba(255,255,255,.14); }
+    .brand img { width: 46px; height: 46px; object-fit: contain; filter: drop-shadow(0 8px 20px rgba(0,0,0,.2)); }
+    .brand strong { display: block; font-size: 20px; letter-spacing: .04em; }
+    .brand small { color: rgba(255,255,255,.64); letter-spacing: .12em; }
+    .nav { position: relative; z-index: 1; display: grid; gap: 10px; margin-top: 28px; }
+    .nav button { height: 58px; display: flex; align-items: center; gap: 14px; border: 0; border-radius: 12px; padding: 0 16px; color: rgba(255,255,255,.74); background: transparent; font-weight: 800; text-align: left; }
+    .nav button:hover { color: #fff; background: rgba(255,255,255,.09); }
+    .nav button.active { color: #fff; background: linear-gradient(135deg, #0c82e7, #0967ba); box-shadow: 0 15px 28px rgba(0,18,44,.26); }
+    .icon { width: 28px; font-size: 21px; text-align: center; }
+    .version { position: absolute; z-index: 1; left: 28px; bottom: 26px; color: rgba(255,255,255,.52); font-size: 12px; }
+    .main { min-width: 0; display: grid; grid-template-rows: 76px minmax(0, 1fr); }
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 0 30px; background: rgba(255,255,255,.96); border-bottom: 1px solid var(--line); }
+    .heading strong { display: block; font-size: 22px; }
+    .heading span { color: var(--muted); font-size: 13px; }
+    .top-actions { display: flex; align-items: center; gap: 12px; }
+    .engine { display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--green); background: #eaf8f2; border-radius: 999px; font-size: 13px; font-weight: 800; }
+    .engine::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .engine.down { color: var(--red); background: #fff0ef; }
+    .btn { min-height: 40px; border: 1px solid #cbd8e5; border-radius: 9px; padding: 0 14px; color: var(--ink); background: #fff; font-weight: 800; }
+    .btn:hover { border-color: var(--blue); color: var(--blue); }
+    .btn.primary { color: #fff; border-color: var(--blue); background: var(--blue); }
+    .btn.danger { color: var(--red); border-color: #f2c8c4; }
+    .content { min-height: 0; overflow: auto; padding: 28px 30px 48px; }
+    .content.content-mode { overflow: hidden; padding: 0; }
+    .view { display: none; min-height: 100%; }
+    .view.active { display: block; }
+    .content-frame { width: 100%; height: calc(100vh - 76px); border: 0; background: #fff; }
+    .hero { display: flex; justify-content: space-between; gap: 22px; align-items: end; margin-bottom: 24px; }
+    .hero h1 { margin: 0 0 7px; font-size: 30px; }
+    .hero p { margin: 0; color: var(--muted); }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 16px; margin-bottom: 22px; }
+    .stat { position: relative; min-height: 130px; overflow: hidden; padding: 21px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); box-shadow: 0 8px 28px rgba(18,44,70,.05); }
+    .stat::after { content: ""; position: absolute; width: 86px; height: 86px; right: -30px; bottom: -34px; border-radius: 50%; background: color-mix(in srgb, var(--accent, var(--blue)) 14%, transparent); }
+    .stat small { color: var(--muted); font-weight: 700; }
+    .stat strong { display: block; margin-top: 13px; color: var(--accent, var(--blue)); font-size: 34px; }
+    .panel { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); box-shadow: 0 8px 28px rgba(18,44,70,.05); }
+    .panel-head { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+    .panel-head h2 { margin: 0; font-size: 19px; }
+    .panel-body { padding: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 20px; }
+    .table-wrap { overflow: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 15px 18px; border-bottom: 1px solid #edf1f5; text-align: left; vertical-align: middle; }
+    th { color: var(--muted); background: #f8fafc; font-size: 12px; letter-spacing: .04em; white-space: nowrap; }
+    td { font-size: 14px; }
+    tbody tr:hover { background: #fbfdff; }
+    .badge { display: inline-flex; align-items: center; min-height: 26px; border-radius: 999px; padding: 3px 9px; color: #175a91; background: #e9f4ff; font-size: 12px; font-weight: 800; }
+    .badge.online, .badge.assigned { color: var(--green); background: #e9f8f1; }
+    .badge.busy, .badge.waiting, .badge.human_requested { color: var(--amber); background: #fff4dc; }
+    .badge.offline, .badge.closed { color: var(--muted); background: #eef1f4; }
+    .badge.disabled { color: var(--red); background: #fff0ef; }
+    .row-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .row-actions button { min-height: 32px; border: 1px solid #d6e0e9; border-radius: 7px; padding: 0 9px; color: #23405d; background: #fff; font-size: 12px; font-weight: 800; }
+    .row-actions button:hover { border-color: var(--blue); color: var(--blue); }
+    #ratingFilterBar .btn.active { color: #fff; border-color: var(--blue); background: var(--blue); }
+    tbody tr.rating-neutral { background: #fffaf0; }
+    tbody tr.rating-bad { background: #fff3f2; }
+    .empty { padding: 48px 18px; color: var(--muted); text-align: center; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+    label { display: grid; gap: 8px; color: #34465a; font-size: 13px; font-weight: 800; }
+    input, select, textarea { width: 100%; border: 1px solid #cfdbe6; border-radius: 9px; padding: 11px 12px; color: var(--ink); background: #fff; outline: none; }
+    input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(8,120,220,.12); }
+    textarea { min-height: 100px; resize: vertical; }
+    .wide { grid-column: 1 / -1; }
+    .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+    .notice { display: none; position: fixed; z-index: 20; right: 28px; bottom: 26px; max-width: 430px; padding: 14px 18px; border-radius: 11px; color: #fff; background: var(--navy); box-shadow: 0 16px 42px rgba(2,25,50,.28); font-weight: 700; }
+    .notice.show { display: block; animation: rise .24s ease-out; }
+    .notice.error { background: var(--red); }
+    dialog { width: min(620px, calc(100vw - 40px)); border: 0; border-radius: 18px; padding: 0; color: var(--ink); box-shadow: 0 30px 90px rgba(0,22,48,.28); }
+    dialog::backdrop { background: rgba(3,24,44,.46); backdrop-filter: blur(3px); }
+    .dialog-head { display: flex; justify-content: space-between; align-items: center; padding: 20px 22px; border-bottom: 1px solid var(--line); }
+    .dialog-head h2 { margin: 0; font-size: 20px; }
+    .dialog-body { max-height: 70vh; overflow: auto; padding: 22px; }
+    .messages { display: grid; gap: 12px; }
+    .message { max-width: 84%; padding: 11px 13px; border-radius: 12px; color: #24384e; background: #eef3f7; line-height: 1.5; }
+    .message.agent { justify-self: end; color: #fff; background: var(--blue); }
+    .message small { display: block; margin-top: 5px; opacity: .7; }
+    @keyframes rise { from { transform: translateY(10px); opacity: 0; } }
+    @media (max-width: 1100px) { .cards { grid-template-columns: repeat(2, 1fr); } .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 760px) { .app { grid-template-columns: 82px minmax(0,1fr); } .sidebar { padding: 18px 10px; } .brand { padding: 0 6px 20px; justify-content: center; } .brand img { width: 44px; } .brand div, .nav span:not(.icon), .version { display: none; } .nav button { justify-content: center; padding: 0; } .content { padding: 20px 16px 40px; } .topbar { padding: 0 16px; } .heading span, .engine { display: none; } .cards, .form-grid { grid-template-columns: 1fr; } .hero { align-items: start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><img src="/assets/astreva-logo-transparent.png" alt="ASTREVA"><div><strong>ASTREVA</strong><small>CONTROL CENTER</small></div></div>
+      <nav class="nav">
+        <button data-view="content"><span class="icon">▤</span><span>内容管理</span></button>
+        <button data-view="customers"><span class="icon">♙</span><span>客服管理</span></button>
+        <button class="active" data-view="workspace"><span class="icon">◫</span><span>工作台</span></button>
+        <button data-view="settings"><span class="icon">⚙</span><span>系统设置</span></button>
+        <button data-view="keywords"><span class="icon">⌘</span><span>关键词</span></button>
+        <button data-view="ratings"><span class="icon">★</span><span>服务评价</span></button>
+        <button data-view="audit"><span class="icon">◷</span><span>审计日志</span></button>
+        <button data-view="releases"><span class="icon">⇪</span><span>App 版本</span></button>
+      </nav>
+      <div class="version">Unified Console 1.0</div>
+    </aside>
+    <section class="main">
+      <header class="topbar">
+        <div class="heading"><strong id="pageTitle">工作台</strong><span id="pageSubtitle">会话运行状态与服务质量概览</span></div>
+        <div class="top-actions"><span class="engine" id="engineState">客服引擎检查中</span><button class="btn" id="refresh">刷新</button><button class="btn" id="logout">退出</button></div>
+      </header>
+      <main class="content" id="contentRoot">
+        <section class="view" id="view-content"><iframe class="content-frame" src="/site-admin/content/?embed=1" title="官网内容管理"></iframe></section>
+        <section class="view" id="view-customers">
+          <div class="hero"><div><h1>客服管理</h1><p>创建 App 登录账号、设置分组与并发上限，并安全地重置密码。</p></div><button class="btn primary" id="createAgent">新增客服账号</button></div>
+          <div class="panel"><div class="panel-head"><h2>客服账号</h2><span id="agentCount" class="badge">0 个账号</span></div><div class="table-wrap"><table><thead><tr><th>账号 / 姓名</th><th>分组</th><th>状态</th><th>当前会话</th><th>并发上限</th><th>真实好评率</th><th>展示好评率</th><th>操作</th></tr></thead><tbody id="agentRows"></tbody></table></div></div>
+        </section>
+        <section class="view active" id="view-workspace">
+          <div class="hero"><div><h1>客服工作台</h1><p>统一查看待接入、人工服务、在线客服与满意度。</p></div><button class="btn" id="exportConversations">导出会话 CSV</button></div>
+          <div class="cards" id="stats"></div>
+          <div class="panel"><div class="panel-head"><h2>实时会话</h2><span id="conversationCount" class="badge">0 条</span></div><div class="table-wrap"><table><thead><tr><th>访客</th><th>状态</th><th>最近消息</th><th>未读</th><th>客服</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="conversationRows"></tbody></table></div></div>
+        </section>
+        <section class="view" id="view-keywords">
+          <div class="hero"><div><h1>关键词规则</h1><p>配置访客消息关键词的自动回复与快捷回复。</p></div><button class="btn primary" id="createKeyword">新增规则</button></div>
+          <div class="panel"><div class="panel-head"><h2>规则列表</h2><span id="keywordCount" class="badge">0 条</span></div><div class="table-wrap"><table><thead><tr><th>关键词</th><th>匹配方式</th><th>回复内容</th><th>状态</th><th>优先级</th><th>快捷回复</th><th>操作</th></tr></thead><tbody id="keywordRows"></tbody></table></div></div>
+        </section>
+        <section class="view" id="view-ratings">
+          <div class="hero"><div><h1>服务评价</h1><p>访客结束会话后提交的满意度评分与建议，中评、差评文字会完整展示。</p></div><div class="row-actions" id="ratingFilterBar"><button class="btn" data-rating-filter="all">全部</button><button class="btn" data-rating-filter="good">好评</button><button class="btn" data-rating-filter="neutral">中评</button><button class="btn" data-rating-filter="bad">差评</button></div></div>
+          <div class="cards" id="ratingStats"></div>
+          <div class="panel"><div class="panel-head"><h2>客服好评率</h2></div><div class="table-wrap"><table><thead><tr><th>客服</th><th>真实好评率</th><th>展示好评率</th><th>操作</th></tr></thead><tbody id="agentRatingRows"></tbody></table></div></div>
+          <div class="panel"><div class="panel-head"><h2>评价记录</h2><span id="ratingCount" class="badge">0 条</span></div><div class="table-wrap"><table><thead><tr><th>会话</th><th>评分</th><th>标签</th><th>建议</th><th>客服</th><th>时间</th></tr></thead><tbody id="ratingRows"></tbody></table></div></div>
+        </section>
+        <section class="view" id="view-audit">
+          <div class="hero"><div><h1>审计日志</h1><p>管理员与客服的敏感操作记录。</p></div><button class="btn" id="exportAudit">导出审计 CSV</button></div>
+          <div class="panel"><div class="panel-head"><h2>操作记录</h2><span id="auditCount" class="badge">0 条</span></div><div class="table-wrap"><table><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>IP</th><th>说明</th></tr></thead><tbody id="auditRows"></tbody></table></div></div>
+        </section>
+        <section class="view" id="view-releases">
+          <div class="hero"><div><h1>App 版本管理</h1><p>上传 Android/iOS 安装包，控制强制更新与发布状态。</p></div></div>
+          <div class="grid">
+            <section class="panel"><div class="panel-head"><h2>上传新版本</h2></div><div class="panel-body"><form id="releaseForm" class="form-grid">
+              <label>平台<select name="platform" required><option value="android">Android</option><option value="ios">iOS</option></select></label>
+              <label>版本号（如 1.2.0）<input name="version_name" required></label>
+              <label>版本代码（整数，递增）<input name="version_code" type="number" min="1" required></label>
+              <label>安装包文件<input name="file" type="file" accept=".apk,.ipa" required></label>
+              <label class="wide">更新说明<textarea name="release_notes" rows="3"></textarea></label>
+              <label class="wide"><input type="checkbox" name="force_update" style="width:auto;margin-right:8px">强制更新（低于此版本的 App 必须升级后才能使用）</label>
+              <div class="form-actions wide"><button class="btn primary">上传并发布</button></div>
+            </form></div></section>
+            <section class="panel"><div class="panel-head"><h2>版本列表</h2><span id="releaseCount" class="badge">0 个版本</span></div><div class="table-wrap"><table><thead><tr><th>版本</th><th>平台</th><th>大小</th><th>更新类型</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="releaseRows"></tbody></table></div></div>
+          </div>
+        </section>
+        <section class="view" id="view-settings">
+          <div class="hero"><div><h1>系统设置</h1><p>管理营业时间、访客端欢迎语、联系方式与系统状态。</p></div></div>
+          <div class="grid">
+            <section class="panel"><div class="panel-head"><h2>营业时间</h2></div><div class="panel-body"><form id="businessForm" class="form-grid"><label>时区<input name="timezone" required></label><label>启用<select name="enabled"><option value="true">启用</option><option value="false">停用</option></select></label><label>开始时间<input name="start" type="time" required></label><label>结束时间<input name="end" type="time" required></label><div class="form-actions wide"><button class="btn primary">保存营业时间</button></div></form></div></section>
+            <section class="panel"><div class="panel-head"><h2>访客端配置</h2></div><div class="panel-body"><form id="contactForm" class="form-grid"><label>联系电话<input name="phone"></label><label>微信 / WhatsApp<input name="wechat"></label><label>QQ / Telegram<input name="qq"></label><label class="wide">客服欢迎语<textarea name="entry_reply"></textarea></label><div class="form-actions wide"><button class="btn primary">保存访客配置</button></div></form></div></section>
+            <section class="panel"><div class="panel-head"><h2>服务状态</h2></div><div class="panel-body" id="systemStatus"><p class="empty">正在读取...</p></div></section>
+            <section class="panel"><div class="panel-head"><h2>AI 接待策略</h2></div><div class="panel-body"><form id="aiForm" class="form-grid"><label>启用<select name="enabled"><option value="true">启用</option><option value="false">停用</option></select></label><label>接待模式<select name="mode"><option value="human_first">人工优先</option><option value="always_ai">AI 优先</option><option value="manual_only">仅人工</option></select></label><label>模型<input name="model"></label><label>API 类型<input name="api_type"></label><label>超时秒数<input name="timeout_seconds" type="number" min="1"></label><label>最大输出<input name="max_output_tokens" type="number" min="1"></label><label class="wide">系统提示词<textarea name="system_prompt"></textarea></label><div class="form-actions wide"><button class="btn primary">保存 AI 设置</button></div></form></div></section>
+          </div>
+        </section>
+      </main>
+    </section>
+  </div>
+  <dialog id="agentDialog"><div class="dialog-head"><h2 id="agentDialogTitle">新增客服账号</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><form id="agentForm" class="form-grid"><input name="id" type="hidden"><label>登录账号<input name="account" autocomplete="off" required></label><label>客服姓名<input name="name" required></label><label>分组<input name="group" placeholder="例如：售前组"></label><label>最大并发会话<input name="max_conversations" type="number" min="1" value="10" required></label><label class="wide" id="passwordField">初始密码<input name="password" type="password" minlength="10" autocomplete="new-password"><span>至少 10 位，创建后客服可在 App 内修改。</span></label><div class="form-actions wide"><button type="button" class="btn" data-close>取消</button><button class="btn primary">保存客服</button></div></form></div></dialog>
+  <dialog id="keywordDialog"><div class="dialog-head"><h2 id="keywordDialogTitle">新增关键词规则</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><form id="keywordForm" class="form-grid"><input name="id" type="hidden"><label>关键词<input name="keyword" required></label><label>匹配方式<select name="match_type"><option value="contains">包含</option><option value="exact">完全匹配</option><option value="prefix">前缀匹配</option></select></label><label>动作<select name="action"><option value="text">发送文本</option><option value="phone">发送电话</option><option value="wechat">发送微信</option><option value="handoff">转人工</option></select></label><label>优先级<input name="priority" type="number" value="50"></label><label class="wide">回复内容<textarea name="reply" rows="3"></textarea></label><label class="wide">快捷回复按钮文字<textarea name="quick_reply_text" rows="2"></textarea></label><label><input type="checkbox" name="enabled" checked style="width:auto;margin-right:8px">启用规则</label><label><input type="checkbox" name="show_in_quick_replies" style="width:auto;margin-right:8px">显示为快捷回复</label><div class="form-actions wide"><button type="button" class="btn" data-close>取消</button><button class="btn primary">保存规则</button></div></form></div></dialog>
+  <dialog id="messageDialog"><div class="dialog-head"><h2 id="messageTitle">会话详情</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><div class="messages" id="messageList"></div></div></dialog>
+  <dialog id="ratingDialog"><div class="dialog-head"><h2 id="ratingDialogTitle">设置好评率</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><form id="ratingForm" class="form-grid"><input name="id" type="hidden"><p class="wide" id="ratingRealInfo"></p><label class="wide">展示好评率（0-100）<input name="satisfaction_rate" type="number" min="0" max="100" step="0.1" required><span>设置后客服 App 和后台展示此比例，真实好评率仍会同时显示。</span></label><div class="form-actions wide"><button type="button" class="btn" data-close>取消</button><button class="btn primary">保存</button></div></form></div></dialog>
+  <dialog id="agentRatingsDialog"><div class="dialog-head"><h2 id="agentRatingDialogTitle">评价明细</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><div class="cards" id="agentRatingSummary" style="margin-bottom:16px"></div><div class="table-wrap"><table><thead><tr><th>评分</th><th>标签</th><th>建议 / 评价文字</th><th>时间</th></tr></thead><tbody id="agentRatingRowsDialog"></tbody></table></div></div></dialog>
+  <div class="notice" id="notice"></div>
+  <script src="/site-admin-assets/unified-admin.js"></script>
+</body>
+</html>

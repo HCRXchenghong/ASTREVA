@@ -438,38 +438,6 @@ func TestAgentCreateDisableAndLoginBoundary(t *testing.T) {
 	}
 }
 
-func TestRegisterAgentPushDeviceIsIdempotent(t *testing.T) {
-	s := NewMemoryStore(Options{})
-	_, agent, err := s.LoginAgent("admin", "123456")
-	if err != nil {
-		t.Fatalf("login agent: %v", err)
-	}
-
-	first, err := s.RegisterAgentPushDevice(agent.ID, domain.PushDevice{
-		Platform: "ios",
-		Provider: "uni-push",
-		Token:    "token-1",
-	})
-	if err != nil {
-		t.Fatalf("register push device: %v", err)
-	}
-	second, err := s.RegisterAgentPushDevice(agent.ID, domain.PushDevice{
-		Platform: "ios",
-		Provider: "uni-push",
-		Token:    "token-1",
-	})
-	if err != nil {
-		t.Fatalf("register duplicate push device: %v", err)
-	}
-	if first.ID != second.ID {
-		t.Fatalf("duplicate token should update existing device: %s != %s", first.ID, second.ID)
-	}
-	devices := s.PushDevicesForAgent(agent.ID)
-	if len(devices) != 1 || devices[0].Token != "token-1" {
-		t.Fatalf("unexpected push devices: %#v", devices)
-	}
-}
-
 func TestAdminTransferConversationReleasesOldAgent(t *testing.T) {
 	s := NewMemoryStore(Options{})
 	adminSession, _, err := s.LoginAdmin("superadmin", "123456")

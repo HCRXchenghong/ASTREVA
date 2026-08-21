@@ -35,38 +35,27 @@ type MemoryStore struct {
 	authTokens    map[string]domain.AuthSession
 	visitorTokens map[string]domain.AuthSession
 
-	visitors       map[string]*domain.Visitor
-	conversations  map[string]*domain.Conversation
-	messages       map[string][]domain.Message
-	pushDevices    map[string]*domain.PushDevice
-	feishuBindings map[string]*domain.FeishuMessageBinding
-	ratings        map[string]*domain.ServiceRating
-	auditEvents    []domain.AuditEvent
+	visitors      map[string]*domain.Visitor
+	conversations map[string]*domain.Conversation
+	messages      map[string][]domain.Message
+	ratings       map[string]*domain.ServiceRating
+	auditEvents   []domain.AuditEvent
 
 	keywordRules []domain.KeywordRule
+	appReleases  map[string]*domain.AppRelease
 	contacts     domain.ContactSettings
 	ai           domain.AISettings
-	feishu       domain.FeishuSettings
 	business     domain.BusinessHours
 }
 
 type Options struct {
-	OpenAIAPIKey            string
-	OpenAIBaseURL           string
-	OpenAIModel             string
-	OpenAIAPIType           string
-	DataEncryptionKey       string
-	BootstrapAdminPassword  string
-	BootstrapAgentPassword  string
-	FeishuEnabled           bool
-	FeishuBaseURL           string
-	FeishuAppID             string
-	FeishuAppSecret         string
-	FeishuVerificationToken string
-	FeishuEncryptKey        string
-	FeishuDefaultChatID     string
-	FeishuAgentID           string
-	FeishuTimeoutSeconds    int
+	OpenAIAPIKey           string
+	OpenAIBaseURL          string
+	OpenAIModel            string
+	OpenAIAPIType          string
+	DataEncryptionKey      string
+	BootstrapAdminPassword string
+	BootstrapAgentPassword string
 }
 
 func NewMemoryStore(options Options) *MemoryStore {
@@ -80,8 +69,6 @@ func NewMemoryStore(options Options) *MemoryStore {
 		visitors:        map[string]*domain.Visitor{},
 		conversations:   map[string]*domain.Conversation{},
 		messages:        map[string][]domain.Message{},
-		pushDevices:     map[string]*domain.PushDevice{},
-		feishuBindings:  map[string]*domain.FeishuMessageBinding{},
 		ratings:         map[string]*domain.ServiceRating{},
 		auditEvents:     []domain.AuditEvent{},
 		contacts: domain.ContactSettings{
@@ -106,21 +93,6 @@ func NewMemoryStore(options Options) *MemoryStore {
 			SystemPrompt:          defaultPrompt(),
 			NoReplyTimeoutSeconds: 60,
 		},
-		feishu: domain.FeishuSettings{
-			Enabled:                 options.FeishuEnabled,
-			BaseURL:                 nonEmpty(options.FeishuBaseURL, "https://open.feishu.cn"),
-			AppID:                   strings.TrimSpace(options.FeishuAppID),
-			AppSecret:               strings.TrimSpace(options.FeishuAppSecret),
-			AppSecretMasked:         maskAPIKey(options.FeishuAppSecret),
-			VerificationToken:       strings.TrimSpace(options.FeishuVerificationToken),
-			VerificationTokenMasked: maskAPIKey(options.FeishuVerificationToken),
-			EncryptKey:              strings.TrimSpace(options.FeishuEncryptKey),
-			EncryptKeyMasked:        maskAPIKey(options.FeishuEncryptKey),
-			DefaultChatID:           strings.TrimSpace(options.FeishuDefaultChatID),
-			AgentID:                 nonEmpty(options.FeishuAgentID, "agent_feishu"),
-			TimeoutSeconds:          positiveInt(options.FeishuTimeoutSeconds, 8),
-			UpdatedAt:               now,
-		},
 		business: domain.BusinessHours{
 			Timezone: "Asia/Shanghai",
 			Start:    "09:00",
@@ -128,6 +100,7 @@ func NewMemoryStore(options Options) *MemoryStore {
 			Enabled:  true,
 		},
 	}
+	s.appReleases = map[string]*domain.AppRelease{}
 
 	admin := &domain.AdminUser{
 		ID:       "admin_super",
@@ -389,6 +362,105 @@ func (s *MemoryStore) AllAgents() []domain.Agent {
 	return result
 }
 
+func (s *MemoryStore) AppReleases(platform string) []domain.AppRelease {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]domain.AppRelease, 0, len(s.appReleases))
+	for _, release := range s.appReleases {
+		if platform != "" && release.Platform != platform {
+			continue
+		}
+		result = append(result, *release)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].VersionCode == result[j].VersionCode {
+			return result[i].CreatedAt.After(result[j].CreatedAt)
+		}
+		return result[i].VersionCode > result[j].VersionCode
+	})
+	return result
+}
+
+func (s *MemoryStore) AppReleaseByID(id string) (domain.AppRelease, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	release, ok := s.appReleases[id]
+	if !ok {
+		return domain.AppRelease{}, false
+	}
+	return *release, true
+}
+
+func (s *MemoryStore) CreateAppRelease(next domain.AppRelease) (domain.AppRelease, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	next.Platform = strings.TrimSpace(next.Platform)
+	next.VersionName = strings.TrimSpace(next.VersionName)
+	if next.Platform != "android" && next.Platform != "ios" {
+		return domain.AppRelease{}, ErrInvalidInput
+	}
+	if next.VersionName == "" || next.VersionCode <= 0 || strings.TrimSpace(next.FilePath) == "" {
+		return domain.AppRelease{}, ErrInvalidInput
+	}
+	if next.ID == "" {
+		next.ID = "rel_" + randomID(10)
+	}
+	for _, release := range s.appReleases {
+		if release.ID == next.ID {
+			return domain.AppRelease{}, ErrConflict
+		}
+		if release.Platform == next.Platform && release.VersionCode == next.VersionCode {
+			return domain.AppRelease{}, ErrConflict
+		}
+	}
+	if next.CreatedAt.IsZero() {
+		next.CreatedAt = time.Now().UTC()
+	}
+	copyRelease := next
+	s.appReleases[next.ID] = &copyRelease
+	return next, nil
+}
+
+func (s *MemoryStore) UpdateAppRelease(id string, next domain.AppRelease) (domain.AppRelease, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current, ok := s.appReleases[id]
+	if !ok {
+		return domain.AppRelease{}, ErrNotFound
+	}
+	if strings.TrimSpace(next.VersionName) != "" {
+		current.VersionName = strings.TrimSpace(next.VersionName)
+	}
+	if next.VersionCode > 0 {
+		for _, release := range s.appReleases {
+			if release.ID != id && release.Platform == current.Platform && release.VersionCode == next.VersionCode {
+				return domain.AppRelease{}, ErrConflict
+			}
+		}
+		current.VersionCode = next.VersionCode
+	}
+	current.ReleaseNotes = strings.TrimSpace(next.ReleaseNotes)
+	current.ForceUpdate = next.ForceUpdate
+	current.Enabled = next.Enabled
+	return *current, nil
+}
+
+func (s *MemoryStore) DeleteAppRelease(id string) (domain.AppRelease, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current, ok := s.appReleases[id]
+	if !ok {
+		return domain.AppRelease{}, ErrNotFound
+	}
+	delete(s.appReleases, id)
+	return *current, nil
+}
+
 func (s *MemoryStore) CreateAgent(next domain.Agent, password string) (domain.Agent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -465,6 +537,86 @@ func (s *MemoryStore) UpdateAgent(id string, next domain.Agent) (domain.Agent, e
 		}
 		agent.Status = next.Status
 	}
+	agent.Updated = time.Now().UTC()
+	return *agent, nil
+}
+
+func (s *MemoryStore) RegisterAgentDeviceToken(agentID, deviceToken string) (domain.Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agent, ok := s.agentsByID[agentID]
+	if !ok {
+		return domain.Agent{}, ErrNotFound
+	}
+	if agent.DisabledAt != nil {
+		return domain.Agent{}, ErrForbidden
+	}
+	agent.DeviceToken = strings.TrimSpace(deviceToken)
+	agent.Updated = time.Now().UTC()
+	return *agent, nil
+}
+
+func (s *MemoryStore) UpdateAgentAvatar(agentID, avatarURL string) (domain.Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agent, ok := s.agentsByID[agentID]
+	if !ok {
+		return domain.Agent{}, ErrNotFound
+	}
+	agent.AvatarURL = strings.TrimSpace(avatarURL)
+	agent.Updated = time.Now().UTC()
+	return *agent, nil
+}
+
+func (s *MemoryStore) SetAgentManualRating(agentID string, rate float64) (domain.Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agent, ok := s.agentsByID[agentID]
+	if !ok {
+		return domain.Agent{}, ErrNotFound
+	}
+	if agent.DisabledAt != nil {
+		return domain.Agent{}, ErrForbidden
+	}
+	if rate < 0 || rate > 1 {
+		return domain.Agent{}, ErrInvalidInput
+	}
+	manual := rate
+	agent.ManualSatisfactionRate = &manual
+	agent.Updated = time.Now().UTC()
+	return *agent, nil
+}
+
+func (s *MemoryStore) ClearAgentManualRating(agentID string) (domain.Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agent, ok := s.agentsByID[agentID]
+	if !ok {
+		return domain.Agent{}, ErrNotFound
+	}
+	agent.ManualSatisfactionRate = nil
+	agent.Updated = time.Now().UTC()
+	return *agent, nil
+}
+
+func (s *MemoryStore) ResetAgentRatings(agentID string) (domain.Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agent, ok := s.agentsByID[agentID]
+	if !ok {
+		return domain.Agent{}, ErrNotFound
+	}
+	for id, rating := range s.ratings {
+		if rating.AssignedAgentID == agentID {
+			delete(s.ratings, id)
+		}
+	}
+	agent.ManualSatisfactionRate = nil
 	agent.Updated = time.Now().UTC()
 	return *agent, nil
 }
@@ -588,11 +740,6 @@ func (s *MemoryStore) DeleteAgent(id string) (domain.Agent, error) {
 			}
 		}
 	}
-	for deviceID, device := range s.pushDevices {
-		if device.AgentID == id {
-			delete(s.pushDevices, deviceID)
-		}
-	}
 	for _, rating := range s.ratings {
 		if rating.AssignedAgentID == id {
 			rating.AssignedAgentID = ""
@@ -604,134 +751,6 @@ func (s *MemoryStore) DeleteAgent(id string) (domain.Agent, error) {
 	deleted.CurrentConversations = 0
 	deleted.Updated = now
 	return deleted, nil
-}
-
-func (s *MemoryStore) EnsureFeishuAgent(id, name string) (domain.Agent, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	id = strings.TrimSpace(id)
-	name = strings.TrimSpace(name)
-	if id == "" {
-		id = "agent_feishu"
-	}
-	if name == "" {
-		name = "飞书客服"
-	}
-	if agent, ok := s.agentsByID[id]; ok {
-		agent.Name = name
-		if strings.TrimSpace(agent.Group) == "" {
-			agent.Group = "飞书"
-		}
-		agent.DisabledAt = nil
-		agent.Updated = time.Now().UTC()
-		return *agent, nil
-	}
-	now := time.Now().UTC()
-	account := id
-	if _, ok := s.agentsByAccount[account]; ok {
-		account = id + "_bridge"
-	}
-	agent := &domain.Agent{
-		ID:               id,
-		Account:          account,
-		Name:             name,
-		Group:            "飞书",
-		Password:         "feishu-bridge-disabled-login",
-		Status:           domain.AgentOffline,
-		MaxConversations: 10000,
-		Created:          now,
-		Updated:          now,
-	}
-	s.agentsByAccount[agent.Account] = agent
-	s.agentsByID[agent.ID] = agent
-	return *agent, nil
-}
-
-func (s *MemoryStore) BindFeishuMessage(binding domain.FeishuMessageBinding) (domain.FeishuMessageBinding, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	binding.MessageID = strings.TrimSpace(binding.MessageID)
-	binding.ConversationID = strings.TrimSpace(binding.ConversationID)
-	binding.ChatID = strings.TrimSpace(binding.ChatID)
-	binding.RootMessageID = strings.TrimSpace(binding.RootMessageID)
-	if binding.MessageID == "" || binding.ConversationID == "" {
-		return domain.FeishuMessageBinding{}, ErrInvalidInput
-	}
-	if _, ok := s.conversations[binding.ConversationID]; !ok {
-		return domain.FeishuMessageBinding{}, ErrNotFound
-	}
-	if binding.CreatedAt.IsZero() {
-		binding.CreatedAt = time.Now().UTC()
-	}
-	s.feishuBindings[binding.MessageID] = &binding
-	return binding, nil
-}
-
-func (s *MemoryStore) FeishuConversationByMessage(messageID string) (string, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	messageID = strings.TrimSpace(messageID)
-	if messageID == "" {
-		return "", false
-	}
-	binding, ok := s.feishuBindings[messageID]
-	if !ok || binding.ConversationID == "" {
-		return "", false
-	}
-	return binding.ConversationID, true
-}
-
-func (s *MemoryStore) RegisterAgentPushDevice(agentID string, device domain.PushDevice) (domain.PushDevice, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, ok := s.agentsByID[agentID]; !ok {
-		return domain.PushDevice{}, ErrNotFound
-	}
-	device.Token = strings.TrimSpace(device.Token)
-	device.Platform = strings.TrimSpace(device.Platform)
-	device.Provider = strings.TrimSpace(device.Provider)
-	if err := validatePushDevice(device); err != nil {
-		return domain.PushDevice{}, err
-	}
-	now := time.Now().UTC()
-	key := agentID + ":" + device.Provider + ":" + device.Platform + ":" + device.Token
-	if existing, ok := s.pushDevices[key]; ok {
-		existing.Enabled = true
-		existing.UpdatedAt = now
-		return *existing, nil
-	}
-	if device.ID == "" {
-		device.ID = "push_" + randomID(8)
-	}
-	if device.Provider == "" {
-		device.Provider = "uni-push"
-	}
-	device.AgentID = agentID
-	device.Enabled = true
-	device.CreatedAt = now
-	device.UpdatedAt = now
-	s.pushDevices[key] = &device
-	return device, nil
-}
-
-func (s *MemoryStore) PushDevicesForAgent(agentID string) []domain.PushDevice {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	result := []domain.PushDevice{}
-	for _, device := range s.pushDevices {
-		if device.AgentID == agentID && device.Enabled {
-			result = append(result, *device)
-		}
-	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].UpdatedAt.After(result[j].UpdatedAt)
-	})
-	return result
 }
 
 func (s *MemoryStore) Conversation(id string) (domain.Conversation, bool) {
@@ -1084,6 +1103,52 @@ func (s *MemoryStore) RatingSummary() domain.RatingSummary {
 	return buildRatingSummary(ratings)
 }
 
+func (s *MemoryStore) RatingSummaryForAgent(agentID string) domain.RatingSummary {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ratings := make([]domain.ServiceRating, 0)
+	for _, rating := range s.ratings {
+		if rating.AssignedAgentID == agentID {
+			ratings = append(ratings, *rating)
+		}
+	}
+	return buildRatingSummary(ratings)
+}
+
+func (s *MemoryStore) RatingSummariesByAgent() map[string]domain.RatingSummary {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	grouped := make(map[string][]domain.ServiceRating)
+	for _, rating := range s.ratings {
+		if rating.AssignedAgentID == "" {
+			continue
+		}
+		grouped[rating.AssignedAgentID] = append(grouped[rating.AssignedAgentID], *rating)
+	}
+	result := make(map[string]domain.RatingSummary, len(grouped))
+	for agentID, ratings := range grouped {
+		result[agentID] = buildRatingSummary(ratings)
+	}
+	return result
+}
+
+func (s *MemoryStore) RatingsForAgent(agentID string) []domain.ServiceRating {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]domain.ServiceRating, 0)
+	for _, rating := range s.ratings {
+		if rating.AssignedAgentID == agentID {
+			result = append(result, *rating)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.After(result[j].CreatedAt)
+	})
+	return result
+}
+
 func (s *MemoryStore) RecentRatings(limit int) []domain.ServiceRating {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1310,6 +1375,21 @@ func (s *MemoryStore) UpdateKeywordRule(id string, next domain.KeywordRule) (dom
 	return domain.KeywordRule{}, ErrNotFound
 }
 
+func (s *MemoryStore) DeleteKeywordRule(id string) (domain.KeywordRule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.keywordRules {
+		if s.keywordRules[i].ID != id {
+			continue
+		}
+		deleted := s.keywordRules[i]
+		s.keywordRules = append(s.keywordRules[:i], s.keywordRules[i+1:]...)
+		return deleted, nil
+	}
+	return domain.KeywordRule{}, ErrNotFound
+}
+
 func (s *MemoryStore) AISettings() domain.AISettings {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1356,51 +1436,6 @@ func (s *MemoryStore) UpdateAISettings(next domain.AISettings) (domain.AISetting
 		s.ai.NoReplyTimeoutSeconds = next.NoReplyTimeoutSeconds
 	}
 	return s.ai, nil
-}
-
-func (s *MemoryStore) FeishuSettings() domain.FeishuSettings {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.feishu
-}
-
-func (s *MemoryStore) UpdateFeishuSettings(next domain.FeishuSettings) (domain.FeishuSettings, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := validateFeishuSettings(next); err != nil {
-		return s.feishu, err
-	}
-	if strings.TrimSpace(next.BaseURL) != "" {
-		s.feishu.BaseURL = strings.TrimRight(strings.TrimSpace(next.BaseURL), "/")
-	}
-	if strings.TrimSpace(next.AppID) != "" {
-		s.feishu.AppID = strings.TrimSpace(next.AppID)
-	}
-	if strings.TrimSpace(next.AppSecret) != "" {
-		s.feishu.AppSecret = strings.TrimSpace(next.AppSecret)
-		s.feishu.AppSecretMasked = maskAPIKey(next.AppSecret)
-	}
-	if strings.TrimSpace(next.VerificationToken) != "" {
-		s.feishu.VerificationToken = strings.TrimSpace(next.VerificationToken)
-		s.feishu.VerificationTokenMasked = maskAPIKey(next.VerificationToken)
-	}
-	if strings.TrimSpace(next.EncryptKey) != "" {
-		s.feishu.EncryptKey = strings.TrimSpace(next.EncryptKey)
-		s.feishu.EncryptKeyMasked = maskAPIKey(next.EncryptKey)
-	}
-	if strings.TrimSpace(next.DefaultChatID) != "" {
-		s.feishu.DefaultChatID = strings.TrimSpace(next.DefaultChatID)
-	}
-	if strings.TrimSpace(next.AgentID) != "" {
-		s.feishu.AgentID = strings.TrimSpace(next.AgentID)
-	}
-	if next.TimeoutSeconds > 0 {
-		s.feishu.TimeoutSeconds = next.TimeoutSeconds
-	}
-	s.feishu.Enabled = next.Enabled
-	s.feishu.UpdatedAt = time.Now().UTC()
-	return s.feishu, nil
 }
 
 func (s *MemoryStore) BusinessHours() domain.BusinessHours {

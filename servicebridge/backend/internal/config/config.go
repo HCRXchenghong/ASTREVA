@@ -22,6 +22,8 @@ type Config struct {
 	RateLimitRPS       float64
 	RateLimitBurst     int
 	MetricsBearerToken string
+	FCMEndpoint        string
+	FCMAccessToken     string
 
 	OpenAIAPIKey      string
 	OpenAIBaseURL     string
@@ -39,6 +41,7 @@ type Config struct {
 	NodeID       string
 
 	UploadDriver        string
+	AppReleaseMaxBytes  int64
 	UploadDir           string
 	UploadPublicBaseURL string
 	UploadMaxBytes      int64
@@ -51,64 +54,48 @@ type Config struct {
 	S3ForcePathStyle    bool
 	S3KeyPrefix         string
 	S3PublicBaseURL     string
-
-	FeishuEnabled           bool
-	FeishuBaseURL           string
-	FeishuAppID             string
-	FeishuAppSecret         string
-	FeishuVerificationToken string
-	FeishuEncryptKey        string
-	FeishuDefaultChatID     string
-	FeishuAgentID           string
-	FeishuTimeoutSeconds    int
 }
 
 func Load() Config {
 	return Config{
-		HTTPAddr:                env("HTTP_ADDR", ":8080"),
-		Env:                     env("APP_ENV", "local"),
-		LogLevel:                parseLogLevel(env("LOG_LEVEL", "info")),
-		CORSAllowedOrigins:      env("CORS_ALLOWED_ORIGINS", "*"),
-		TrustedProxyCIDRs:       env("TRUSTED_PROXY_CIDRS", DefaultTrustedProxyCIDRs),
-		SecurityHeaders:         envBool("SECURITY_HEADERS", true),
-		RateLimitEnabled:        envBool("RATE_LIMIT_ENABLED", true),
-		RateLimitRPS:            envFloat64("RATE_LIMIT_RPS", 20),
-		RateLimitBurst:          envInt("RATE_LIMIT_BURST", 60),
-		MetricsBearerToken:      env("METRICS_BEARER_TOKEN", ""),
-		OpenAIAPIKey:            env("OPENAI_API_KEY", ""),
-		OpenAIBaseURL:           env("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-		OpenAIModel:             env("OPENAI_MODEL", "gpt-4o-mini"),
-		OpenAIAPIType:           env("OPENAI_API_TYPE", "chat_completions"),
-		DataEncryptionKey:       env("DATA_ENCRYPTION_KEY", ""),
-		BootstrapAdminPassword:  env("ADMIN_BOOTSTRAP_PASSWORD", "123456"),
-		BootstrapAgentPassword:  env("AGENT_BOOTSTRAP_PASSWORD", "123456"),
-		StoreDriver:             env("STORE_DRIVER", "memory"),
-		DatabaseURL:             env("DATABASE_URL", ""),
-		RedisAddr:               env("REDIS_ADDR", ""),
-		RedisChannel:            env("REDIS_CHANNEL", "customer-service:ws-events"),
-		NodeID:                  env("NODE_ID", defaultNodeID()),
-		UploadDriver:            env("UPLOAD_DRIVER", "local"),
-		UploadDir:               env("UPLOAD_DIR", "uploads"),
-		UploadPublicBaseURL:     env("UPLOAD_PUBLIC_BASE_URL", ""),
-		UploadMaxBytes:          envInt64("UPLOAD_MAX_BYTES", 10*1024*1024),
-		S3Endpoint:              env("S3_ENDPOINT", ""),
-		S3Region:                env("S3_REGION", "us-east-1"),
-		S3Bucket:                env("S3_BUCKET", ""),
-		S3AccessKeyID:           env("S3_ACCESS_KEY_ID", ""),
-		S3SecretAccessKey:       env("S3_SECRET_ACCESS_KEY", ""),
-		S3SessionToken:          env("S3_SESSION_TOKEN", ""),
-		S3ForcePathStyle:        envBool("S3_FORCE_PATH_STYLE", false),
-		S3KeyPrefix:             env("S3_KEY_PREFIX", "uploads"),
-		S3PublicBaseURL:         env("S3_PUBLIC_BASE_URL", ""),
-		FeishuEnabled:           envBool("FEISHU_ENABLED", false),
-		FeishuBaseURL:           env("FEISHU_BASE_URL", "https://open.feishu.cn"),
-		FeishuAppID:             env("FEISHU_APP_ID", ""),
-		FeishuAppSecret:         env("FEISHU_APP_SECRET", ""),
-		FeishuVerificationToken: env("FEISHU_VERIFICATION_TOKEN", ""),
-		FeishuEncryptKey:        env("FEISHU_ENCRYPT_KEY", ""),
-		FeishuDefaultChatID:     env("FEISHU_DEFAULT_CHAT_ID", ""),
-		FeishuAgentID:           env("FEISHU_AGENT_ID", "agent_feishu"),
-		FeishuTimeoutSeconds:    envInt("FEISHU_TIMEOUT_SECONDS", 8),
+		HTTPAddr:               env("HTTP_ADDR", ":8080"),
+		Env:                    env("APP_ENV", "local"),
+		LogLevel:               parseLogLevel(env("LOG_LEVEL", "info")),
+		CORSAllowedOrigins:     env("CORS_ALLOWED_ORIGINS", "*"),
+		TrustedProxyCIDRs:      env("TRUSTED_PROXY_CIDRS", DefaultTrustedProxyCIDRs),
+		SecurityHeaders:        envBool("SECURITY_HEADERS", true),
+		RateLimitEnabled:       envBool("RATE_LIMIT_ENABLED", true),
+		RateLimitRPS:           envFloat64("RATE_LIMIT_RPS", 20),
+		RateLimitBurst:         envInt("RATE_LIMIT_BURST", 60),
+		MetricsBearerToken:     env("METRICS_BEARER_TOKEN", ""),
+		FCMEndpoint:            env("FCM_ENDPOINT", ""),
+		FCMAccessToken:         env("FCM_ACCESS_TOKEN", ""),
+		OpenAIAPIKey:           env("OPENAI_API_KEY", ""),
+		OpenAIBaseURL:          env("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		OpenAIModel:            env("OPENAI_MODEL", "gpt-4o-mini"),
+		OpenAIAPIType:          env("OPENAI_API_TYPE", "chat_completions"),
+		DataEncryptionKey:      env("DATA_ENCRYPTION_KEY", ""),
+		BootstrapAdminPassword: env("ADMIN_BOOTSTRAP_PASSWORD", "123456"),
+		BootstrapAgentPassword: env("AGENT_BOOTSTRAP_PASSWORD", "123456"),
+		StoreDriver:            env("STORE_DRIVER", "memory"),
+		DatabaseURL:            env("DATABASE_URL", ""),
+		RedisAddr:              env("REDIS_ADDR", ""),
+		RedisChannel:           env("REDIS_CHANNEL", "customer-service:ws-events"),
+		NodeID:                 env("NODE_ID", defaultNodeID()),
+		UploadDriver:           env("UPLOAD_DRIVER", "local"),
+		AppReleaseMaxBytes:     envInt64("APP_RELEASE_MAX_BYTES", 200*1024*1024),
+		UploadDir:              env("UPLOAD_DIR", "uploads"),
+		UploadPublicBaseURL:    env("UPLOAD_PUBLIC_BASE_URL", ""),
+		UploadMaxBytes:         envInt64("UPLOAD_MAX_BYTES", 10*1024*1024),
+		S3Endpoint:             env("S3_ENDPOINT", ""),
+		S3Region:               env("S3_REGION", "us-east-1"),
+		S3Bucket:               env("S3_BUCKET", ""),
+		S3AccessKeyID:          env("S3_ACCESS_KEY_ID", ""),
+		S3SecretAccessKey:      env("S3_SECRET_ACCESS_KEY", ""),
+		S3SessionToken:         env("S3_SESSION_TOKEN", ""),
+		S3ForcePathStyle:       envBool("S3_FORCE_PATH_STYLE", false),
+		S3KeyPrefix:            env("S3_KEY_PREFIX", "uploads"),
+		S3PublicBaseURL:        env("S3_PUBLIC_BASE_URL", ""),
 	}
 }
 

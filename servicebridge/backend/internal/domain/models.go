@@ -75,8 +75,11 @@ type Agent struct {
 	Group                string      `json:"group"`
 	Password             string      `json:"-"`
 	Status               AgentStatus `json:"status"`
+	DeviceToken          string      `json:"device_token,omitempty"`
 	MaxConversations     int         `json:"max_conversations"`
 	CurrentConversations int         `json:"current_conversations"`
+	AvatarURL            string      `json:"avatar_url,omitempty"`
+	ManualSatisfactionRate *float64  `json:"manual_satisfaction_rate,omitempty"`
 	DisabledAt           *time.Time  `json:"disabled_at,omitempty"`
 	Created              time.Time   `json:"created_at"`
 	Updated              time.Time   `json:"updated_at"`
@@ -90,47 +93,12 @@ type Visitor struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-type PushDevice struct {
-	ID        string    `json:"id"`
-	AgentID   string    `json:"agent_id"`
-	Platform  string    `json:"platform"`
-	Token     string    `json:"token"`
-	Provider  string    `json:"provider"`
-	Enabled   bool      `json:"enabled"`
-	UpdatedAt time.Time `json:"updated_at"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 type AgentNotification struct {
 	AgentID        string             `json:"agent_id"`
 	ConversationID string             `json:"conversation_id"`
 	Title          string             `json:"title"`
 	Body           string             `json:"body"`
 	Status         ConversationStatus `json:"status"`
-}
-
-type FeishuSettings struct {
-	Enabled                 bool      `json:"enabled"`
-	BaseURL                 string    `json:"base_url"`
-	AppID                   string    `json:"app_id"`
-	AppSecret               string    `json:"-"`
-	AppSecretMasked         string    `json:"app_secret_masked"`
-	VerificationToken       string    `json:"-"`
-	VerificationTokenMasked string    `json:"verification_token_masked"`
-	EncryptKey              string    `json:"-"`
-	EncryptKeyMasked        string    `json:"encrypt_key_masked"`
-	DefaultChatID           string    `json:"default_chat_id"`
-	AgentID                 string    `json:"agent_id"`
-	TimeoutSeconds          int       `json:"timeout_seconds"`
-	UpdatedAt               time.Time `json:"updated_at,omitempty"`
-}
-
-type FeishuMessageBinding struct {
-	MessageID      string    `json:"message_id"`
-	ConversationID string    `json:"conversation_id"`
-	ChatID         string    `json:"chat_id"`
-	RootMessageID  string    `json:"root_message_id,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
 }
 
 type AuditEvent struct {
@@ -287,4 +255,20 @@ type VisitorSession struct {
 	Visitor         Visitor      `json:"visitor"`
 	Conversation    Conversation `json:"conversation"`
 	InitialMessages []Message    `json:"initial_messages"`
+}
+
+type AppRelease struct {
+	ID           string    `json:"id"`
+	Platform     string    `json:"platform"`
+	VersionName  string    `json:"version_name"`
+	VersionCode  int64     `json:"version_code"`
+	FileName     string    `json:"file_name"`
+	FilePath     string    `json:"-"`
+	DownloadURL  string    `json:"download_url,omitempty"`
+	FileSize     int64     `json:"file_size"`
+	Checksum     string    `json:"checksum"`
+	ReleaseNotes string    `json:"release_notes"`
+	ForceUpdate  bool      `json:"force_update"`
+	Enabled      bool      `json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
 }

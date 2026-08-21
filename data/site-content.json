@@ -97,19 +97,19 @@
     },
     "hero": {
       "eyebrow": "最快的排水系统。绝对的。",
-      "title": "hongmeng",
+      "title": "星渡 ASTREVA",
       "trademark": "TM",
       "subtitle": "建筑与市政排水领域的创新方案",
       "backgroundImage": "https://images.unsplash.com/photo-1541888086425-d81bb19240f5?auto=format&fit=crop&q=80&w=2000",
       "backgroundVideo": "https://assets.mixkit.co/videos/4010/4010-1080.mp4",
-      "primaryCta": "啊啊啊啊啊啊啊啊",
-      "secondaryCta": "播放视频2",
+      "primaryCta": "探索产品",
+      "secondaryCta": "播放视频",
       "videoUrl": "https://youtube.com/shorts/XhHzoY3kG54?feature=share",
       "videoTitle": "星渡ASTREVA 宣传视频",
       "videoPreviewLabel": "宣传视频播放器 (预览)",
       "videoOpenExternalLabel": "无法播放？在 YouTube 打开",
       "videoCloseLabel": "关闭视频",
-      "primaryHref": "/support/"
+      "primaryHref": "/products/"
     },
     "partnerLabel": "我们的合作伙伴:",
     "featuredProducts": {

@@ -476,21 +476,6 @@ func TestAdminTransferConversation(t *testing.T) {
 	}
 }
 
-func TestAgentPushDevice(t *testing.T) {
-	server := newTestRouter()
-	agentToken := loginForToken(t, server, "/api/agent/login", "admin", "123456")
-
-	out := doJSON(t, server, http.MethodPost, "/api/agent/push-device", agentToken, map[string]any{
-		"platform": "ios",
-		"provider": "uni-push",
-		"token":    "push-token-1",
-	}, http.StatusOK)
-	device := out["device"].(map[string]any)
-	if got := device["token"]; got != "push-token-1" {
-		t.Fatalf("unexpected push token: %v", got)
-	}
-}
-
 func TestVisitorRatingAndAdminSummary(t *testing.T) {
 	server := newTestRouter()
 	adminToken := loginForToken(t, server, "/api/admin/login", "superadmin", "123456")

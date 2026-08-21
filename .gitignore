@@ -4,6 +4,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+!.env.*.example
 data/admin-users.json
 data/leads.json
 dist/
@@ -17,3 +18,4 @@ cms/dist/
 cms/public/uploads/
 servicebridge/backend/customer-service
 servicebridge/backend/coverage.out
+servicebridge/backend/uploads/

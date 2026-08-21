@@ -20,7 +20,7 @@ export SERVICEBRIDGE_CORS_ALLOWED_ORIGINS="${SERVICEBRIDGE_CORS_ALLOWED_ORIGINS:
 export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$SERVICEBRIDGE_CORS_ALLOWED_ORIGINS}"
 export FRAME_ANCESTORS="${FRAME_ANCESTORS:-http://127.0.0.1:4321}"
 export STORE_DRIVER="${STORE_DRIVER:-memory}"
-export HTTP_ADDR="${HTTP_ADDR:-127.0.0.1:8080}"
+export HTTP_ADDR="${HTTP_ADDR:-0.0.0.0:8080}"
 
 pids=()
 
@@ -49,7 +49,7 @@ start_service frontend-static node scripts/static-server.mjs
 start_service admin npm run dev:admin
 start_service rebuild-webhook npm run rebuild:webhook
 start_service servicebridge-backend env -u DATABASE_URL STORE_DRIVER="$STORE_DRIVER" HTTP_ADDR="$HTTP_ADDR" CORS_ALLOWED_ORIGINS="$CORS_ALLOWED_ORIGINS" FRAME_ANCESTORS="$FRAME_ANCESTORS" npm run servicebridge:backend
-start_service servicebridge-user-web python3 -m http.server 5173 --bind 127.0.0.1 --directory "$ROOT_DIR/servicebridge/apps/user-web"
+start_service servicebridge-user-web python3 -m http.server 5173 --bind 0.0.0.0 --directory "$ROOT_DIR/servicebridge/apps/user-web"
 
 printf '[astreva] local stack launched. Logs are in %s\n' "$LOG_DIR"
 printf '[astreva] frontend: http://127.0.0.1:4321/\n'

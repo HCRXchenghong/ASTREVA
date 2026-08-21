@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -181,6 +183,8 @@ func extension(mimeType string) string {
 		return ".wav"
 	case "audio/aac":
 		return ".aac"
+	case "application/vnd.android.package-archive":
+		return ".apk"
 	default:
 		return ""
 	}
@@ -218,6 +222,8 @@ func mimeTypeFromFilename(filename string) string {
 		return "image/webp"
 	case ".webm":
 		return "audio/webm"
+	case ".apk":
+		return "application/vnd.android.package-archive"
 	case ".mp3":
 		return "audio/mpeg"
 	case ".m4a":
@@ -249,4 +255,54 @@ func nonEmpty(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+type ReleaseResult struct {
+	Result
+	Checksum string `json:"checksum"`
+}
+
+func SaveAppReleaseHTTP(w http.ResponseWriter, r *http.Request, cfg config.Config, maxBytes int64) (ReleaseResult, error) {
+	if maxBytes <= 0 {
+		maxBytes = 200 * 1024 * 1024
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+1024)
+	if err := r.ParseMultipartForm(maxBytes); err != nil {
+		return ReleaseResult{}, store.ErrInvalidInput
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		return ReleaseResult{}, store.ErrInvalidInput
+	}
+	defer file.Close()
+
+	content, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return ReleaseResult{}, err
+	}
+	if int64(len(content)) > maxBytes {
+		return ReleaseResult{}, store.ErrInvalidInput
+	}
+	mimeType := detectUploadMimeType(content, header.Header.Get("Content-Type"), header.Filename)
+	allowedMime := mimeType == "application/vnd.android.package-archive" || mimeType == "application/octet-stream" || mimeType == "application/zip"
+	if !allowedMime && !strings.EqualFold(filepath.Ext(header.Filename), ".apk") {
+		return ReleaseResult{}, store.ErrInvalidInput
+	}
+	if mimeType == "application/octet-stream" || mimeType == "application/zip" {
+		if !strings.EqualFold(filepath.Ext(header.Filename), ".apk") {
+			return ReleaseResult{}, store.ErrInvalidInput
+		}
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+	key := "releases/" + time.Now().UTC().Format("20060102") + "/" + randomName() + ".apk"
+	var result Result
+	if strings.EqualFold(strings.TrimSpace(cfg.UploadDriver), "s3") {
+		result, err = saveS3(r.Context(), cfg, key, "application/vnd.android.package-archive", content)
+	} else {
+		result, err = saveLocal(cfg, key, "application/vnd.android.package-archive", content)
+	}
+	if err != nil {
+		return ReleaseResult{}, err
+	}
+	return ReleaseResult{Result: result, Checksum: checksum}, nil
 }

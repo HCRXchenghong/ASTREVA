@@ -1,6 +1,6 @@
-# Load Test
+# ServiceBridge 压测
 
-这里放 5000 WebSocket 并发压测脚本。
+本目录提供 WebSocket 阶梯压测和目标并发验收脚本。脚本存在不代表生产容量已经验证，结果必须来自目标部署环境。
 
 压测必须覆盖：
 

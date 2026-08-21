@@ -35,6 +35,9 @@ type Store interface {
 	TransferConversation(actor domain.AuthSession, conversationID, agentID, group string) (domain.Conversation, domain.Message, error)
 	SubmitRating(conversationID string, score int, tags []string, comment string) (domain.ServiceRating, error)
 	RatingSummary() domain.RatingSummary
+	RatingSummaryForAgent(agentID string) domain.RatingSummary
+	RatingSummariesByAgent() map[string]domain.RatingSummary
+	RatingsForAgent(agentID string) []domain.ServiceRating
 	RecentRatings(limit int) []domain.ServiceRating
 	DashboardStats() domain.DashboardStats
 	RecordAuditEvent(event domain.AuditEvent) domain.AuditEvent
@@ -45,24 +48,29 @@ type Store interface {
 	KeywordRules() []domain.KeywordRule
 	CreateKeywordRule(next domain.KeywordRule) (domain.KeywordRule, error)
 	UpdateKeywordRule(id string, next domain.KeywordRule) (domain.KeywordRule, error)
+	DeleteKeywordRule(id string) (domain.KeywordRule, error)
 	AISettings() domain.AISettings
 	UpdateAISettings(next domain.AISettings) (domain.AISettings, error)
-	FeishuSettings() domain.FeishuSettings
-	UpdateFeishuSettings(next domain.FeishuSettings) (domain.FeishuSettings, error)
 	BusinessHours() domain.BusinessHours
 	UpdateBusinessHours(next domain.BusinessHours) (domain.BusinessHours, error)
 	ChangePassword(session domain.AuthSession, currentPassword, newPassword string) error
+	RegisterAgentDeviceToken(agentID, deviceToken string) (domain.Agent, error)
+
+	AppReleases(platform string) []domain.AppRelease
+	CreateAppRelease(next domain.AppRelease) (domain.AppRelease, error)
+	UpdateAppRelease(id string, next domain.AppRelease) (domain.AppRelease, error)
+	DeleteAppRelease(id string) (domain.AppRelease, error)
+	AppReleaseByID(id string) (domain.AppRelease, bool)
 
 	CreateAgent(next domain.Agent, password string) (domain.Agent, error)
 	UpdateAgent(id string, next domain.Agent) (domain.Agent, error)
+	UpdateAgentAvatar(agentID, avatarURL string) (domain.Agent, error)
+	SetAgentManualRating(agentID string, rate float64) (domain.Agent, error)
+	ClearAgentManualRating(agentID string) (domain.Agent, error)
+	ResetAgentRatings(agentID string) (domain.Agent, error)
 	ResetAgentPassword(id, password string) (domain.Agent, error)
 	DisableAgent(id string) (domain.Agent, error)
 	DeleteAgent(id string) (domain.Agent, error)
-	EnsureFeishuAgent(id, name string) (domain.Agent, error)
-	BindFeishuMessage(binding domain.FeishuMessageBinding) (domain.FeishuMessageBinding, error)
-	FeishuConversationByMessage(messageID string) (string, bool)
-	RegisterAgentPushDevice(agentID string, device domain.PushDevice) (domain.PushDevice, error)
-	PushDevicesForAgent(agentID string) []domain.PushDevice
 }
 
 type MessagePage struct {

@@ -42,13 +42,6 @@ services:
       RATE_LIMIT_ENABLED: "${RATE_LIMIT_ENABLED:-false}"
       UPLOAD_DRIVER: "${UPLOAD_DRIVER:-local}"
       UPLOAD_DIR: "/uploads"
-      FEISHU_ENABLED: "${FEISHU_ENABLED:-false}"
-      FEISHU_APP_ID: "${FEISHU_APP_ID:-}"
-      FEISHU_APP_SECRET: "${FEISHU_APP_SECRET:-}"
-      FEISHU_VERIFICATION_TOKEN: "${FEISHU_VERIFICATION_TOKEN:-}"
-      FEISHU_ENCRYPT_KEY: "${FEISHU_ENCRYPT_KEY:-}"
-      FEISHU_DEFAULT_CHAT_ID: "${FEISHU_DEFAULT_CHAT_ID:-}"
-      FEISHU_AGENT_ID: "${FEISHU_AGENT_ID:-agent_feishu}"
     volumes:
       - ../backend:/app
       - uploads-data:/uploads
@@ -71,13 +64,6 @@ services:
       RATE_LIMIT_ENABLED: "${RATE_LIMIT_ENABLED:-false}"
       UPLOAD_DRIVER: "${UPLOAD_DRIVER:-local}"
       UPLOAD_DIR: "/uploads"
-      FEISHU_ENABLED: "${FEISHU_ENABLED:-false}"
-      FEISHU_APP_ID: "${FEISHU_APP_ID:-}"
-      FEISHU_APP_SECRET: "${FEISHU_APP_SECRET:-}"
-      FEISHU_VERIFICATION_TOKEN: "${FEISHU_VERIFICATION_TOKEN:-}"
-      FEISHU_ENCRYPT_KEY: "${FEISHU_ENCRYPT_KEY:-}"
-      FEISHU_DEFAULT_CHAT_ID: "${FEISHU_DEFAULT_CHAT_ID:-}"
-      FEISHU_AGENT_ID: "${FEISHU_AGENT_ID:-agent_feishu}"
     volumes:
       - ../backend:/app
       - uploads-data:/uploads

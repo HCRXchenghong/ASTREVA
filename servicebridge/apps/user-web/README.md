@@ -1,34 +1,14 @@
-# 用户端 Web
+# ServiceBridge 访客端
 
-用户端 Web 按 `用户端前端UI示例.html` 一比一实现。
-
-当前入口：
-
-- `index.html`
-- `assets/tailwind.css`：已编译好的本地 Tailwind 样式，生产不依赖 `cdn.tailwindcss.com`。
-- `assets/vendor/`：用户端运行所需的 GSAP、Font Awesome 等本地静态资源。
-
-后端地址配置：
-
-- 默认同源访问；本地 `file://` 或静态端口访问时默认连 `http://127.0.0.1:8080`。
-- 生产独立域名部署时，可修改 `index.html` 的 `customer-service-api-base` meta，或在页面加载前注入 `window.CUSTOMER_SERVICE_API_BASE = 'https://api.example.com'`。
-
-运行方式：
+无构建依赖的静态访客聊天页面，入口为 `index.html`。
 
 ```bash
-cd apps/user-web
-npx serve .
+python3 -m http.server 5173 --bind 127.0.0.1 --directory servicebridge/apps/user-web
 ```
 
-如调整了 HTML 中的 Tailwind 类名，重新生成本地 CSS：
+- 独立访问：`http://127.0.0.1:5173/`
+- 官网嵌入：`http://127.0.0.1:5173/?embed=1`
 
-```bash
-npx tailwindcss@3.4.17 -i apps/user-web/tailwind.input.css -o apps/user-web/assets/tailwind.css --content apps/user-web/index.html --minify
-```
+API 地址优先读取 `<meta name="customer-service-api-base">` 或 `window.CUSTOMER_SERVICE_API_BASE`；未配置时，本地非 `8080` 端口会连接同主机的 `8080`，生产同域部署则使用当前 origin。
 
-实现要求：
-
-- 手机浏览器全屏聊天体验。
-- 电脑浏览器居中手机外壳体验。
-- PC 端允许在现有样式基础上优化尺寸、居中和最大高度。
-- 聊天气泡、底部面板、Toast、评价弹层和状态提示保持示例风格。
+页面支持会话恢复、历史分页、文本/表情/图片/语音、撤回、联系方式、评价和结束会话。嵌入模式通过 `postMessage` 向官网报告 `servicebridge:ready` 和未读事件；宿主页面必须同时校验消息来源和 iframe 窗口。
