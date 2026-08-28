@@ -7,16 +7,7 @@ const bootstrap = JSON.stringify({ source: content, apiBase }).replace(/</g, '\\
 const localization = content.site.localization;
 ---
 
-<div class="site-language-control" id="astreva-language-control" dir="ltr" role="group" aria-label={localization.switchAriaLabel}>
-  <button type="button" class="lang-flag" data-locale="zh-CN" aria-label={localization.chineseLabel} title={localization.chineseLabel}>
-    <img src="/flags/cn.svg" alt="" loading="eager" />
-  </button>
-  <button type="button" class="lang-flag" data-locale="en" aria-label={localization.englishLabel} title={localization.englishLabel}>
-    <img src="/flags/gb.svg" alt="" loading="eager" />
-  </button>
-  <button type="button" class="lang-flag" data-locale="ar" aria-label={localization.arabicLabel} title={localization.arabicLabel}>
-    <img src="/flags/sa.svg" alt="" loading="eager" />
-  </button>
+<div class="site-language-control" id="astreva-language-control" dir="ltr">
   <span id="astreva-language-state" aria-live="polite"></span>
 </div>
 <script id="astreva-language-bootstrap" type="application/json" set:html={bootstrap}></script>
@@ -25,7 +16,6 @@ const localization = content.site.localization;
     const supported = new Set(['zh-CN', 'en', 'ar']);
     const storageKey = 'astreva-site-locale';
     const control = document.querySelector('#astreva-language-control');
-    const flagButtons = Array.from(control.querySelectorAll('.lang-flag'));
     const stateLabel = document.querySelector('#astreva-language-state');
     const bootstrap = JSON.parse(document.querySelector('#astreva-language-bootstrap').textContent || '{}');
     const sourceContent = bootstrap.source;
@@ -59,7 +49,7 @@ const localization = content.site.localization;
     }
 
     function excluded(element) {
-      return !element || Boolean(element.closest('#astreva-language-control,script,style,noscript,code,pre,textarea,select'));
+      return !element || Boolean(element.closest('#astreva-language-control,[data-lang-switch-root],script,style,noscript,code,pre,textarea,select'));
     }
 
     function translatedValue(source) {
@@ -127,11 +117,7 @@ const localization = content.site.localization;
     function setDocumentLocale(locale) {
       document.documentElement.lang = locale;
       document.documentElement.dir = locale === 'ar' ? 'rtl' : 'ltr';
-      flagButtons.forEach((button) => {
-        const active = button.dataset.locale === locale;
-        button.classList.toggle('active', active);
-        button.setAttribute('aria-pressed', String(active));
-      });
+      window.dispatchEvent(new CustomEvent('astreva:locale', { detail: locale }));
       control.dataset.locale = locale;
     }
 
@@ -146,7 +132,6 @@ const localization = content.site.localization;
 
     async function switchLocale(locale, manual = false) {
       if (!supported.has(locale)) locale = 'zh-CN';
-      flagButtons.forEach((button) => { button.disabled = true; });
       stateLabel.textContent = sourceContent.site.localization.switchingText;
       stateLabel.className = '';
       try {
@@ -166,7 +151,7 @@ const localization = content.site.localization;
         stateLabel.textContent = sourceContent.site.localization.unavailableText;
         stateLabel.className = 'error';
         stateLabel.title = error?.message || String(error);
-      } finally { flagButtons.forEach((button) => { button.disabled = false; }); }
+      }
     }
 
     const observer = new MutationObserver((mutations) => {
@@ -178,7 +163,10 @@ const localization = content.site.localization;
     });
     scan(document.documentElement);
     observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
-    flagButtons.forEach((button) => button.addEventListener('click', () => switchLocale(button.dataset.locale, true)));
+    window.AstrevaLanguage = {
+      switch: (locale) => switchLocale(locale, true),
+      get: () => currentLocale
+    };
 
     const saved = localStorage.getItem(storageKey);
     if (supported.has(saved)) switchLocale(saved, false);
@@ -192,15 +180,11 @@ const localization = content.site.localization;
 <style is:global>
   .site-language-control{position:fixed;z-index:45;top:106px;right:18px;display:flex;align-items:center;gap:8px;padding:8px 12px;border:2px solid #0a66c2;border-radius:999px;background:#fff;box-shadow:0 12px 32px rgba(10,77,140,.25),0 2px 6px rgba(15,23,42,.10);animation:astreva-lang-pop .45s ease .25s both}
   @keyframes astreva-lang-pop{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
-  .site-language-control .lang-flag{display:grid;place-items:center;width:42px;height:32px;padding:0;border:2px solid transparent;border-radius:9px;background:transparent;cursor:pointer;transition:transform .15s ease,border-color .15s ease,background .15s ease,box-shadow .15s ease}
-  .site-language-control .lang-flag img{display:block;width:30px;height:22px;border-radius:3px;box-shadow:0 0 0 1px rgba(15,23,42,.18)}
-  .site-language-control .lang-flag:hover{transform:translateY(-2px)}
-  .site-language-control .lang-flag.active{border-color:#0a66c2;background:#eaf3fd;box-shadow:0 3px 10px rgba(10,102,194,.28)}
-  .site-language-control .lang-flag:disabled{opacity:.55;cursor:wait;transform:none}
-  .site-language-control span{position:absolute;top:calc(100% + 5px);right:8px;font-size:11px;color:#475569;white-space:nowrap;background:rgba(255,255,255,.96);padding:2px 8px;border-radius:7px;box-shadow:0 3px 10px rgba(15,23,42,.14)}
-  .site-language-control span:empty{display:none}
+  .site-language-control{pointer-events:none;top:106px;right:18px;display:block;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;animation:none}
+  .site-language-control span{display:none;font-size:12px;font-weight:700;color:#0a4d8c;background:rgba(255,255,255,.97);border:1px solid #0a66c2;padding:4px 12px;border-radius:999px;box-shadow:0 8px 24px rgba(10,77,140,.25)}
+  .site-language-control span:not(:empty){display:inline-block}
   .site-language-control span.error{color:#b42318}
   html[dir="rtl"] body{direction:rtl;text-align:right}
   html[dir="rtl"] .site-language-control{direction:ltr}
-  @media(max-width:767px){.site-language-control{top:104px;right:12px;gap:6px;padding:6px 9px}.site-language-control .lang-flag{width:36px;height:28px}.site-language-control .lang-flag img{width:26px;height:19px}}
+  @media(max-width:767px){.site-language-control{top:104px;right:12px}}
 </style>

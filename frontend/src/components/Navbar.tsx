@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, ArrowUpRight, BookOpen, ChevronRight, FileText, Menu, Search, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRight, ArrowUpRight, BookOpen, ChevronDown, ChevronRight, FileText, Menu, Search, X } from 'lucide-react';
 import type { Category, Product, SiteSettings } from '../lib/types';
 
 type Props = {
@@ -8,6 +8,86 @@ type Props = {
   products: Product[];
   currentPath: string;
 };
+
+const LANGUAGE_ORDER = [
+  { locale: 'en', flag: '/flags/us.svg' },
+  { locale: 'ar', flag: '/flags/sa.svg' },
+  { locale: 'zh-CN', flag: '/flags/cn.svg' }
+];
+
+function LanguageSwitcher({ site }: { site: SiteSettings }) {
+  const [locale, setLocale] = useState('zh-CN');
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const labels: Record<string, string> = {
+    'zh-CN': site.localization.chineseLabel,
+    en: site.localization.englishLabel,
+    ar: site.localization.arabicLabel
+  };
+
+  useEffect(() => {
+    const onLocale = (event: Event) => setLocale(String((event as CustomEvent).detail || 'zh-CN'));
+    window.addEventListener('astreva:locale', onLocale);
+    const api = (window as unknown as { AstrevaLanguage?: { get?: () => string } }).AstrevaLanguage;
+    if (api && api.get) setLocale(api.get() || 'zh-CN');
+    return () => window.removeEventListener('astreva:locale', onLocale);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const current = LANGUAGE_ORDER.find((item) => item.locale === locale) || LANGUAGE_ORDER[2];
+  const others = LANGUAGE_ORDER.filter((item) => item.locale !== current.locale);
+
+  return (
+    <div ref={rootRef} className="relative" data-lang-switch-root>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={labels[current.locale]}
+        className="flex h-11 items-center gap-1.5 rounded-xl border-2 border-[#0a66c2] bg-white px-2.5 shadow-[0_4px_14px_rgba(10,102,194,0.35)] transition-transform hover:scale-105"
+      >
+        <img src={current.flag} alt="" className="h-6 w-8 rounded-[4px] shadow-[0_0_0_1px_rgba(15,23,42,0.2)]" />
+        <ChevronDown size={15} className={'text-[#0a66c2] transition-transform ' + (open ? 'rotate-180' : '')} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-[52px] z-50 flex flex-col gap-1.5 rounded-xl border-2 border-[#0a66c2] bg-white p-2 shadow-[0_12px_32px_rgba(10,77,140,0.28)]">
+          {others.map((item) => (
+            <button
+              key={item.locale}
+              type="button"
+              title={labels[item.locale]}
+              aria-label={labels[item.locale]}
+              onClick={() => {
+                setOpen(false);
+                const api = (window as unknown as { AstrevaLanguage?: { switch?: (locale: string) => void } }).AstrevaLanguage;
+                if (api && api.switch) api.switch(item.locale);
+              }}
+              className="grid h-10 w-12 place-items-center rounded-lg border-2 border-transparent transition-colors hover:border-[#0a66c2] hover:bg-[#eaf3fd]"
+            >
+              <img src={item.flag} alt="" className="h-5 w-7 rounded-[3px] shadow-[0_0_0_1px_rgba(15,23,42,0.2)]" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Navbar({ site, categories, products, currentPath }: Props) {
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
@@ -108,10 +188,11 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
                             >
                               {category.name}
                             </a>
-                          );
-                        })}
-                      </div>
-                    </div>
+              );
+            })}
+          </div>
+        </div>
+
                   </div>
 
                   <div className="mx-auto max-w-7xl px-7 py-7">
@@ -164,6 +245,9 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
           ))}
         </div>
 
+        <div className="flex items-center gap-3 md:gap-5">
+          <LanguageSwitcher site={site} />
+
         <a href={`tel:${site.phone}`} className="hidden items-center gap-2.5 rounded-lg bg-[#0a66c2] px-7 py-3 text-[17px] font-medium text-white shadow-lg shadow-blue-500/30 transition-colors hover:bg-[#084b8c] md:flex">
           {site.phone} <ArrowUpRight size={19} />
         </a>
@@ -171,6 +255,7 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
         <button className="text-gray-800 md:hidden" onClick={() => setMobileOpen((value) => !value)} aria-label={site.navigation.mobileMenuLabel} aria-expanded={mobileOpen}>
           {mobileOpen ? <X size={34} /> : <Menu size={34} />}
         </button>
+        </div>
       </div>
 
       {mobileOpen && (
