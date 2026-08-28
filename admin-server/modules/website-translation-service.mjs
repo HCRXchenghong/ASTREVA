@@ -3,10 +3,12 @@ const TARGET_LOCALES = ['en', 'ar'];
 const API_TYPES = new Set(['chat_completions', 'responses', 'anthropic_messages']);
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
-// 最后一档长退避用于扛过上游短暂整体不可用（实测出现过约 40 秒的连续 502/断连窗口）。
-const RETRY_DELAYS_MS = [1500, 4000, 10000, 20000, 60000];
+// 批次内快速失败：上游网关偶发 502/504 时只做短重试，长不可用窗口交给任务级自动重排。
+const RETRY_DELAYS_MS = [1500, 5000, 15000];
+// 任务级重排退避：扛过上游账号池数分钟的临时排除窗口（实测网关 "no available accounts" 返回 502）。
+const JOB_REQUEUE_DELAYS_MS = [60000, 120000, 240000];
 // 连续批次之间短暂停顿，降低上游网关在高频请求下返回 502 的概率。
-const BATCH_GAP_MS = 1000;
+const BATCH_GAP_MS = 1500;
 
 const DEFAULT_CONFIG = Object.freeze({
   enabled: true,
@@ -202,7 +204,10 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
       headers: headersFor(config.apiType, apiKey)
     }, config.timeoutMs, logger);
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body?.error?.message || body?.message || `获取模型失败（HTTP ${response.status}）`);
+    if (!response.ok) {
+      const detail = body?.error?.message || body?.message || '';
+      throw new Error(detail ? `HTTP ${response.status}: ${detail}` : `获取模型失败（HTTP ${response.status}）`);
+    }
     const raw = Array.isArray(body?.data) ? body.data : (Array.isArray(body?.models) ? body.models : []);
     const models = [...new Set(raw.map((item) => String(item?.id || item?.name || item || '').trim()).filter(Boolean))].sort();
     if (!models.length) throw new Error('上游返回成功，但没有可用模型。');
@@ -229,7 +234,10 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
       body: JSON.stringify(body)
     }, config.timeoutMs, logger);
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload?.error?.message || payload?.message || `翻译失败（HTTP ${response.status}）`);
+    if (!response.ok) {
+      const detail = payload?.error?.message || payload?.message || '';
+      throw new Error(detail ? `HTTP ${response.status}: ${detail}` : `翻译失败（HTTP ${response.status}）`);
+    }
     const translated = parseJsonArray(extractText(payload, config.apiType));
     if (translated.length !== batch.length) throw new Error(`翻译上游返回 ${translated.length} 项，预期 ${batch.length} 项。`);
     const result = new Map(translated.map((item) => [String(item?.id || ''), String(item?.text || '')]));
@@ -253,6 +261,7 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
     translatedContent.site.locale = locale;
     for (let index = 0; index < entries.length; index += config.batchSize) {
       if (index > 0) await new Promise((resolve) => setTimeout(resolve, BATCH_GAP_MS));
+      if (latestRevision.get(locale) !== sourceRevision) return;
       const result = await requestBatch(config, apiKey, locale, entries.slice(index, index + config.batchSize));
       for (const [path, value] of result) setAtPath(translatedContent, path, value);
     }
@@ -267,11 +276,38 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
     });
   }
 
+  function isRetryableUpstreamError(error) {
+    if (error?.code === 'TRANSLATION_UNCONFIGURED') return false;
+    const message = String(error?.message || '');
+    if (/HTTP (408|429|500|502|503|504)/.test(message)) return true;
+    if (/temporarily unavailable|service unavailable|bad gateway|gateway timeout|no available accounts|overloaded|internal server error/i.test(message)) return true;
+    return /fetch failed|timeout|aborted|network|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(message);
+  }
+
   async function runJob(job) {
     try {
       await translate(job.locale, job.content, job.sourceRevision);
     } catch (error) {
       if (latestRevision.get(job.locale) !== job.sourceRevision) return;
+      const attempts = Number(job.attempts || 0);
+      if (isRetryableUpstreamError(error) && attempts < JOB_REQUEUE_DELAYS_MS.length) {
+        const delay = JOB_REQUEUE_DELAYS_MS[attempts];
+        logger.warn('[网站翻译] ' + job.locale + ' 上游暂不可用（' + error.message + '），' + delay + 'ms 后自动重排（第 ' + (attempts + 1) + ' 次）。');
+        await platformStore.saveContentTranslation(job.locale, {
+          content: job.content,
+          sourceRevision: job.sourceRevision,
+          status: 'pending',
+          lastError: '',
+          startedAt: null,
+          finishedAt: null
+        }).catch(() => {});
+        setTimeout(() => {
+          if (latestRevision.get(job.locale) !== job.sourceRevision) return;
+          queued.set(job.locale, { ...job, attempts: attempts + 1 });
+          queueMicrotask(drain);
+        }, delay);
+        return;
+      }
       const previous = await platformStore.readContentTranslation(job.locale);
       await platformStore.saveContentTranslation(job.locale, {
         ...previous,
