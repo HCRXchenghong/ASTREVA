@@ -1,10 +1,11 @@
-import { fallbackContent } from '../data/fallback';
-import type { Product, SiteContent, StaticPage } from './types';
+import type { Product, SiteContent, StaticPageForSlug, StaticPageSlug } from './types';
 
-const CONTENT_API_URL = (process.env.PUBLIC_ADMIN_URL || 'http://127.0.0.1:1337').replace(/\/$/, '');
+// CONTENT_API_URL 仅供静态构建进程访问内网后台，避免把容器内部地址注入浏览器代码。
+const CONTENT_API_URL = (process.env.CONTENT_API_URL || process.env.PUBLIC_ADMIN_URL || 'http://127.0.0.1:1337').replace(/\/$/, '');
+export const PUBLIC_CONTENT_API_URL = (process.env.PUBLIC_ADMIN_URL || CONTENT_API_URL).replace(/\/$/, '');
 const CONTENT_API_TOKEN = process.env.CONTENT_API_TOKEN || '';
 const CONTENT_BRIDGE_URL = normalizeServiceBridgeUrl(
-  process.env.PUBLIC_SERVICEBRIDGE_URL || 'http://127.0.0.1:5173'
+  process.env.PUBLIC_SERVICEBRIDGE_URL || ''
 );
 
 function normalizeServiceBridgeUrl(value?: string) {
@@ -24,11 +25,26 @@ function normalizeContent(content: SiteContent): SiteContent {
     site: {
       ...content.site,
       serviceBridgeUrl:
-        normalizeServiceBridgeUrl(content.site.serviceBridgeUrl) ||
         CONTENT_BRIDGE_URL ||
-        fallbackContent.site.serviceBridgeUrl
+        normalizeServiceBridgeUrl(content.site.serviceBridgeUrl)
     }
   };
+}
+
+function isSiteContent(value: unknown): value is SiteContent {
+  const content = value as SiteContent | null;
+  return Boolean(
+    content &&
+    typeof content === 'object' &&
+    content.site &&
+    content.home &&
+    content.productCenter &&
+    content.support &&
+    Array.isArray(content.categories) &&
+    Array.isArray(content.products) &&
+    Array.isArray(content.faqs) &&
+    Array.isArray(content.staticPages)
+  );
 }
 
 async function requestContent(): Promise<SiteContent> {
@@ -42,14 +58,7 @@ async function requestContent(): Promise<SiteContent> {
 }
 
 export async function getContent(): Promise<SiteContent> {
-  if (!CONTENT_API_URL) return normalizeContent(fallbackContent);
-
-  try {
-    return normalizeContent(await requestContent());
-  } catch (error) {
-    console.warn('[content] Admin content unavailable, using fallback content:', error);
-    return normalizeContent(fallbackContent);
-  }
+  return normalizeContent(await requestContent());
 }
 
 export function productsForCategory(content: SiteContent, categorySlug: string) {
@@ -63,6 +72,8 @@ export function featuredProducts(content: SiteContent, limit = 3) {
   return (featured.length ? featured : content.products).sort((a, b) => a.sortOrder - b.sortOrder).slice(0, limit);
 }
 
-export function staticPage(content: SiteContent, slug: StaticPage['slug']) {
-  return content.staticPages.find((page) => page.slug === slug) ?? fallbackContent.staticPages.find((page) => page.slug === slug)!;
+export function staticPage<TSlug extends StaticPageSlug>(content: SiteContent, slug: TSlug): StaticPageForSlug<TSlug> {
+  const page = content.staticPages.find((item) => item.slug === slug);
+  if (!page) throw new Error(`站点内容缺少静态页面：${slug}`);
+  return page as StaticPageForSlug<TSlug>;
 }

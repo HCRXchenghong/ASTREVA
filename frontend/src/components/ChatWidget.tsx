@@ -4,15 +4,15 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 type ChatCopy = {
   title: string;
   ariaLabel: string;
-  loadingText?: string;
-  errorTitle?: string;
-  errorDescription?: string;
-  initialUnreadCount?: number;
+  loadingText: string;
+  errorTitle: string;
+  errorDescription: string;
+  initialUnreadCount: number;
 };
 
 export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUrl: string; chat: ChatCopy }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(Number(chat.initialUnreadCount ?? 1));
+  const [unreadCount, setUnreadCount] = useState(Number(chat.initialUnreadCount));
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const envBridgeUrl = (import.meta.env.PUBLIC_SERVICEBRIDGE_URL || '').trim().replace(/\/$/, '');
@@ -50,6 +50,12 @@ export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUr
       const data = event.data || {};
       if (data.type === 'servicebridge:ready') {
         setLoadState('ready');
+      }
+      if (data.type === 'servicebridge:conversation-closed') {
+        setIsOpen(false);
+        setUnreadCount(0);
+        setLoadState('idle');
+        return;
       }
       if (data.type === 'servicebridge:unread' && !isOpen) {
         setUnreadCount((value) => value + Number(data.delta || 1));
@@ -93,15 +99,15 @@ export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUr
           />
           {loadState === 'loading' && (
             <div className="pointer-events-none absolute inset-0 grid place-items-center bg-white text-sm font-semibold text-gray-500">
-              {chat.loadingText || '正在连接在线客服...'}
+              {chat.loadingText}
             </div>
           )}
           {loadState === 'error' && (
             <div className="absolute inset-0 grid place-items-center bg-white px-8 text-center">
               <div>
-                <p className="mb-2 text-base font-bold text-gray-900">{chat.errorTitle || '客服窗口未加载'}</p>
+                <p className="mb-2 text-base font-bold text-gray-900">{chat.errorTitle}</p>
                 <p className="text-sm leading-relaxed text-gray-500">
-                  {chat.errorDescription || '请确认 ServiceBridge 用户端服务已启动'}：{iframeUrl}
+                  {chat.errorDescription}：{iframeUrl}
                 </p>
               </div>
             </div>

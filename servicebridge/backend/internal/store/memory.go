@@ -72,26 +72,23 @@ func NewMemoryStore(options Options) *MemoryStore {
 		ratings:         map[string]*domain.ServiceRating{},
 		auditEvents:     []domain.AuditEvent{},
 		contacts: domain.ContactSettings{
-			Phone:           "400-123-4567",
-			Wechat:          "+86 400 888 8888",
-			WechatReplyType: "text",
-			QQ:              "@AstrevaSupport",
-			QQReplyType:     "text",
-			EntryReply:      "您好，欢迎咨询在线客服，请问有什么可以帮您？",
+			Telephone:  "400-123-4567",
+			WhatsApp:   "+86 400 888 8888",
+			Telegram:   "@AstrevaSupport",
+			EntryReply: "您好，欢迎咨询在线客服，请问有什么可以帮您？",
 		},
 		ai: domain.AISettings{
-			Enabled:               true,
-			Mode:                  domain.AIModeHumanFirst,
-			BaseURL:               nonEmpty(options.OpenAIBaseURL, "https://api.openai.com/v1"),
-			APIKey:                strings.TrimSpace(options.OpenAIAPIKey),
-			APIKeyMasked:          maskAPIKey(options.OpenAIAPIKey),
-			Model:                 nonEmpty(options.OpenAIModel, "gpt-4o-mini"),
-			APIType:               nonEmpty(options.OpenAIAPIType, "chat_completions"),
-			Temperature:           0.7,
-			MaxOutputTokens:       512,
-			TimeoutSeconds:        20,
-			SystemPrompt:          defaultPrompt(),
-			NoReplyTimeoutSeconds: 60,
+			Enabled:         true,
+			Mode:            domain.AIModeHumanFirst,
+			BaseURL:         nonEmpty(options.OpenAIBaseURL, "https://api.openai.com/v1"),
+			APIKey:          strings.TrimSpace(options.OpenAIAPIKey),
+			APIKeyMasked:    maskAPIKey(options.OpenAIAPIKey),
+			Model:           nonEmpty(options.OpenAIModel, "gpt-4o-mini"),
+			APIType:         nonEmpty(options.OpenAIAPIType, "chat_completions"),
+			Temperature:     0.7,
+			MaxOutputTokens: 512,
+			TimeoutSeconds:  20,
+			SystemPrompt:    defaultPrompt(),
 		},
 		business: domain.BusinessHours{
 			Timezone: "Asia/Shanghai",
@@ -126,9 +123,9 @@ func NewMemoryStore(options Options) *MemoryStore {
 	s.agentsByID[agent.ID] = agent
 
 	s.keywordRules = []domain.KeywordRule{
-		{ID: "kw_phone", Keyword: "电话", MatchType: "contains", Reply: "客服电话：400-123-4567", Enabled: true, Priority: 90, Action: "phone"},
-		{ID: "kw_whatsapp", Keyword: "WhatsApp", MatchType: "contains", Reply: "官方 WhatsApp：+86 400 888 8888", Enabled: true, Priority: 80, Action: "wechat"},
-		{ID: "kw_telegram", Keyword: "Telegram", MatchType: "contains", Reply: "官方 Telegram：@AstrevaSupport", Enabled: true, Priority: 75, Action: "text"},
+		{ID: "kw_phone", Keyword: "电话", MatchType: "contains", Reply: "客服电话：400-123-4567", Enabled: true, Priority: 90, Action: "telephone"},
+		{ID: "kw_whatsapp", Keyword: "WhatsApp", MatchType: "contains", Reply: "官方 WhatsApp：+86 400 888 8888", Enabled: true, Priority: 80, Action: "whatsapp"},
+		{ID: "kw_telegram", Keyword: "Telegram", MatchType: "contains", Reply: "官方 Telegram：@AstrevaSupport", Enabled: true, Priority: 75, Action: "telegram"},
 	}
 
 	return s
@@ -284,13 +281,9 @@ func (s *MemoryStore) SetAgentStatus(agentID string, status domain.AgentStatus) 
 				continue
 			}
 			conversation.AssignedAgentID = ""
-			conversation.Status = domain.ConversationWaiting
+			conversation.Status = domain.ConversationHumanRequested
 			conversation.UpdatedAt = now
-			s.assignConversationLocked(conversation)
-			if conversation.AssignedAgentID == "" && s.ai.Enabled && s.ai.Mode != domain.AIModeManualOnly {
-				conversation.Status = domain.ConversationAIServing
-				conversation.UpdatedAt = now
-			}
+			s.assignHumanConversationLocked(conversation)
 			assigned = append(assigned, *conversation)
 		}
 	}
@@ -702,12 +695,9 @@ func (s *MemoryStore) DisableAgent(id string) (domain.Agent, error) {
 			continue
 		}
 		conversation.AssignedAgentID = ""
-		conversation.Status = domain.ConversationWaiting
+		conversation.Status = domain.ConversationHumanRequested
 		conversation.UpdatedAt = now
-		s.assignConversationLocked(conversation)
-		if conversation.AssignedAgentID == "" && s.ai.Enabled && s.ai.Mode != domain.AIModeManualOnly {
-			conversation.Status = domain.ConversationAIServing
-		}
+		s.assignHumanConversationLocked(conversation)
 	}
 	return *agent, nil
 }
@@ -732,12 +722,9 @@ func (s *MemoryStore) DeleteAgent(id string) (domain.Agent, error) {
 		}
 		conversation.AssignedAgentID = ""
 		if conversation.Status != domain.ConversationClosed {
-			conversation.Status = domain.ConversationWaiting
+			conversation.Status = domain.ConversationHumanRequested
 			conversation.UpdatedAt = now
-			s.assignConversationLocked(conversation)
-			if conversation.AssignedAgentID == "" && s.ai.Enabled && s.ai.Mode != domain.AIModeManualOnly {
-				conversation.Status = domain.ConversationAIServing
-			}
+			s.assignHumanConversationLocked(conversation)
 		}
 	}
 	for _, rating := range s.ratings {
@@ -873,6 +860,9 @@ func (s *MemoryStore) AddAIMessage(conversationID, content string) (domain.Messa
 	if conversation.Status == domain.ConversationClosed {
 		return domain.Message{}, domain.Conversation{}, ErrForbidden
 	}
+	if conversation.AssignedAgentID != "" || conversation.Status != domain.ConversationAIServing {
+		return domain.Message{}, domain.Conversation{}, ErrConflict
+	}
 	conversation.Status = domain.ConversationAIServing
 	msg := s.createMessageLocked(conversationID, "", domain.SenderAI, "ai", domain.MessageAIText, content)
 	s.touchConversationLocked(conversation, conversationPreviewText(domain.MessageAIText, content), false, msg.CreatedAt)
@@ -947,29 +937,6 @@ func (s *MemoryStore) RevokeMessage(actor domain.AuthSession, conversationID, se
 	s.messages[conversationID][index] = msg
 	s.touchConversationRevokeLocked(conversation, msg, now)
 	return msg, *conversation, nil
-}
-
-func (s *MemoryStore) EscalateNoReplyToAI(conversationID string, visitorMessageSentAt time.Time) (domain.Conversation, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	conversation, ok := s.conversations[conversationID]
-	if !ok {
-		return domain.Conversation{}, false
-	}
-	if conversation.Status != domain.ConversationAssigned || conversation.LastMessageAt == nil {
-		return domain.Conversation{}, false
-	}
-	if !conversation.LastMessageAt.Equal(visitorMessageSentAt) {
-		return domain.Conversation{}, false
-	}
-	if !s.ai.Enabled || s.ai.Mode == domain.AIModeManualOnly {
-		return domain.Conversation{}, false
-	}
-	now := time.Now().UTC()
-	conversation.Status = domain.ConversationAIServing
-	conversation.UpdatedAt = now
-	return *conversation, true
 }
 
 func (s *MemoryStore) CloseConversation(actor domain.AuthSession, conversationID string) (domain.Conversation, domain.Message, error) {
@@ -1256,26 +1223,14 @@ func (s *MemoryStore) UpdateContactSettings(next domain.ContactSettings) (domain
 	if err := validateContactSettings(next); err != nil {
 		return s.contacts, err
 	}
-	if strings.TrimSpace(next.Phone) != "" {
-		s.contacts.Phone = strings.TrimSpace(next.Phone)
+	if strings.TrimSpace(next.Telephone) != "" {
+		s.contacts.Telephone = strings.TrimSpace(next.Telephone)
 	}
-	if strings.TrimSpace(next.Wechat) != "" {
-		s.contacts.Wechat = strings.TrimSpace(next.Wechat)
+	if strings.TrimSpace(next.WhatsApp) != "" {
+		s.contacts.WhatsApp = strings.TrimSpace(next.WhatsApp)
 	}
-	if normalizeReplyType(next.WechatReplyType) != "" {
-		s.contacts.WechatReplyType = normalizeReplyType(next.WechatReplyType)
-	}
-	if strings.TrimSpace(next.WechatImageURL) != "" {
-		s.contacts.WechatImageURL = strings.TrimSpace(next.WechatImageURL)
-	}
-	if strings.TrimSpace(next.QQ) != "" {
-		s.contacts.QQ = strings.TrimSpace(next.QQ)
-	}
-	if normalizeReplyType(next.QQReplyType) != "" {
-		s.contacts.QQReplyType = normalizeReplyType(next.QQReplyType)
-	}
-	if strings.TrimSpace(next.QQImageURL) != "" {
-		s.contacts.QQImageURL = strings.TrimSpace(next.QQImageURL)
+	if strings.TrimSpace(next.Telegram) != "" {
+		s.contacts.Telegram = strings.TrimSpace(next.Telegram)
 	}
 	s.contacts.EntryReply = strings.TrimSpace(next.EntryReply)
 	return s.contacts, nil
@@ -1432,9 +1387,6 @@ func (s *MemoryStore) UpdateAISettings(next domain.AISettings) (domain.AISetting
 	if strings.TrimSpace(next.SystemPrompt) != "" {
 		s.ai.SystemPrompt = strings.TrimSpace(next.SystemPrompt)
 	}
-	if next.NoReplyTimeoutSeconds > 0 {
-		s.ai.NoReplyTimeoutSeconds = next.NoReplyTimeoutSeconds
-	}
 	return s.ai, nil
 }
 
@@ -1490,7 +1442,10 @@ func (s *MemoryStore) assignConversationLocked(conversation *domain.Conversation
 		conversation.Status = domain.ConversationAIServing
 		return
 	}
+	s.assignHumanConversationLocked(conversation)
+}
 
+func (s *MemoryStore) assignHumanConversationLocked(conversation *domain.Conversation) {
 	var selected *domain.Agent
 	for _, agent := range s.agentsByID {
 		if agent.Status != domain.AgentOnline || agent.DisabledAt != nil {
@@ -1613,45 +1568,48 @@ func (s *MemoryStore) generateAutoRepliesLocked(conversation *domain.Conversatio
 		return nil, false
 	}
 
+	// 人工已接管或已进入人工队列时，任何关键词和 AI 都不再自动回复。
+	if conversation.AssignedAgentID != "" || conversation.Status == domain.ConversationAssigned || conversation.Status == domain.ConversationHumanRequested {
+		return nil, false
+	}
+
 	generated := []domain.Message{}
-	if isHumanKeyword(normalized) {
-		if conversation.AssignedAgentID != "" {
-			conversation.Status = domain.ConversationAssigned
-			msg := s.createMessageLocked(conversation.ID, "", domain.SenderSystem, "system", domain.MessageHandoff, "已为您通知人工客服，请稍候。")
-			generated = append(generated, msg)
-			return generated, false
-		}
+	requestHuman := func() ([]domain.Message, bool) {
 		conversation.Status = domain.ConversationHumanRequested
-		s.assignConversationLocked(conversation)
+		s.assignHumanConversationLocked(conversation)
 		if conversation.AssignedAgentID != "" {
 			msg := s.createMessageLocked(conversation.ID, "", domain.SenderSystem, "system", domain.MessageHandoff, "已为您通知人工客服，请稍候。")
-			generated = append(generated, msg)
-			return generated, false
+			return append(generated, msg), false
 		}
-		msg := s.createMessageLocked(conversation.ID, "", domain.SenderAI, "ai", domain.MessageAIText, "已为您通知人工客服。当前人工暂时不可用，我会先继续帮您处理常见问题。")
-		generated = append(generated, msg)
-		return generated, false
+		msg := s.createMessageLocked(conversation.ID, "", domain.SenderSystem, "system", domain.MessageHandoff, "已进入人工客服队列，请稍候。排队期间不会再触发 AI 或关键词自动回复。")
+		return append(generated, msg), false
+	}
+	if isHumanKeyword(normalized) {
+		return requestHuman()
 	}
 
 	for _, rule := range s.keywordRules {
 		if !rule.Enabled || !keywordMatches(rule, normalized) {
 			continue
 		}
-		messageType := domain.MessageText
-		if rule.Action == "phone" {
-			messageType = domain.MessageContactPhone
+		if rule.Action == "handoff" {
+			return requestHuman()
 		}
-		if rule.Action == "wechat" {
-			messageType = domain.MessageContactWechat
+		messageType := domain.MessageText
+		if rule.Action == "telephone" {
+			messageType = domain.MessageContactTelephone
+		}
+		if rule.Action == "whatsapp" {
+			messageType = domain.MessageContactWhatsApp
+		}
+		if rule.Action == "telegram" {
+			messageType = domain.MessageContactTelegram
 		}
 		msg := s.createMessageLocked(conversation.ID, "", domain.SenderSystem, "system", messageType, rule.Reply)
 		generated = append(generated, msg)
 		return generated, false
 	}
 
-	if conversation.Status == domain.ConversationAssigned {
-		return generated, false
-	}
 	if !s.ai.Enabled || s.ai.Mode == domain.AIModeManualOnly {
 		return generated, false
 	}
@@ -1741,7 +1699,7 @@ func validateUserMessage(messageType domain.MessageType, content string) error {
 		return ErrInvalidInput
 	}
 	switch messageType {
-	case domain.MessageText, domain.MessageEmoji, domain.MessageContactPhone, domain.MessageContactWechat:
+	case domain.MessageText, domain.MessageEmoji, domain.MessageContactTelephone, domain.MessageContactWhatsApp, domain.MessageContactTelegram:
 		return nil
 	case domain.MessageImage, domain.MessageAudio:
 		if !isSafePublicURL(content) {
@@ -1767,6 +1725,9 @@ func conversationPreviewText(messageType domain.MessageType, content string) str
 func keywordMatches(rule domain.KeywordRule, text string) bool {
 	if rule.MatchType == "exact" {
 		return text == rule.Keyword
+	}
+	if rule.MatchType == "prefix" {
+		return strings.HasPrefix(text, rule.Keyword)
 	}
 	return strings.Contains(text, rule.Keyword)
 }

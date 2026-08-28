@@ -671,9 +671,7 @@
             activeAudioElement: null,
             activeAudioButton: null,
             contacts: {
-                phone: '400-123-4567',
-                wechat: '+86 400 888 8888',
-                qq: '@AstrevaSupport',
+                telephone: '400-123-4567',
                 whatsapp: '+86 400 888 8888',
                 telegram: '@AstrevaSupport'
             }
@@ -1600,23 +1598,18 @@
                 sendSocketMessage("人工客服");
             } 
             else if (action === 'phone') {
-                appendSystemMessage(`客服电话：<a href="tel:${escapeHTML(State.contacts.phone)}" class="text-blue-500">${escapeHTML(State.contacts.phone)}</a> (点击拨打)`);
+				const telephone = State.contacts.telephone;
+                appendSystemMessage(`客服电话：<a href="tel:${escapeHTML(telephone)}" class="text-blue-500">${escapeHTML(telephone)}</a> (点击拨打)`);
                 if (State.connected) sendSocketMessage("电话");
             }
             else if (action === 'whatsapp') {
-                const whatsapp = State.contacts.whatsapp || State.contacts.wechat;
+                const whatsapp = State.contacts.whatsapp;
                 appendSystemMessage(`官方 WhatsApp：<span class="text-wc-user font-bold select-all">${escapeHTML(whatsapp)}</span> (长按复制)`);
-                if (State.contacts.wechat_reply_type === 'image' && State.contacts.wechat_image_url) {
-                    appendMessage(createImageMessageHTML(resolveAssetURL(State.contacts.wechat_image_url), false), false);
-                }
                 if (State.connected) sendSocketMessage("WhatsApp");
             }
             else if (action === 'telegram') {
-                const telegram = State.contacts.telegram || State.contacts.qq;
+                const telegram = State.contacts.telegram;
                 appendSystemMessage(`官方 Telegram：<span class="text-wc-user font-bold select-all">${escapeHTML(telegram)}</span> (长按复制)`);
-                if (State.contacts.qq_reply_type === 'image' && State.contacts.qq_image_url) {
-                    appendMessage(createImageMessageHTML(resolveAssetURL(State.contacts.qq_image_url), false), false);
-                }
                 if (State.connected) sendSocketMessage("Telegram");
             }
             else if (action === 'end') {
@@ -1668,15 +1661,11 @@
                 const resp = await fetch(`${State.apiBase}/api/contact-settings`);
                 if (!resp.ok) return;
                 const data = await resp.json();
-                const whatsapp = data.whatsapp || data.wechat || State.contacts.whatsapp || State.contacts.wechat;
-                const telegram = data.telegram || data.qq || State.contacts.telegram || State.contacts.qq;
                 State.contacts = {
                     ...State.contacts,
-                    ...data,
-                    whatsapp,
-                    telegram,
-                    wechat: whatsapp,
-                    qq: telegram
+                    telephone: data.telephone || State.contacts.telephone,
+                    whatsapp: data.whatsapp || State.contacts.whatsapp,
+                    telegram: data.telegram || State.contacts.telegram
                 };
                 State.quickReplies = Array.isArray(data.quick_replies) ? data.quick_replies : [];
             } catch (err) {}
@@ -1880,11 +1869,16 @@
             syncEvalAdviceBox();
         }
 
-        function closeEval() {
+        function closeEval(closeHostAfter = false) {
             gsap.to(DOM.evalSheet, { y: '100%', duration: 0.2, ease: "power2.in", onComplete: () => {
                 DOM.evalOverlay.classList.remove('flex');
                 DOM.evalOverlay.classList.add('hidden');
                 State.ratingPromptVisible = false;
+                if (closeHostAfter) {
+                    notifyHost('servicebridge:conversation-closed', {
+                        conversationId: State.conversationId
+                    });
+                }
                 if (State.evalReturnMessage) {
                     const message = State.evalReturnMessage;
                     State.evalReturnMessage = '';
@@ -1927,7 +1921,7 @@
             }
             if (State.ratingSubmitted) {
                 showToast("评价已提交");
-                closeEval();
+                closeEval(true);
                 return;
             }
             try {
@@ -1946,7 +1940,7 @@
                 if (!resp.ok && resp.status !== 409) throw new Error('rating failed');
                 State.ratingSubmitted = true;
                 showToast("感谢您的评价！");
-                closeEval();
+                closeEval(true);
             } catch (err) {
                 showToast("评价提交失败，请稍后重试");
             }

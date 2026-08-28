@@ -6,18 +6,17 @@ import { getContent, staticPage } from '../../lib/content';
 
 const content = await getContent();
 const page = staticPage(content, 'faq');
-const aboutHero = staticPage(content, 'about').hero;
 ---
 
 <BaseLayout content={content} seo={page.seo} path="/support/faq/" jsonLd={[faqJsonLd(content.faqs)]}>
   <div class="w-full pt-24">
     <InnerPageHero
       id="faq-hero"
-      eyebrow={page.hero?.eyebrow}
-      title={page.hero?.title || page.title}
-      description={page.hero?.description || page.seo.description}
-      backgroundImage={page.hero?.backgroundImage || aboutHero?.backgroundImage}
-      backgroundVideo={page.hero?.backgroundVideo || aboutHero?.backgroundVideo}
+      eyebrow={page.hero.eyebrow}
+      title={page.hero.title}
+      description={page.hero.description}
+      backgroundImage={page.hero.backgroundImage}
+      backgroundVideo={page.hero.backgroundVideo}
     />
     <div id="faq-list" class="py-24 bg-slate-50 min-h-[60vh] scroll-mt-24">
       <div class="max-w-3xl mx-auto px-6">

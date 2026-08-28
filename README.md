@@ -1,8 +1,8 @@
 # ASTREVA 独立站
 
-本仓库包含 Astro 官网、统一管理后台、构建发布服务和 ServiceBridge 在线客服。后台统一使用 `1337` 端口和一次 2FA 登录，左侧分为内容管理、客服管理、工作台、系统设置；客服使用 Flutter “在线客服”App 接待访客。
+本仓库包含 Astro 官网、统一管理后台、构建发布服务和 ServiceBridge 在线客服。后台统一使用 `1337` 端口和一次 2FA 登录，一级侧栏包含内容管理、网站翻译、R2 素材库、客服管理、工作台和系统设置；客服使用 Flutter “在线客服”App 接待访客。
 
-当前发布标签：`v1.1.3`（2026-08-21）。本次版本把本地客服闭环、统一后台、App 更新和推送准备整理为正式发布，完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+当前发布标签：`v1.1.4`（2026-08-28）。本次版本修复网站翻译上游可靠性（双凭证、退避重试、Chat Completions 通道），并收录 v1.1.3 之后的统一后台与运维演进，完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 目录
 
@@ -12,14 +12,13 @@
 - `servicebridge/apps/user-web/`：官网嵌入的访客聊天端。
 - `servicebridge/apps/agent-mobile/`：iOS/Android 客服 App。
 - `deployments/ubuntu/`：官网、后台和客服系统的生产 Compose。
-- `data/`、`uploads/`：本地内容与上传文件，敏感运行数据不提交 Git。
+- `admin-server/seed/`：只读首次初始化种子；运行数据仅保存于 PostgreSQL 和对象存储。
 
 ## 本地运行
 
 ```bash
 npm install
 cp .env.example .env
-npm run build:frontend
 bash scripts/run-local-stack.sh
 ```
 
@@ -36,7 +35,13 @@ bash scripts/run-local-stack.sh
 
 ## 内容与客服
 
-前端构建从 `PUBLIC_ADMIN_URL/site-admin-api/public-content` 获取内容；接口不可用时使用 `frontend/src/data/fallback.ts`。后台保存只更新内容，点击“发布官网”才调用重建 webhook。
+前端构建从 `PUBLIC_ADMIN_URL/site-admin-api/public-content` 获取内容。后台“降级版本”可把当前已保存内容冻结为版本、启用指定版本或删除历史版本；构建前会校验当前启用版本。后台不可用时，已发布的静态官网持续对外提供服务，不依赖本地 JSON 快照。
+
+官网仅把中文 `zh-CN` 作为源内容。后台“网站翻译”可配置 Chat Completions、Responses 或 Anthropic Messages 上游，API Key 使用 CMS 主密钥加密存入 PostgreSQL。中文内容每次保存后，英语 `en` 和阿拉伯语 `ar` 会按同一修订号进入翻译队列；过期、失败或未配置的译文不会对外伪装成成功。官网中的手动语言选择优先并保存在浏览器；首次访问才根据 Cloudflare/Vercel IP 国家头，其次根据 `Accept-Language` 推荐语言。阿拉伯语会同步启用 RTL。
+
+生产 Compose 使用共享的只读静态发布卷：构建服务把新产物原子切换到该卷，Nginx 官网容器立即读取新版本；构建服务不再暴露到公网。
+
+后台采用模块化单体：`auth-router`、`content-router`、`leads-router`、`media-router`、`publish-router`、`platform-store`、`media-store`、`publish-service`、`servicebridge-proxy` 与 OpenAPI 模块。所有环境均使用 PostgreSQL 保存后台数据、S3 兼容对象存储保存后台媒体；本地启动脚本会自动准备 Docker PostgreSQL 与 MinIO。运维、迁移、备份与监控见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。
 
 统一后台通过服务端代理访问客服引擎，浏览器不会保存客服引擎管理员密码。相关变量：
 
@@ -57,6 +62,7 @@ bash scripts/run-local-stack.sh
 ```bash
 npm run build:frontend
 node --check admin-server/server.mjs
+npm run test:admin
 cd servicebridge/backend && go test ./... && go vet ./...
 cd ../apps/agent-mobile && dart analyze && flutter test
 ```

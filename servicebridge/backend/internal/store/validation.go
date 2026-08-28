@@ -88,12 +88,12 @@ func validateKeywordRule(rule domain.KeywordRule) error {
 		return err
 	}
 	switch strings.TrimSpace(rule.MatchType) {
-	case "", "contains", "exact":
+	case "", "contains", "exact", "prefix":
 	default:
 		return ErrInvalidInput
 	}
 	switch strings.TrimSpace(rule.Action) {
-	case "", "text", "phone", "wechat", "handoff":
+	case "", "text", "telephone", "whatsapp", "telegram", "handoff":
 	default:
 		return ErrInvalidInput
 	}
@@ -113,7 +113,7 @@ func validateAISettings(next domain.AISettings) error {
 	}
 	if next.APIType != "" {
 		switch strings.TrimSpace(next.APIType) {
-		case "chat_completions", "responses":
+		case "chat_completions", "responses", "anthropic_messages":
 		default:
 			return ErrInvalidInput
 		}
@@ -142,15 +142,22 @@ func validateAISettings(next domain.AISettings) error {
 	if next.TimeoutSeconds < 0 || next.TimeoutSeconds > 120 {
 		return ErrInvalidInput
 	}
-	if next.NoReplyTimeoutSeconds < 0 || next.NoReplyTimeoutSeconds > 3600 {
-		return ErrInvalidInput
-	}
 	return nil
+}
+
+// ValidateAISettingsForRequest validates connection-preview fields without persisting them.
+func ValidateAISettingsForRequest(next domain.AISettings) error {
+	return validateAISettings(next)
 }
 
 func validateBusinessHours(next domain.BusinessHours) error {
 	if _, err := cleanOptionalText(next.Timezone, 64); err != nil {
 		return err
+	}
+	if strings.TrimSpace(next.Timezone) != "" {
+		if _, err := time.LoadLocation(strings.TrimSpace(next.Timezone)); err != nil {
+			return ErrInvalidInput
+		}
 	}
 	if strings.TrimSpace(next.Start) != "" {
 		if _, err := time.Parse("15:04", strings.TrimSpace(next.Start)); err != nil {
@@ -166,28 +173,13 @@ func validateBusinessHours(next domain.BusinessHours) error {
 }
 
 func validateContactSettings(next domain.ContactSettings) error {
-	for _, value := range []string{next.Phone, next.Wechat, next.QQ} {
+	for _, value := range []string{next.Telephone, next.WhatsApp, next.Telegram} {
 		if _, err := cleanOptionalText(value, maxContactRunes); err != nil {
 			return err
 		}
 	}
 	if _, err := cleanOptionalText(next.EntryReply, maxEntryReplyRunes); err != nil {
 		return err
-	}
-	for _, value := range []string{next.WechatImageURL, next.QQImageURL} {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if runeLen(value) > maxImageURLRunes || !isSafePublicURL(value) {
-			return ErrInvalidInput
-		}
-	}
-	if normalized := normalizeReplyType(next.WechatReplyType); strings.TrimSpace(next.WechatReplyType) != "" && normalized == "" {
-		return ErrInvalidInput
-	}
-	if normalized := normalizeReplyType(next.QQReplyType); strings.TrimSpace(next.QQReplyType) != "" && normalized == "" {
-		return ErrInvalidInput
 	}
 	return nil
 }

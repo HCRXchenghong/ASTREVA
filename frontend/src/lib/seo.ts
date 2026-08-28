@@ -54,7 +54,7 @@ export function breadcrumbJsonLd(items: Array<{ name: string; url: string }>) {
   };
 }
 
-export function productJsonLd(product: Product, category: Category) {
+export function productJsonLd(product: Product, category: Category, site: SiteSettings) {
   return {
     '@context': 'https://schema.org',
     '@type': 'Product',
@@ -64,7 +64,7 @@ export function productJsonLd(product: Product, category: Category) {
     category: category.name,
     brand: {
       '@type': 'Brand',
-      name: 'ASTREVA'
+      name: site.brandName
     }
   };
 }

@@ -153,7 +153,9 @@ func TestPublicContactSettingsIncludesEntryReplyAndQuickReplies(t *testing.T) {
 	adminToken := loginForToken(t, server, "/api/admin/login", "superadmin", "123456")
 
 	doJSON(t, server, http.MethodPatch, "/api/admin/contact-settings", adminToken, map[string]any{
-		"phone":       "400-000-0000",
+		"telephone":   "400-000-0000",
+		"whatsapp":    "+86 400 111 2222",
+		"telegram":    "@AstrevaService",
 		"entry_reply": "这里是后台配置的首条欢迎语。",
 	}, http.StatusOK)
 
@@ -191,6 +193,15 @@ func TestPublicContactSettingsIncludesEntryReplyAndQuickReplies(t *testing.T) {
 	if out["entry_reply"] != "这里是后台配置的首条欢迎语。" {
 		t.Fatalf("unexpected entry_reply: %#v", out["entry_reply"])
 	}
+	if out["telephone"] != "400-000-0000" || out["whatsapp"] != "+86 400 111 2222" || out["telegram"] != "@AstrevaService" {
+		t.Fatalf("unexpected visitor contact fields: %#v", out)
+	}
+	if _, exists := out["wechat"]; exists {
+		t.Fatalf("legacy wechat field must not be exposed: %#v", out)
+	}
+	if _, exists := out["qq"]; exists {
+		t.Fatalf("legacy qq field must not be exposed: %#v", out)
+	}
 	quickReplies, ok := out["quick_replies"].([]any)
 	if !ok || len(quickReplies) == 0 {
 		t.Fatalf("expected quick_replies, got %#v", out["quick_replies"])
@@ -204,6 +215,32 @@ func TestPublicContactSettingsIncludesEntryReplyAndQuickReplies(t *testing.T) {
 	}
 	if first["send_text"] != "退款流程" {
 		t.Fatalf("unexpected quick reply send_text: %#v", first["send_text"])
+	}
+}
+
+func TestAdminAIModelsUsesRealUpstreamAndRequiresAuth(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer upstream-secret" {
+			t.Fatalf("unexpected upstream authorization: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"model-live-a"},{"id":"model-live-b"}]}`))
+	}))
+	defer upstream.Close()
+
+	server := newTestRouter()
+	payload := map[string]any{
+		"base_url": upstream.URL, "api_key": "upstream-secret", "api_type": "chat_completions", "timeout_seconds": 5,
+	}
+	doJSON(t, server, http.MethodPost, "/api/admin/ai-settings/models", "", payload, http.StatusForbidden)
+	adminToken := loginForToken(t, server, "/api/admin/login", "superadmin", "123456")
+	out := doJSON(t, server, http.MethodPost, "/api/admin/ai-settings/models", adminToken, payload, http.StatusOK)
+	models, ok := out["models"].([]any)
+	if !ok || len(models) != 2 || models[0] != "model-live-a" || models[1] != "model-live-b" {
+		t.Fatalf("unexpected models payload: %#v", out)
 	}
 }
 
@@ -283,6 +320,30 @@ func TestLoginRateLimit(t *testing.T) {
 	}, http.StatusTooManyRequests)
 }
 
+func TestLoginAttemptsAreAuditedWithoutPassword(t *testing.T) {
+	server := newTestRouter()
+	doJSON(t, server, http.MethodPost, "/api/admin/login", "", map[string]any{
+		"account": "superadmin", "password": "wrong-password",
+	}, http.StatusUnauthorized)
+	adminToken := loginForToken(t, server, "/api/admin/login", "superadmin", "123456")
+	out := doJSON(t, server, http.MethodGet, "/api/admin/audit-events?limit=20", adminToken, nil, http.StatusOK)
+	events, ok := out["events"].([]any)
+	if !ok || len(events) < 2 {
+		t.Fatalf("expected login audit events, got %#v", out)
+	}
+	body, err := json.Marshal(events)
+	if err != nil {
+		t.Fatalf("marshal events: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "admin.login.failed") || !strings.Contains(text, "admin.login.succeeded") {
+		t.Fatalf("missing login outcome audit events: %s", text)
+	}
+	if strings.Contains(text, "wrong-password") || strings.Contains(text, "123456") {
+		t.Fatalf("audit log must never include submitted passwords: %s", text)
+	}
+}
+
 func TestClientIPUsesFirstForwardedFor(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "127.0.0.1:30001"
@@ -348,7 +409,14 @@ func TestAccountPasswordChange(t *testing.T) {
 	}, http.StatusUnauthorized)
 	newAdminToken := loginForToken(t, server, "/api/admin/login", "superadmin", "NewAdminPass-0123")
 	eventsOut := doJSON(t, server, http.MethodGet, "/api/admin/audit-events?limit=5", newAdminToken, nil, http.StatusOK)
-	if events := eventsOut["events"].([]any); len(events) == 0 || events[0].(map[string]any)["action"] != "account.password_change" {
+	foundPasswordChange := false
+	for _, raw := range eventsOut["events"].([]any) {
+		if raw.(map[string]any)["action"] == "account.password_change" {
+			foundPasswordChange = true
+			break
+		}
+	}
+	if !foundPasswordChange {
 		t.Fatalf("expected password change audit event, got %#v", eventsOut)
 	}
 
@@ -503,6 +571,49 @@ func TestVisitorRatingAndAdminSummary(t *testing.T) {
 	dashboard := doJSON(t, server, http.MethodGet, "/api/admin/dashboard", adminToken, nil, http.StatusOK)
 	if got := dashboard["rating"].(map[string]any)["total"]; got != float64(1) {
 		t.Fatalf("unexpected dashboard rating total: %v", got)
+	}
+}
+
+func TestAdminAgentRatingDetailsIncludeDissatisfiedComment(t *testing.T) {
+	server := newTestRouter()
+	adminToken := loginForToken(t, server, "/api/admin/login", "superadmin", "123456")
+	visitor := doJSON(t, server, http.MethodPost, "/api/visitor/conversations", "", map[string]any{"source": "agent-rating-detail-test"}, http.StatusCreated)
+	visitorToken := visitor["token"].(string)
+	conversationID := visitor["conversation"].(map[string]any)["id"].(string)
+
+	doJSON(t, server, http.MethodPost, "/api/admin/conversations/"+conversationID+"/transfer", adminToken, map[string]any{
+		"agent_id": "agent_lixue",
+	}, http.StatusOK)
+
+	comment := "一直没有解决我的问题，\n需要尽快回访。"
+	doJSON(t, server, http.MethodPost, "/api/visitor/conversations/"+conversationID+"/rating", visitorToken, map[string]any{
+		"score":   1,
+		"tags":    []string{"回复慢", "问题未解决"},
+		"comment": comment,
+	}, http.StatusCreated)
+
+	details := doJSON(t, server, http.MethodGet, "/api/admin/agents/agent_lixue/ratings", adminToken, nil, http.StatusOK)
+	agent := details["agent"].(map[string]any)
+	if got := agent["id"]; got != "agent_lixue" {
+		t.Fatalf("expected agent_lixue details, got %v", got)
+	}
+	ratings := details["ratings"].([]any)
+	if len(ratings) != 1 {
+		t.Fatalf("expected one rating for agent_lixue, got %#v", details)
+	}
+	rating := ratings[0].(map[string]any)
+	if got := rating["assigned_agent_id"]; got != "agent_lixue" {
+		t.Fatalf("expected rating associated with agent_lixue, got %v", got)
+	}
+	if got := rating["comment"]; got != comment {
+		t.Fatalf("expected complete dissatisfied comment %q, got %q", comment, got)
+	}
+	if got := rating["score"]; got != float64(1) {
+		t.Fatalf("expected dissatisfied score 1, got %v", got)
+	}
+	summary := details["summary"].(map[string]any)
+	if got := summary["unsatisfied"]; got != float64(1) {
+		t.Fatalf("expected one dissatisfied rating, got %v", got)
 	}
 }
 

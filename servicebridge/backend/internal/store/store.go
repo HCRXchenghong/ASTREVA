@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"time"
 
 	"customer-service/backend/internal/domain"
 )
@@ -29,7 +28,6 @@ type Store interface {
 	AddAIMessage(conversationID, content string) (domain.Message, domain.Conversation, error)
 	AddAgentMessage(agentID, conversationID, clientMsgID, content string, messageType domain.MessageType) (MessageResult, error)
 	RevokeMessage(actor domain.AuthSession, conversationID, serverMsgID string) (domain.Message, domain.Conversation, error)
-	EscalateNoReplyToAI(conversationID string, visitorMessageSentAt time.Time) (domain.Conversation, bool)
 	CloseConversation(actor domain.AuthSession, conversationID string) (domain.Conversation, domain.Message, error)
 	DeleteConversation(actor domain.AuthSession, conversationID string) error
 	TransferConversation(actor domain.AuthSession, conversationID, agentID, group string) (domain.Conversation, domain.Message, error)

@@ -40,16 +40,17 @@ const (
 type MessageType string
 
 const (
-	MessageText          MessageType = "text"
-	MessageEmoji         MessageType = "emoji"
-	MessageImage         MessageType = "image"
-	MessageAudio         MessageType = "audio"
-	MessageContactPhone  MessageType = "contact_phone"
-	MessageContactWechat MessageType = "contact_wechat"
-	MessageSystem        MessageType = "system"
-	MessageAIText        MessageType = "ai_text"
-	MessageHandoff       MessageType = "handoff_request"
-	MessageRevoked       MessageType = "revoked"
+	MessageText             MessageType = "text"
+	MessageEmoji            MessageType = "emoji"
+	MessageImage            MessageType = "image"
+	MessageAudio            MessageType = "audio"
+	MessageContactTelephone MessageType = "contact_telephone"
+	MessageContactWhatsApp  MessageType = "contact_whatsapp"
+	MessageContactTelegram  MessageType = "contact_telegram"
+	MessageSystem           MessageType = "system"
+	MessageAIText           MessageType = "ai_text"
+	MessageHandoff          MessageType = "handoff_request"
+	MessageRevoked          MessageType = "revoked"
 )
 
 type AICustomerMode string
@@ -69,20 +70,20 @@ type AdminUser struct {
 }
 
 type Agent struct {
-	ID                   string      `json:"id"`
-	Account              string      `json:"account"`
-	Name                 string      `json:"name"`
-	Group                string      `json:"group"`
-	Password             string      `json:"-"`
-	Status               AgentStatus `json:"status"`
-	DeviceToken          string      `json:"device_token,omitempty"`
-	MaxConversations     int         `json:"max_conversations"`
-	CurrentConversations int         `json:"current_conversations"`
-	AvatarURL            string      `json:"avatar_url,omitempty"`
-	ManualSatisfactionRate *float64  `json:"manual_satisfaction_rate,omitempty"`
-	DisabledAt           *time.Time  `json:"disabled_at,omitempty"`
-	Created              time.Time   `json:"created_at"`
-	Updated              time.Time   `json:"updated_at"`
+	ID                     string      `json:"id"`
+	Account                string      `json:"account"`
+	Name                   string      `json:"name"`
+	Group                  string      `json:"group"`
+	Password               string      `json:"-"`
+	Status                 AgentStatus `json:"status"`
+	DeviceToken            string      `json:"device_token,omitempty"`
+	MaxConversations       int         `json:"max_conversations"`
+	CurrentConversations   int         `json:"current_conversations"`
+	AvatarURL              string      `json:"avatar_url,omitempty"`
+	ManualSatisfactionRate *float64    `json:"manual_satisfaction_rate,omitempty"`
+	DisabledAt             *time.Time  `json:"disabled_at,omitempty"`
+	Created                time.Time   `json:"created_at"`
+	Updated                time.Time   `json:"updated_at"`
 }
 
 type Visitor struct {
@@ -159,14 +160,10 @@ type KeywordRule struct {
 }
 
 type ContactSettings struct {
-	Phone           string `json:"phone"`
-	Wechat          string `json:"wechat"`
-	WechatReplyType string `json:"wechat_reply_type"`
-	WechatImageURL  string `json:"wechat_image_url"`
-	QQ              string `json:"qq"`
-	QQReplyType     string `json:"qq_reply_type"`
-	QQImageURL      string `json:"qq_image_url"`
-	EntryReply      string `json:"entry_reply"`
+	Telephone  string `json:"telephone"`
+	WhatsApp   string `json:"whatsapp"`
+	Telegram   string `json:"telegram"`
+	EntryReply string `json:"entry_reply"`
 }
 
 type QuickReply struct {
@@ -176,15 +173,11 @@ type QuickReply struct {
 }
 
 type VisitorWidgetSettings struct {
-	Phone           string       `json:"phone"`
-	Wechat          string       `json:"wechat"`
-	WechatReplyType string       `json:"wechat_reply_type"`
-	WechatImageURL  string       `json:"wechat_image_url"`
-	QQ              string       `json:"qq"`
-	QQReplyType     string       `json:"qq_reply_type"`
-	QQImageURL      string       `json:"qq_image_url"`
-	EntryReply      string       `json:"entry_reply"`
-	QuickReplies    []QuickReply `json:"quick_replies"`
+	Telephone    string       `json:"telephone"`
+	WhatsApp     string       `json:"whatsapp"`
+	Telegram     string       `json:"telegram"`
+	EntryReply   string       `json:"entry_reply"`
+	QuickReplies []QuickReply `json:"quick_replies"`
 }
 
 type ServiceRating struct {
@@ -221,18 +214,17 @@ type DashboardStats struct {
 }
 
 type AISettings struct {
-	Enabled               bool           `json:"enabled"`
-	Mode                  AICustomerMode `json:"mode"`
-	BaseURL               string         `json:"base_url"`
-	APIKey                string         `json:"-"`
-	APIKeyMasked          string         `json:"api_key_masked"`
-	Model                 string         `json:"model"`
-	APIType               string         `json:"api_type"`
-	Temperature           float64        `json:"temperature"`
-	MaxOutputTokens       int            `json:"max_output_tokens"`
-	TimeoutSeconds        int            `json:"timeout_seconds"`
-	SystemPrompt          string         `json:"system_prompt"`
-	NoReplyTimeoutSeconds int            `json:"agent_no_reply_timeout_seconds"`
+	Enabled         bool           `json:"enabled"`
+	Mode            AICustomerMode `json:"mode"`
+	BaseURL         string         `json:"base_url"`
+	APIKey          string         `json:"-"`
+	APIKeyMasked    string         `json:"api_key_masked"`
+	Model           string         `json:"model"`
+	APIType         string         `json:"api_type"`
+	Temperature     float64        `json:"temperature"`
+	MaxOutputTokens int            `json:"max_output_tokens"`
+	TimeoutSeconds  int            `json:"timeout_seconds"`
+	SystemPrompt    string         `json:"system_prompt"`
 }
 
 type BusinessHours struct {

@@ -9,6 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 const distDir = path.resolve(process.env.STATIC_DIR || path.join(ROOT, 'frontend', 'dist'));
 const host = process.env.FRONTEND_HOST || '127.0.0.1';
 const port = Number(process.env.FRONTEND_PORT || 4321);
+const adminOrigin = (process.env.STATIC_ADMIN_ORIGIN || process.env.PUBLIC_ADMIN_URL || 'http://127.0.0.1:1337').replace(/\/$/, '');
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -56,9 +57,44 @@ async function resolveFile(reqPath) {
   return null;
 }
 
+async function proxyLeadRequest(req, res) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 64 * 1024) {
+      res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ error: { message: '请求体太大' } }));
+      return;
+    }
+    chunks.push(chunk);
+  }
+  const headers = {};
+  for (const name of ['content-type', 'origin', 'access-control-request-method', 'access-control-request-headers', 'user-agent']) {
+    if (req.headers[name]) headers[name] = req.headers[name];
+  }
+  const upstream = await fetch(`${adminOrigin}/site-admin-api/leads`, {
+    method: req.method,
+    headers,
+    body: req.method === 'POST' ? Buffer.concat(chunks) : undefined
+  });
+  const responseHeaders = { 'Cache-Control': 'no-store' };
+  for (const name of ['content-type', 'access-control-allow-origin', 'access-control-allow-methods', 'access-control-allow-headers', 'access-control-max-age', 'retry-after', 'vary']) {
+    const value = upstream.headers.get(name);
+    if (value) responseHeaders[name] = value;
+  }
+  res.writeHead(upstream.status, responseHeaders);
+  res.end(Buffer.from(await upstream.arrayBuffer()));
+}
+
 http.createServer(async (req, res) => {
   try {
-    const file = await resolveFile(new URL(req.url || '/', `http://${host}:${port}`).pathname);
+    const requestUrl = new URL(req.url || '/', `http://${host}:${port}`);
+    if (requestUrl.pathname === '/site-admin-api/leads' && ['POST', 'OPTIONS'].includes(req.method || '')) {
+      await proxyLeadRequest(req, res);
+      return;
+    }
+    const file = await resolveFile(requestUrl.pathname);
     if (!file) {
       res.writeHead(404, {
         'Content-Type': 'text/plain; charset=utf-8',

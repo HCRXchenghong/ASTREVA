@@ -48,7 +48,7 @@ func TestAgentCannotEditUnassignedConversation(t *testing.T) {
 	}
 }
 
-func TestHumanKeywordDoesNotDoubleCountAssignedAgent(t *testing.T) {
+func TestHumanKeywordDoesNotAutoReplyOrDoubleCountAfterAssignment(t *testing.T) {
 	s := NewMemoryStore(Options{})
 	agentSession, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
@@ -79,12 +79,12 @@ func TestHumanKeywordDoesNotDoubleCountAssignedAgent(t *testing.T) {
 	if s.agentsByID[agent.ID].CurrentConversations != 1 {
 		t.Fatalf("handoff double-counted current conversations: %d", s.agentsByID[agent.ID].CurrentConversations)
 	}
-	if len(result.Generated) != 1 || result.Generated[0].MessageType != domain.MessageHandoff {
-		t.Fatalf("expected one handoff system message, got %#v", result.Generated)
+	if len(result.Generated) != 0 || result.NeedAI {
+		t.Fatalf("assigned conversation must stay human-only, got %#v", result)
 	}
 }
 
-func TestAgentOfflineReleasesConversationBackToAI(t *testing.T) {
+func TestAgentOfflineKeepsTakenOverConversationInHumanQueue(t *testing.T) {
 	s := NewMemoryStore(Options{})
 	_, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
@@ -115,8 +115,33 @@ func TestAgentOfflineReleasesConversationBackToAI(t *testing.T) {
 	if changed[0].AssignedAgentID != "" {
 		t.Fatalf("conversation should be released from agent, got %q", changed[0].AssignedAgentID)
 	}
-	if changed[0].Status != domain.ConversationAIServing {
-		t.Fatalf("expected conversation back to AI, got %s", changed[0].Status)
+	if changed[0].Status != domain.ConversationHumanRequested {
+		t.Fatalf("expected conversation to remain in human queue, got %s", changed[0].Status)
+	}
+}
+
+func TestAlwaysAIModeStillHonorsExplicitHumanHandoff(t *testing.T) {
+	s := NewMemoryStore(Options{})
+	if _, err := s.UpdateAISettings(domain.AISettings{Enabled: true, Mode: domain.AIModeAlwaysAI, APIKey: "sk-test-123456", Model: "gpt-4o-mini", APIType: "chat_completions", TimeoutSeconds: 5}); err != nil {
+		t.Fatalf("update AI settings: %v", err)
+	}
+	visitor, err := s.CreateVisitorConversation("192.0.2.210", "web")
+	if err != nil {
+		t.Fatalf("create visitor conversation: %v", err)
+	}
+	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "handoff-1", "转人工", domain.MessageText)
+	if err != nil {
+		t.Fatalf("request human: %v", err)
+	}
+	if result.Conversation.Status != domain.ConversationHumanRequested || result.NeedAI {
+		t.Fatalf("explicit handoff must override always-AI mode: %#v", result)
+	}
+	blocked, err := s.AddVisitorMessage(visitor.Conversation.ID, "handoff-2", "电话是多少", domain.MessageText)
+	if err != nil {
+		t.Fatalf("add queued visitor message: %v", err)
+	}
+	if blocked.NeedAI || len(blocked.Generated) != 0 {
+		t.Fatalf("human queue must block keyword and AI replies: %#v", blocked)
 	}
 }
 
@@ -138,7 +163,7 @@ func TestPhoneKeywordGeneratesStructuredContactReply(t *testing.T) {
 	if len(result.Generated) != 1 {
 		t.Fatalf("expected one generated keyword reply, got %d", len(result.Generated))
 	}
-	if result.Generated[0].MessageType != domain.MessageContactPhone {
+	if result.Generated[0].MessageType != domain.MessageContactTelephone {
 		t.Fatalf("expected phone contact message, got %s", result.Generated[0].MessageType)
 	}
 	if result.Generated[0].Content != "客服电话：400-123-4567" {
@@ -202,7 +227,7 @@ func TestPagedMessagesReturnsNewestPageAndCursor(t *testing.T) {
 	}
 }
 
-func TestEscalateNoReplyToAIRequiresSameLastVisitorMessage(t *testing.T) {
+func TestHumanTakeoverBlocksKeywordAndAIReplies(t *testing.T) {
 	s := NewMemoryStore(Options{})
 	_, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
@@ -215,28 +240,24 @@ func TestEscalateNoReplyToAIRequiresSameLastVisitorMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
-	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "c1", "价格多少", domain.MessageText)
+	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "c1", "电话是多少", domain.MessageText)
 	if err != nil {
 		t.Fatalf("add visitor message: %v", err)
 	}
 
-	if _, err := s.AddAgentMessage(agent.ID, visitor.Conversation.ID, "a1", "您好，正在为您查询。", domain.MessageText); err != nil {
-		t.Fatalf("add agent message: %v", err)
+	if result.NeedAI || len(result.Generated) != 0 {
+		t.Fatalf("assigned conversation must not trigger keyword or AI replies: %#v", result)
 	}
-	if _, ok := s.EscalateNoReplyToAI(visitor.Conversation.ID, result.VisitorMessageSentAt); ok {
-		t.Fatal("agent reply should prevent no-reply escalation")
+	if _, _, err := s.AddAIMessage(visitor.Conversation.ID, "这是一条迟到的 AI 回复"); err != ErrConflict {
+		t.Fatalf("late AI reply must be rejected after human takeover, got %v", err)
 	}
 
-	result, err = s.AddVisitorMessage(visitor.Conversation.ID, "c2", "还在吗", domain.MessageText)
+	result, err = s.AddVisitorMessage(visitor.Conversation.ID, "c2", "转人工", domain.MessageText)
 	if err != nil {
 		t.Fatalf("add second visitor message: %v", err)
 	}
-	conversation, ok := s.EscalateNoReplyToAI(visitor.Conversation.ID, result.VisitorMessageSentAt)
-	if !ok {
-		t.Fatal("expected no-reply escalation")
-	}
-	if conversation.Status != domain.ConversationAIServing {
-		t.Fatalf("unexpected status after escalation: %s", conversation.Status)
+	if result.NeedAI || len(result.Generated) != 0 || result.Conversation.Status != domain.ConversationAssigned {
+		t.Fatalf("assigned conversation must remain fully human-controlled: %#v", result)
 	}
 }
 
@@ -378,6 +399,19 @@ func TestKeywordRuleCreateAndUpdate(t *testing.T) {
 	}
 	if !updated.ShowInQuickReplies || updated.QuickReplyText != "售后处理" {
 		t.Fatalf("quick reply config was not updated: %#v", updated)
+	}
+}
+
+func TestPrefixKeywordOnlyMatchesMessageStart(t *testing.T) {
+	rule := domain.KeywordRule{Keyword: "订单", MatchType: "prefix", Reply: "请提供订单号", Enabled: true, Action: "text"}
+	if err := validateKeywordRule(rule); err != nil {
+		t.Fatalf("prefix rule should be valid: %v", err)
+	}
+	if !keywordMatches(rule, "订单怎么查询") {
+		t.Fatal("prefix keyword should match the beginning of a message")
+	}
+	if keywordMatches(rule, "我想查询订单") {
+		t.Fatal("prefix keyword must not match text in the middle")
 	}
 }
 

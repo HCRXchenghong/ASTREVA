@@ -15,8 +15,11 @@ const encryptedSecretPrefix = "enc:v1:"
 
 func protectSecret(key, value string) (string, error) {
 	value = strings.TrimSpace(value)
-	if value == "" || strings.TrimSpace(key) == "" {
-		return value, nil
+	if value == "" {
+		return "", nil
+	}
+	if strings.TrimSpace(key) == "" {
+		return "", fmt.Errorf("saving secrets requires DATA_ENCRYPTION_KEY or CMS_DATA_ENCRYPTION_KEY")
 	}
 	block, err := aes.NewCipher(secretKey(key))
 	if err != nil {

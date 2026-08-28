@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 
 type Props = {
   primaryLabel: string;
-  primaryHref?: string;
+  primaryHref: string;
   secondaryLabel: string;
   videoUrl?: string;
   videoTitle: string;
@@ -39,7 +39,7 @@ function getVideoEmbed(url: string | undefined) {
   }
 }
 
-export default function VideoModal({ primaryLabel, primaryHref = '/support/', secondaryLabel, videoUrl, videoTitle, previewLabel, openExternalLabel, closeLabel }: Props) {
+export default function VideoModal({ primaryLabel, primaryHref, secondaryLabel, videoUrl, videoTitle, previewLabel, openExternalLabel, closeLabel }: Props) {
   const [open, setOpen] = useState(false);
   const embed = getVideoEmbed(videoUrl);
   const modal = (

@@ -101,7 +101,13 @@ $SITE_DOMAIN {
     Permissions-Policy "camera=(), microphone=(), geolocation=()"
   }
 
-  reverse_proxy frontend:80
+  handle /site-admin-api/leads {
+    reverse_proxy admin-server:1337
+  }
+
+  handle {
+    reverse_proxy frontend:80
+  }
 }
 
 $ADMIN_DOMAIN {
@@ -274,6 +280,18 @@ validate_secret AGENT_BOOTSTRAP_PASSWORD 12
 validate_secret REBUILD_WEBHOOK_SECRET 16
 validate_secret ADMIN_2FA_SESSION_SECRET 24
 validate_secret METRICS_BEARER_TOKEN 24
+
+ADMIN_MEDIA_DRIVER="${ADMIN_MEDIA_DRIVER:-s3}"
+if [[ "$ADMIN_MEDIA_DRIVER" != "s3" ]]; then
+  echo "生产环境 ADMIN_MEDIA_DRIVER 必须是 s3" >&2
+  exit 1
+fi
+need_var S3_BUCKET
+need_var S3_PUBLIC_BASE_URL
+if looks_like_placeholder "$S3_BUCKET" || looks_like_placeholder "$S3_PUBLIC_BASE_URL"; then
+  echo "S3_BUCKET / S3_PUBLIC_BASE_URL 仍然是示例占位值" >&2
+  exit 1
+fi
 
 POSTGRES_DB="${POSTGRES_DB:-customer_service}"
 POSTGRES_USER="${POSTGRES_USER:-customer_service}"

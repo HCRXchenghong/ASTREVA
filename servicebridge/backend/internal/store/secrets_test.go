@@ -19,12 +19,8 @@ func TestProtectRevealSecret(t *testing.T) {
 	}
 }
 
-func TestProtectSecretWithoutKeyKeepsPlaintext(t *testing.T) {
-	protected, err := protectSecret("", "sk-dev")
-	if err != nil {
-		t.Fatalf("protect secret without key: %v", err)
-	}
-	if protected != "sk-dev" {
-		t.Fatalf("expected plaintext without key, got %q", protected)
+func TestProtectSecretWithoutKeyIsRejected(t *testing.T) {
+	if _, err := protectSecret("", "sk-dev"); err == nil {
+		t.Fatal("secret must never fall back to plaintext when encryption key is missing")
 	}
 }

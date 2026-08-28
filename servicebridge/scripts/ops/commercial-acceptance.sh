@@ -99,13 +99,14 @@ S3_FORCE_PATH_STYLE=false
 S3_KEY_PREFIX=uploads
 S3_PUBLIC_BASE_URL=
 EOF
-sed -i '' \
+sed \
   -e "s#__POSTGRES_PASSWORD__#$acceptance_pg_secret#g" \
   -e "s#__DATA_ENCRYPTION_KEY__#$acceptance_data_key#g" \
   -e "s#__ADMIN_BOOTSTRAP_PASSWORD__#$acceptance_admin_secret#g" \
   -e "s#__AGENT_BOOTSTRAP_PASSWORD__#$acceptance_agent_secret#g" \
   -e "s#__METRICS_BEARER_TOKEN__#$acceptance_metrics_token#g" \
-  "$tmp_env"
+  "$tmp_env" > "${tmp_env}.next"
+mv "${tmp_env}.next" "$tmp_env"
 "$ROOT_DIR/scripts/ops/preflight-prod.sh" "$tmp_env"
 rm -f "$tmp_env"
 

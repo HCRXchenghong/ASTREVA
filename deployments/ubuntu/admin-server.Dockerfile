@@ -15,5 +15,6 @@ RUN adduser -D -H -u 1001 appuser \
   && chown -R appuser:appuser /app
 USER appuser
 
+ENV SITE_CONTENT_SEED_FILE=/app/admin-server/seed/site-content.json
 EXPOSE 1337
 CMD ["node", "admin-server/server.mjs"]

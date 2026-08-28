@@ -100,6 +100,23 @@ func (s *Service) TestAIReply(ctx context.Context, userText string) (string, err
 	return s.ai.Reply(ctx, s.store.AISettings(), s.store.ContactSettings(), userText)
 }
 
+func (s *Service) AIModels(ctx context.Context, preview domain.AISettings) ([]string, error) {
+	settings := s.store.AISettings()
+	if strings.TrimSpace(preview.BaseURL) != "" {
+		settings.BaseURL = strings.TrimSpace(preview.BaseURL)
+	}
+	if strings.TrimSpace(preview.APIKey) != "" {
+		settings.APIKey = strings.TrimSpace(preview.APIKey)
+	}
+	if strings.TrimSpace(preview.APIType) != "" {
+		settings.APIType = strings.TrimSpace(preview.APIType)
+	}
+	if preview.TimeoutSeconds > 0 {
+		settings.TimeoutSeconds = preview.TimeoutSeconds
+	}
+	return s.ai.Models(ctx, settings)
+}
+
 func (s *Service) SubmitRating(conversationID string, score int, tags []string, comment string) (domain.ServiceRating, error) {
 	if score < 5 && strings.TrimSpace(comment) == "" {
 		return domain.ServiceRating{}, store.ErrInvalidInput
@@ -226,32 +243,7 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 	if result.NeedAI {
 		go s.generateAIReply(conversationID, result.AIText)
 	}
-	if result.Conversation.Status == domain.ConversationAssigned && result.Conversation.AssignedAgentID != "" {
-		s.scheduleNoReplyAI(conversationID, result.AIText, result.VisitorMessageSentAt)
-	}
 	return result, nil
-}
-
-func (s *Service) scheduleNoReplyAI(conversationID, userText string, visitorMessageSentAt time.Time) {
-	timeoutSeconds := s.store.AISettings().NoReplyTimeoutSeconds
-	if timeoutSeconds <= 0 {
-		return
-	}
-	go func() {
-		timer := time.NewTimer(time.Duration(timeoutSeconds) * time.Second)
-		defer timer.Stop()
-		<-timer.C
-		conversation, ok := s.store.EscalateNoReplyToAI(conversationID, visitorMessageSentAt)
-		if !ok {
-			return
-		}
-		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
-		if conversation.AssignedAgentID != "" {
-			s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
-		}
-		s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: conversation})
-		s.generateAIReply(conversationID, userText)
-	}()
 }
 
 func (s *Service) generateAIReply(conversationID, userText string) {

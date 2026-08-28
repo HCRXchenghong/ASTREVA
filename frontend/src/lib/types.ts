@@ -5,7 +5,23 @@ export type SEO = {
   image?: string;
 };
 
+export type NavigationLink = {
+  label: string;
+  href: string;
+  icon?: string;
+};
+
 export type SiteSettings = {
+  locale: string;
+  localization: {
+    languageLabel: string;
+    switchAriaLabel: string;
+    chineseLabel: string;
+    englishLabel: string;
+    arabicLabel: string;
+    switchingText: string;
+    unavailableText: string;
+  };
   brandName: string;
   brandTagline: string;
   logoUrl: string;
@@ -38,11 +54,18 @@ export type SiteSettings = {
     solutionsLabel: string;
     supportLabel: string;
     aboutLabel: string;
-    categoryPrompt: string;
-    productDetailLabel: string;
     mobileMenuLabel: string;
+    productMenu: {
+      categoryLabel: string;
+      popularSeriesLabel: string;
+      popularSeriesTitleTemplate: string;
+      viewAllCategoryLabelTemplate: string;
+      mobileToggleLabel: string;
+      utilityLinks: NavigationLink[];
+    };
   };
   footer: {
+    logoAlt: string;
     description: string;
     quickLinksTitle: string;
     supportTitle: string;
@@ -104,6 +127,16 @@ export type ProductCenterPage = {
     title: string;
     description: string;
     categoryCtaLabel: string;
+  };
+  catalog: {
+    eyebrow: string;
+    description: string;
+    categoriesEyebrow: string;
+    categoriesTitle: string;
+    categoriesDescription: string;
+    categoriesAriaLabel: string;
+    viewAllLabel: string;
+    emptyCategoryMessage: string;
   };
   categoryPage: {
     titleTemplate: string;
@@ -203,15 +236,11 @@ export type SupportPage = {
     form: {
       nameLabel: string;
       namePlaceholder: string;
-      nameCompanyLabel?: string;
-      nameCompanyPlaceholder?: string;
       companyLabel: string;
       companyPlaceholder: string;
       optionalLabel: string;
       phoneLabel: string;
       phonePlaceholder: string;
-      contactLabel?: string;
-      contactPlaceholder?: string;
       emailLabel: string;
       emailPlaceholder: string;
       messageLabel: string;
@@ -233,10 +262,12 @@ export type FAQ = {
   enabled: boolean;
 };
 
-export type StaticPage = {
-  slug: 'about' | 'solutions' | 'faq' | 'warranty' | 'install' | 'privacy' | 'agreement';
+export type StaticPageSlug = 'about' | 'solutions' | 'faq' | 'warranty' | 'install' | 'privacy' | 'agreement';
+
+type StaticPageBase<TSlug extends StaticPageSlug> = {
+  slug: TSlug;
   title: string;
-  hero?: {
+  hero: {
     eyebrow?: string;
     title: string;
     description?: string;
@@ -244,9 +275,69 @@ export type StaticPage = {
     backgroundVideo?: string;
   };
   body: string;
-  sections?: Record<string, any>;
   seo: SEO;
 };
+
+export type AboutPage = StaticPageBase<'about'> & {
+  sections: {
+    introIcon: string;
+    partnersTitle: string;
+  };
+};
+
+export type SolutionSection = {
+  id: string;
+  number: string;
+  navLabel: string;
+  title: string;
+  description: string;
+  image?: string;
+  videoImage?: string;
+  videoUrl?: string;
+  videoCaption?: string;
+  focusTitle: string;
+  focusDescription: string;
+  bullets: string[];
+  ctaLabel: string;
+  ctaHref: string;
+  detailNote: string;
+};
+
+export type SolutionsPage = StaticPageBase<'solutions'> & {
+  sections: {
+    introTitle: string;
+    introDescription: string;
+    architectureTitle: string;
+    ctaLabel: string;
+    ctaHref: string;
+    ctaIcon: string;
+    sideNavTitle: string;
+    detailNote: string;
+    adviceTitle: string;
+    advicePrimaryLabel: string;
+    advicePrimaryHref: string;
+    adviceSecondaryLabel: string;
+    adviceSecondaryHref: string;
+    featureIcon: string;
+    bulletIcon: string;
+    videoPlayIcon: string;
+    solutionSections: SolutionSection[];
+    systemCards: Array<{ step: string; title: string }>;
+  };
+};
+
+export type FaqPage = StaticPageBase<'faq'>;
+export type WarrantyPage = StaticPageBase<'warranty'> & {
+  sections: { icon: string };
+};
+export type InstallPage = StaticPageBase<'install'> & {
+  sections: { icon: string };
+};
+export type PrivacyPage = StaticPageBase<'privacy'>;
+export type AgreementPage = StaticPageBase<'agreement'>;
+
+export type StaticPage = AboutPage | SolutionsPage | FaqPage | WarrantyPage | InstallPage | PrivacyPage | AgreementPage;
+export type StaticPageForSlug<TSlug extends StaticPageSlug> = Extract<StaticPage, { slug: TSlug }>;
 
 export type SiteContent = {
   site: SiteSettings;

@@ -74,7 +74,7 @@ func Load() Config {
 		OpenAIBaseURL:          env("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 		OpenAIModel:            env("OPENAI_MODEL", "gpt-4o-mini"),
 		OpenAIAPIType:          env("OPENAI_API_TYPE", "chat_completions"),
-		DataEncryptionKey:      env("DATA_ENCRYPTION_KEY", ""),
+		DataEncryptionKey:      firstNonEmptyEnv("DATA_ENCRYPTION_KEY", "CMS_DATA_ENCRYPTION_KEY"),
 		BootstrapAdminPassword: env("ADMIN_BOOTSTRAP_PASSWORD", "123456"),
 		BootstrapAgentPassword: env("AGENT_BOOTSTRAP_PASSWORD", "123456"),
 		StoreDriver:            env("STORE_DRIVER", "memory"),
@@ -183,6 +183,15 @@ func env(key string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func parseLogLevel(value string) slog.Level {

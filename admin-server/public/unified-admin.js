@@ -1,15 +1,16 @@
 const proxyRoot = '/site-admin-api/servicebridge';
 const titles = {
   content: ['内容管理', '官网页面、产品、媒体与 SEO'],
+  translations: ['网站翻译', '中文为唯一源内容，自动生成英语与阿拉伯语'],
+  media: ['R2 素材库', '图片、视频、文档、多尺寸变体与 AI 生图'],
   customers: ['客服管理', '客服账号、密码与接待容量'],
   workspace: ['工作台', '会话运行状态与服务质量概览'],
   settings: ['系统设置', '营业时间、欢迎语、AI 与运行状态'],
   keywords: ['关键词', '关键词自动回复与快捷回复规则'],
-  ratings: ['服务评价', '访客满意度评分与建议'],
   audit: ['审计日志', '管理员与客服的敏感操作记录'],
   releases: ['App 版本', '安装包上传、强制更新与发布状态']
 };
-const appState = { agents: [], conversations: [], ratings: [], ratingFilter: 'all', activeView: 'workspace' };
+const appState = { agents: [], conversations: [], activeView: 'workspace' };
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -37,20 +38,26 @@ const ratingLevel = (score) => {
   return 'bad';
 };
 
-async function api(path, options = {}) {
-  const response = await fetch(`${proxyRoot}${path}`, {
+async function requestJson(path, options = {}) {
+  const response = await fetch(path, {
     ...options,
     headers: { ...(options.body && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) }
   });
   const text = await response.text();
   let payload = {};
   try { payload = text ? JSON.parse(text) : {}; } catch { payload = { message: text }; }
+  if (response.status === 401) {
+    location.href = '/admin-2fa?returnTo=' + encodeURIComponent(location.pathname + location.search);
+    throw new Error('登录已失效，正在返回登录页。');
+  }
   if (!response.ok) {
     const message = typeof payload.error === 'string' ? payload.message || payload.error : payload.error?.message || payload.message;
     throw new Error(message || `请求失败（HTTP ${response.status}）`);
   }
   return payload;
 }
+const api = (path, options = {}) => requestJson(`${proxyRoot}${path}`, options);
+const siteApi = (path, options = {}) => requestJson(path, options);
 
 let noticeTimer;
 function notify(message, isError = false) {
@@ -61,13 +68,20 @@ function notify(message, isError = false) {
   noticeTimer = setTimeout(() => { notice.className = 'notice'; }, 3500);
 }
 
-function setView(view) {
+function setView(view, updateUrl = true) {
+  if (!titles[view]) view = 'workspace';
   appState.activeView = view;
   $$('.nav [data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === view));
   $$('.view').forEach((panel) => panel.classList.toggle('active', panel.id === `view-${view}`));
   $('#pageTitle').textContent = titles[view][0];
   $('#pageSubtitle').textContent = titles[view][1];
-  $('#contentRoot').classList.toggle('content-mode', view === 'content');
+  $('#contentRoot').classList.toggle('content-mode', ['content', 'translations', 'media', 'settings'].includes(view));
+  $('#contentRoot').scrollTop = 0;
+  if (updateUrl) {
+    const url = new URL(location.href);
+    url.searchParams.set('view', view);
+    history.replaceState({ view }, '', url);
+  }
   refreshCurrent().catch((error) => notify(error.message, true));
 }
 
@@ -99,7 +113,7 @@ async function loadAgents() {
       <td>${Number(agent.max_conversations || 0)}</td>
       <td>${renderAgentRatingCell(appState.ratingSummaries[agent.id], false)}</td>
       <td>${renderAgentRatingCell(appState.ratingSummaries[agent.id], true)}</td>
-      <td><div class="row-actions"><button data-edit-agent="${esc(agent.id)}">编辑</button><button data-agent-ratings="${esc(agent.id)}">评价</button><button data-set-rating="${esc(agent.id)}">设置好评率</button>${appState.ratingSummaries[agent.id]?.manual_satisfaction_rate != null ? `<button data-clear-rating="${esc(agent.id)}">清除手动</button>` : ''}<button data-reset-ratings="${esc(agent.id)}">重置评价</button><button data-reset-agent="${esc(agent.id)}">重置密码</button><button data-disable-agent="${esc(agent.id)}">禁用</button><button data-delete-agent="${esc(agent.id)}">删除</button></div></td>
+      <td><div class="row-actions"><button data-edit-agent="${esc(agent.id)}">编辑</button><button data-agent-ratings="${esc(agent.id)}">详情</button><button data-set-rating="${esc(agent.id)}">设置好评率</button>${appState.ratingSummaries[agent.id]?.manual_satisfaction_rate != null ? `<button data-clear-rating="${esc(agent.id)}">清除手动</button>` : ''}<button data-reset-ratings="${esc(agent.id)}">重置评价</button><button data-reset-agent="${esc(agent.id)}">重置密码</button><button data-disable-agent="${esc(agent.id)}">禁用</button><button data-delete-agent="${esc(agent.id)}">删除</button></div></td>
     </tr>`).join('') : '<tr><td colspan="8" class="empty">暂无客服账号</td></tr>';
 }
 
@@ -127,10 +141,67 @@ async function loadWorkspace() {
   ];
   $('#stats').innerHTML = statItems.map(([label, value, color]) => `<article class="stat" style="--accent:${color}"><small>${label}</small><strong>${value}</strong></article>`).join('');
   $('#conversationCount').textContent = `${appState.conversations.length} 条`;
-  $('#conversationRows').innerHTML = appState.conversations.length ? appState.conversations.map((conversation) => {
+  if (appState.selectedConversationID && !appState.conversations.some((item) => item.id === appState.selectedConversationID)) appState.selectedConversationID = '';
+  if (!appState.selectedConversationID && appState.conversations.length) appState.selectedConversationID = appState.conversations[0].id;
+  renderWorkspaceConversationList();
+  if (appState.selectedConversationID) await selectWorkspaceConversation(appState.selectedConversationID, false);
+  else clearWorkspaceConversation();
+}
+
+function conversationName(conversation) {
+  return conversation?.visitor_remark || conversation?.visitor_ip || conversation?.id || '未知访客';
+}
+
+function renderWorkspaceConversationList() {
+  const query = String($('#workspaceConversationSearch')?.value || '').trim().toLowerCase();
+  const filtered = appState.conversations.filter((conversation) => {
     const agent = appState.agents.find((item) => item.id === conversation.assigned_agent_id);
-    return `<tr><td><strong>${esc(conversation.visitor_remark || conversation.visitor_ip || conversation.id)}</strong><br><small>${esc(conversation.source || '')}</small></td><td><span class="badge ${esc(conversation.status)}">${statusLabel(conversation.status)}</span></td><td>${esc(conversation.last_message || '-')}</td><td>${Number(conversation.unread_for_agent || 0)}</td><td>${esc(agent?.name || '未分配')}</td><td>${localTime(conversation.updated_at)}</td><td><div class="row-actions"><button data-messages="${esc(conversation.id)}">消息</button>${conversation.status !== 'closed' ? `<button data-transfer="${esc(conversation.id)}">转接</button><button data-close-conversation="${esc(conversation.id)}">结束</button>` : ''}</div></td></tr>`;
-  }).join('') : '<tr><td colspan="7" class="empty">暂无会话</td></tr>';
+    return [conversationName(conversation), conversation.source, conversation.last_message, agent?.name, agent?.account, statusLabel(conversation.status)].join(' ').toLowerCase().includes(query);
+  });
+  $('#conversationCount').textContent = `${filtered.length} / ${appState.conversations.length} 条`;
+  $('#workspaceConversationList').innerHTML = filtered.length ? filtered.map((conversation) => {
+    const name = conversationName(conversation);
+    const unread = Number(conversation.unread_for_agent || 0);
+    return `<button class="conversation-item${conversation.id === appState.selectedConversationID ? ' active' : ''}" data-workspace-conversation="${esc(conversation.id)}"><span class="conversation-avatar">${esc(name.slice(0, 1).toUpperCase())}</span><span class="conversation-copy"><strong>${esc(name)}</strong><small>${esc(conversation.last_message || statusLabel(conversation.status))}</small></span><span class="conversation-meta"><time>${esc(new Date(conversation.updated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }))}</time>${unread ? `<span class="unread-dot">${unread > 99 ? '99+' : unread}</span>` : `<span class="badge ${esc(conversation.status)}">${statusLabel(conversation.status)}</span>`}</span></button>`;
+  }).join('') : '<div class="empty">没有匹配的会话</div>';
+}
+
+function clearWorkspaceConversation() {
+  $('#workspaceChatTitle').textContent = '请选择一条会话';
+  $('#workspaceChatActions').innerHTML = '';
+  $('#workspaceMessageList').innerHTML = '<div class="empty">从左侧选择会话查看消息</div>';
+  $('#workspaceVisitorFacts').innerHTML = '<div><dt>提示</dt><dd>选择会话后显示访客与接待信息</dd></div>';
+}
+
+async function selectWorkspaceConversation(id, updateList = true) {
+  const conversation = appState.conversations.find((item) => item.id === id);
+  if (!conversation) return clearWorkspaceConversation();
+  appState.selectedConversationID = id;
+  if (updateList) renderWorkspaceConversationList();
+  const agent = appState.agents.find((item) => item.id === conversation.assigned_agent_id);
+  $('#workspaceChatTitle').textContent = conversationName(conversation);
+  $('#workspaceChatActions').innerHTML = conversation.status === 'closed' ? '<span class="badge closed">已结束</span>' : `<button class="btn" data-transfer="${esc(id)}">转接</button><button class="btn danger" data-close-conversation="${esc(id)}">结束</button>`;
+  $('#workspaceVisitorFacts').innerHTML = [
+    ['访客', conversationName(conversation)],
+    ['状态', statusLabel(conversation.status)],
+    ['接待客服', agent ? `${agent.name}（${agent.account}）` : '未分配'],
+    ['客服分组', agent?.group || '未分组'],
+    ['来源', conversation.source || '-'],
+    ['访客 IP', conversation.visitor_ip || '-'],
+    ['会话 ID', conversation.id],
+    ['创建时间', localTime(conversation.created_at)],
+    ['更新时间', localTime(conversation.updated_at)]
+  ].map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('');
+  const payload = await api(`/api/conversations/${encodeURIComponent(id)}/messages?limit=100`);
+  if (appState.selectedConversationID !== id) return;
+  const messages = payload.messages || [];
+  const list = $('#workspaceMessageList');
+  list.innerHTML = messages.length ? messages.map((message) => {
+    const sender = ['agent', 'ai', 'system'].includes(message.sender_type) ? message.sender_type : 'visitor';
+    const senderName = ({ visitor: '访客', agent: '人工客服', ai: 'AI', system: '系统' })[sender];
+    return `<article class="workspace-message ${sender}"><div class="bubble">${esc(message.content || '')}</div><small>${senderName} · ${localTime(message.created_at)}</small></article>`;
+  }).join('') : '<div class="empty">暂无消息</div>';
+  list.scrollTop = list.scrollHeight;
 }
 
 async function loadKeywords() {
@@ -149,57 +220,91 @@ async function loadKeywords() {
     </tr>`).join('') : '<tr><td colspan="7" class="empty">暂无关键词规则</td></tr>';
 }
 
-async function loadRatings() {
-  const [summary, list, agents, summaries] = await Promise.all([
-    api('/api/admin/ratings/summary'),
-    api('/api/admin/ratings'),
-    api('/api/admin/agents'),
-    api('/api/admin/ratings/summaries')
+async function loadAudit() {
+  const [bridgeResult, siteResult] = await Promise.allSettled([
+    api('/api/admin/audit-events?limit=200'),
+    siteApi('/site-admin-api/audit-events?limit=500')
   ]);
-  appState.agents = agents.agents || [];
-  appState.ratings = list.ratings || [];
-  appState.ratingSummaries = Object.fromEntries((summaries.items || []).map((item) => [item.agent_id, item]));
-  $('#ratingStats').innerHTML = [
-    ['评价总数', summary.total, '#0878dc'],
-    ['平均分', Number(summary.average || 0).toFixed(2), '#18a5b8'],
-    ['非常满意', summary.satisfied, '#16835c'],
-    ['中评 / 差评', `${summary.neutral} / ${summary.unsatisfied}`, '#b97708']
-  ].map(([label, value, color]) => `<article class="stat" style="--accent:${color}"><small>${label}</small><strong>${value}</strong></article>`).join('');
-  const filtered = appState.ratingFilter === 'all'
-    ? appState.ratings
-    : appState.ratings.filter((rating) => ratingLevel(rating.score) === appState.ratingFilter);
-  $('#ratingCount').textContent = `${filtered.length} 条`;
-  $('#ratingRows').innerHTML = filtered.length ? filtered.map((rating) => {
-    const agent = appState.agents.find((item) => item.id === rating.assigned_agent_id);
-    return `<tr class="rating-${ratingLevel(rating.score)}"><td>${esc(rating.conversation_id)}</td><td><strong style="color:${ratingColor(rating.score)}">${'★'.repeat(Number(rating.score || 0))}${'☆'.repeat(5 - Number(rating.score || 0))}</strong></td><td>${esc((rating.tags || []).join('、'))}</td><td>${esc(rating.comment || '-')}</td><td>${esc(agent?.name || '-')}</td><td>${localTime(rating.created_at)}</td></tr>`;
-  }).join('') : '<tr><td colspan="6" class="empty">暂无评价记录</td></tr>';
-  const agentRows = (appState.agents || []).map((agent) => {
-    const item = appState.ratingSummaries[agent.id] || {};
-    const count = Number(item.summary?.total || 0);
-    return `<tr>
-      <td><strong>${esc(agent.name)}</strong><br><span>${esc(agent.account)}</span></td>
-      <td>${percentLabel(item.summary?.satisfaction_rate)}${count ? ` <small>(${count}条)</small>` : ''}</td>
-      <td>${percentLabel(item.display_satisfaction_rate)}${item.manual_satisfaction_rate != null ? ' <span class="badge busy">手动</span>' : ''}</td>
-      <td><div class="row-actions"><button data-agent-ratings="${esc(agent.id)}">明细</button><button data-set-rating="${esc(agent.id)}">设置好评率</button>${item.manual_satisfaction_rate != null ? `<button data-clear-rating="${esc(agent.id)}">清除手动</button>` : ''}<button data-reset-ratings="${esc(agent.id)}">重置评价</button></div></td>
-    </tr>`;
-  }).join('');
-  $('#agentRatingRows').innerHTML = agentRows || '<tr><td colspan="4" class="empty">暂无客服账号</td></tr>';
-  $$('#ratingFilterBar [data-rating-filter]').forEach((button) => button.classList.toggle('active', button.dataset.ratingFilter === appState.ratingFilter));
+  if (bridgeResult.status === 'rejected' && siteResult.status === 'rejected') throw bridgeResult.reason;
+  const bridgeEvents = bridgeResult.status === 'fulfilled' ? bridgeResult.value.events || [] : [];
+  const siteEvents = siteResult.status === 'fulfilled' ? siteResult.value.data || [] : [];
+  appState.audits = [
+    ...bridgeEvents.map((event) => normalizeAudit(event, 'servicebridge')),
+    ...siteEvents.map((event) => normalizeAudit(event, 'site-admin'))
+  ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  renderAudit();
 }
 
-async function loadAudit() {
-  const payload = await api('/api/admin/audit-events');
-  appState.audits = payload.events || [];
-  $('#auditCount').textContent = `${appState.audits.length} 条`;
-  $('#auditRows').innerHTML = appState.audits.length ? appState.audits.map((event) => `
-    <tr>
-      <td>${localTime(event.created_at)}</td>
-      <td>${esc(event.actor_kind)} / ${esc(event.actor_id)}</td>
-      <td><strong>${esc(event.action)}</strong></td>
-      <td>${esc(event.resource)}${event.resource_id ? ` / ${esc(event.resource_id)}` : ''}</td>
-      <td>${esc(event.ip_address || '-')}</td>
-      <td>${esc(event.description || '-')}</td>
-    </tr>`).join('') : '<tr><td colspan="6" class="empty">暂无审计记录</td></tr>';
+function auditRisk(action = '') {
+  const value = String(action).toLowerCase();
+  if (/(delete|remove|password|disable|reset|secret|key|credential|login\.failed)/.test(value)) return 'high';
+  if (/(update|patch|save|transfer|publish|create|upload|close|activate|setting)/.test(value)) return 'medium';
+  return 'low';
+}
+
+function auditActionLabel(action = '') {
+  const labels = {
+    'conversation.transfer': '转接会话', 'conversation.close': '结束会话', 'conversation.delete': '删除会话',
+    'agent.create': '创建客服', 'agent.update': '更新客服', 'agent.disable': '禁用客服', 'agent.delete': '删除客服',
+    'agent.password_reset': '重置客服密码', 'ai_settings.update': '更新客服 AI 配置', 'ai_settings.models_sync': '获取客服 AI 模型',
+    'admin.login.succeeded': '管理员登录成功', 'admin.login.failed': '管理员登录失败',
+    'agent.login.succeeded': '客服登录成功', 'agent.login.failed': '客服登录失败', 'account.password_change': '修改登录密码',
+    'contact_settings.update': '更新联系方式', 'business_hours.update': '更新营业时间', 'keyword_rule.create': '创建关键词规则',
+    'keyword_rule.update': '更新关键词规则', 'keyword_rule.delete': '删除关键词规则', 'publish.requested': '提交官网发布',
+    'content.saved': '保存官网内容', 'translation.settings.updated': '更新网站翻译配置', 'translation.requested': '提交网站重译任务',
+    'media.settings.updated': '更新媒体配置', 'system.media-settings.saved': '保存媒体系统配置'
+  };
+  return labels[action] || action || '未知操作';
+}
+
+function normalizeAudit(event, source) {
+  const site = source === 'site-admin';
+  const actorKind = site ? (event.actorEmail || event.actorId ? 'admin' : 'system') : event.actor_kind || 'system';
+  return {
+    id: String(event.id || `${source}-${Math.random()}`), source, actorKind,
+    actorId: String(site ? event.actorId || '' : event.actor_id || ''),
+    actorEmail: String(site ? event.actorEmail || '' : ''), action: String(event.action || ''),
+    resource: String(event.resource || ''), resourceId: String(site ? event.resourceId || '' : event.resource_id || ''),
+    ip: String(site ? event.ip || '' : event.ip_address || ''), userAgent: String(site ? event.userAgent || '' : event.user_agent || ''),
+    description: String(site ? '' : event.description || ''), detail: site ? event.detail || {} : {},
+    createdAt: site ? event.createdAt : event.created_at, risk: auditRisk(event.action)
+  };
+}
+
+function filteredAudits() {
+  const query = String($('#auditSearch')?.value || '').trim().toLowerCase();
+  const source = $('#auditSource')?.value || '';
+  const actor = $('#auditActor')?.value || '';
+  const risk = $('#auditRisk')?.value || '';
+  return (appState.audits || []).filter((event) => {
+    const text = [event.action, auditActionLabel(event.action), event.resource, event.resourceId, event.actorKind, event.actorId, event.actorEmail, event.ip, event.description, JSON.stringify(event.detail)].join(' ').toLowerCase();
+    return (!query || text.includes(query)) && (!source || event.source === source) && (!actor || event.actorKind === actor) && (!risk || event.risk === risk);
+  });
+}
+
+function renderAudit() {
+  const rows = filteredAudits();
+  const stats = [
+    ['当前结果', rows.length, '#0878dc'], ['高风险', rows.filter((event) => event.risk === 'high').length, '#b42318'],
+    ['管理员操作', rows.filter((event) => event.actorKind === 'admin').length, '#7656c4'], ['客服操作', rows.filter((event) => event.actorKind === 'agent').length, '#16835c']
+  ];
+  $('#auditStats').innerHTML = stats.map(([label, value, color]) => `<article class="stat" style="--accent:${color}"><small>${label}</small><strong>${value}</strong></article>`).join('');
+  $('#auditCount').textContent = `${rows.length} / ${(appState.audits || []).length} 条`;
+  $('#auditRows').innerHTML = rows.length ? rows.map((event) => `<tr class="audit-row" data-audit-id="${esc(event.id)}" data-audit-source="${esc(event.source)}"><td>${localTime(event.createdAt)}</td><td>${event.source === 'servicebridge' ? '客服系统' : '官网后台'}</td><td><span class="risk ${event.risk}">${({ high: '高', medium: '中', low: '低' })[event.risk]}</span></td><td>${esc(event.actorEmail || `${event.actorKind} / ${event.actorId || '-'}`)}</td><td><strong>${esc(auditActionLabel(event.action))}</strong><br><small>${esc(event.action)}</small></td><td>${esc(event.resource || '-')}${event.resourceId ? `<br><small>${esc(event.resourceId)}</small>` : ''}</td><td>${esc(event.ip || '-')}</td></tr>`).join('') : '<tr><td colspan="7" class="empty">暂无匹配的审计记录</td></tr>';
+}
+
+function openAuditDetail(id, source) {
+  const event = (appState.audits || []).find((item) => item.id === id && item.source === source);
+  if (!event) return;
+  $('#auditDialogTitle').textContent = auditActionLabel(event.action);
+  const values = [
+    ['ID', event.id], ['来源', event.source === 'servicebridge' ? '客服系统' : '官网后台'], ['风险等级', ({ high: '高风险', medium: '中风险', low: '低风险' })[event.risk]],
+    ['操作者类型', event.actorKind], ['操作者 ID', event.actorId || '-'], ['操作者账号', event.actorEmail || '-'], ['动作', event.action],
+    ['资源', event.resource || '-'], ['资源 ID', event.resourceId || '-'], ['IP', event.ip || '-'], ['User-Agent', event.userAgent || '-'],
+    ['说明', event.description || '-'], ['详情', JSON.stringify(event.detail || {}, null, 2)], ['时间', localTime(event.createdAt)]
+  ];
+  $('#auditDetail').innerHTML = values.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`).join('');
+  $('#auditDialog').showModal();
 }
 
 async function loadReleases() {
@@ -231,30 +336,11 @@ function formJson(form) {
   return Object.fromEntries([...new FormData(form).entries()].map(([key, value]) => [key, value === 'true' ? true : value === 'false' ? false : value]));
 }
 
-async function loadSettings() {
-  const [business, contact, status, ai] = await Promise.all([
-    api('/api/admin/business-hours'),
-    api('/api/contact-settings'),
-    api('/api/admin/system-status'),
-    api('/api/admin/ai-settings')
-  ]);
-  fillForm($('#businessForm'), business);
-  fillForm($('#contactForm'), contact);
-  fillForm($('#aiForm'), ai);
-  $('#systemStatus').innerHTML = `
-    <p><strong>数据库：</strong><span class="badge ${status.database?.ok ? 'online' : 'disabled'}">${status.database?.ok ? '正常' : '异常'}</span></p>
-    <p><strong>AI：</strong>${status.ai?.enabled ? '已启用' : '已停用'} / ${esc(status.ai?.mode || '-')} / ${esc(status.ai?.model || '-')}</p>
-    <p><strong>WebSocket：</strong>访客 ${Number(status.websocket?.Visitors || status.websocket?.visitors || 0)}，客服 ${Number(status.websocket?.Agents || status.websocket?.agents || 0)}，管理员 ${Number(status.websocket?.Admins || status.websocket?.admins || 0)}</p>
-    <p><strong>服务时间：</strong>${localTime(status.time)}</p>`;
-}
-
 async function refreshCurrent() {
   await refreshEngine();
   if (appState.activeView === 'customers') await loadAgents();
   if (appState.activeView === 'workspace') await loadWorkspace();
-  if (appState.activeView === 'settings') await loadSettings();
   if (appState.activeView === 'keywords') await loadKeywords();
-  if (appState.activeView === 'ratings') await loadRatings();
   if (appState.activeView === 'audit') await loadAudit();
   if (appState.activeView === 'releases') await loadReleases();
 }
@@ -262,6 +348,10 @@ async function refreshCurrent() {
 function openAgent(agent) {
   const form = $('#agentForm');
   form.reset();
+  const selectedGroup = agent?.group || '';
+  const groups = [...new Set(appState.agents.map((item) => String(item.group || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  if (selectedGroup && !groups.includes(selectedGroup)) groups.push(selectedGroup);
+  $('#agentGroupSelect').innerHTML = `<option value="">未分组</option>${groups.map((group) => `<option value="${esc(group)}">${esc(group)}</option>`).join('')}`;
   fillForm(form, agent || { max_conversations: 10 });
   form.elements.account.disabled = Boolean(agent);
   $('#passwordField').style.display = agent ? 'none' : 'grid';
@@ -271,22 +361,39 @@ function openAgent(agent) {
 
 async function openAgentRatings(agentID) {
   const payload = await api(`/api/admin/agents/${encodeURIComponent(agentID)}/ratings`);
-  const agent = payload.agent || {};
+  const cachedAgent = appState.agents.find((item) => item.id === agentID) || {};
+  const agent = { ...cachedAgent, ...(payload.agent || {}) };
   const summary = payload.summary || {};
   const ratings = payload.ratings || [];
-  $('#agentRatingDialogTitle').textContent = `评价明细 · ${agent.name || agent.account || agentID}`;
+  const agentName = agent.name || agent.account || agentID;
+  const agentStatus = agent.disabled_at ? '已禁用' : statusLabel(agent.status);
+  const agentStatusClass = agent.disabled_at ? 'disabled' : esc(agent.status || 'offline');
+  $('#agentRatingDialogTitle').textContent = `客服详情 · ${agentName}`;
+  $('#agentDetailFacts').innerHTML = `
+    <div class="agent-detail-fact"><dt>登录账号</dt><dd>${esc(agent.account || '-')}</dd></div>
+    <div class="agent-detail-fact"><dt>客服姓名</dt><dd>${esc(agent.name || '-')}</dd></div>
+    <div class="agent-detail-fact"><dt>所属分组</dt><dd>${esc(agent.group || '未分组')}</dd></div>
+    <div class="agent-detail-fact"><dt>当前状态</dt><dd><span class="badge ${agentStatusClass}">${esc(agentStatus)}</span></dd></div>
+    <div class="agent-detail-fact"><dt>当前会话数</dt><dd>${Number(agent.current_conversations || 0)}</dd></div>
+    <div class="agent-detail-fact"><dt>最大并发数</dt><dd>${Number(agent.max_conversations || 0)}</dd></div>`;
   $('#agentRatingSummary').innerHTML = `
     <article class="stat" style="--accent:#16835c"><small>真实好评率</small><strong>${percentLabel(summary.satisfaction_rate)}</strong></article>
     <article class="stat" style="--accent:#0878dc"><small>展示好评率</small><strong>${percentLabel(summary.display_satisfaction_rate)}</strong></article>
     <article class="stat" style="--accent:#18a5b8"><small>评价总数</small><strong>${Number(summary.total || 0)}</strong></article>
     <article class="stat" style="--accent:#b97708"><small>中评 / 差评</small><strong>${Number(summary.neutral || 0)} / ${Number(summary.unsatisfied || 0)}</strong></article>`;
-  $('#agentRatingRowsDialog').innerHTML = ratings.length ? ratings.map((rating) => `
-    <tr class="rating-${ratingLevel(rating.score)}">
+  $('#agentRatingRecordCount').textContent = `${ratings.length} 条`;
+  $('#agentRatingRowsDialog').innerHTML = ratings.length ? ratings.map((rating) => {
+    const level = ratingLevel(rating.score);
+    const comment = String(rating.comment || '');
+    const hasComment = Boolean(comment.trim());
+    return `<tr class="rating-${level}">
+      <td><span class="rating-conversation">${esc(rating.conversation_id || '-')}</span></td>
       <td><strong style="color:${ratingColor(rating.score)}">${'★'.repeat(Number(rating.score || 0))}${'☆'.repeat(5 - Number(rating.score || 0))}</strong></td>
-      <td>${esc((rating.tags || []).join('、'))}</td>
-      <td>${esc(rating.comment || '-')}</td>
+      <td>${esc((rating.tags || []).join('、') || '未选择标签')}</td>
+      <td><div class="rating-comment${level === 'good' ? '' : ' negative'}${hasComment ? '' : ' empty'}">${hasComment ? esc(comment) : '访客未填写文字评价'}</div></td>
       <td>${localTime(rating.created_at)}</td>
-    </tr>`).join('') : '<tr><td colspan="4" class="empty">该客服暂无评价</td></tr>';
+    </tr>`;
+  }).join('') : '<tr><td colspan="5" class="empty">该客服暂无评价</td></tr>';
   $('#agentRatingsDialog').showModal();
 }
 
@@ -314,7 +421,7 @@ $('#ratingForm').addEventListener('submit', async (event) => {
   await api(`/api/admin/agents/${encodeURIComponent(agentID)}/rating`, { method: 'POST', body: JSON.stringify({ satisfaction_rate: rate }) });
   form.reset();
   $('#ratingDialog').close();
-  await Promise.all([loadAgents(), loadRatings()]);
+  await loadAgents();
   notify('好评率已设置');
 });
 
@@ -326,22 +433,55 @@ function openKeyword(rule) {
   $('#keywordDialog').showModal();
 }
 
-async function showMessages(id) {
-  const payload = await api(`/api/conversations/${encodeURIComponent(id)}/messages?limit=100`);
-  const messages = payload.messages || [];
-  $('#messageTitle').textContent = `会话 ${id}`;
-  $('#messageList').innerHTML = messages.length ? messages.map((message) => `<div class="message ${message.sender_type === 'agent' ? 'agent' : ''}">${esc(message.content)}<small>${statusLabel(message.sender_type)} · ${localTime(message.created_at)}</small></div>`).join('') : '<div class="empty">暂无消息</div>';
-  $('#messageDialog').showModal();
-}
-
 $$('.nav [data-view]').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view)));
 $$('[data-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
-$('#refresh').addEventListener('click', () => refreshCurrent().then(() => notify('已刷新')).catch((error) => notify(error.message, true)));
+$('#refresh').addEventListener('click', () => {
+  if (appState.activeView === 'translations') {
+    $('#view-translations iframe').contentWindow.location.reload();
+    notify('网站翻译状态正在重新读取');
+    return;
+  }
+  if (appState.activeView === 'settings') {
+    $('#view-settings iframe').contentWindow.location.reload();
+    notify('系统设置正在重新读取');
+    return;
+  }
+  refreshCurrent().then(() => notify('已刷新')).catch((error) => notify(error.message, true));
+});
 $('#logout').addEventListener('click', async () => { await fetch('/site-admin-auth/logout', { method: 'POST' }); location.href = '/admin-2fa'; });
 $('#createAgent').addEventListener('click', () => openAgent(null));
+$('#addAgentGroup').addEventListener('click', () => {
+  const value = String(prompt('请输入新分组名称：', '') || '').trim();
+  if (!value) return;
+  const select = $('#agentGroupSelect');
+  let option = [...select.options].find((item) => item.value === value);
+  if (!option) {
+    option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.append(option);
+  }
+  select.value = value;
+});
 $('#createKeyword').addEventListener('click', () => openKeyword(null));
 $('#exportConversations').addEventListener('click', () => { location.href = `${proxyRoot}/api/admin/conversations/export.csv`; });
-$('#exportAudit').addEventListener('click', () => { location.href = `${proxyRoot}/api/admin/audit-events/export.csv`; });
+$('#exportAudit').addEventListener('click', () => {
+  const header = ['时间', '来源', '风险', '操作者类型', '操作者ID', '操作者账号', '动作', '资源', '资源ID', 'IP', 'User-Agent', '说明', '详情'];
+  const csvCell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const rows = filteredAudits().map((event) => [event.createdAt, event.source, event.risk, event.actorKind, event.actorId, event.actorEmail, event.action, event.resource, event.resourceId, event.ip, event.userAgent, event.description, JSON.stringify(event.detail || {})]);
+  const blob = new Blob(['\uFEFF', [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `audit-events-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+});
+$('#workspaceConversationSearch').addEventListener('input', renderWorkspaceConversationList);
+['auditSearch', 'auditSource', 'auditActor', 'auditRisk'].forEach((id) => $(`#${id}`).addEventListener(id === 'auditSearch' ? 'input' : 'change', renderAudit));
+$('#auditRows').addEventListener('click', (event) => {
+  const row = event.target.closest('[data-audit-id]');
+  if (row) openAuditDetail(row.dataset.auditId, row.dataset.auditSource);
+});
 
 $('#agentForm').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -401,39 +541,10 @@ $('#releaseForm').addEventListener('submit', async (event) => {
   }
 });
 
-$('#businessForm').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  await api('/api/admin/business-hours', { method: 'PATCH', body: JSON.stringify(formJson(event.currentTarget)) });
-  notify('营业时间已保存');
-});
-
-$('#contactForm').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const current = await api('/api/contact-settings');
-  await api('/api/admin/contact-settings', { method: 'PATCH', body: JSON.stringify({ ...current, ...formJson(event.currentTarget) }) });
-  notify('访客端配置已保存');
-});
-
-$('#aiForm').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const current = await api('/api/admin/ai-settings');
-  const next = { ...current, ...formJson(event.currentTarget) };
-  next.timeout_seconds = Number(next.timeout_seconds);
-  next.max_output_tokens = Number(next.max_output_tokens);
-  delete next.api_key_masked;
-  await api('/api/admin/ai-settings', { method: 'PATCH', body: JSON.stringify(next) });
-  notify('AI 设置已保存');
-});
-
 document.addEventListener('click', async (event) => {
   const button = event.target.closest('button');
   if (!button) return;
   try {
-    if (button.dataset.ratingFilter) {
-      appState.ratingFilter = button.dataset.ratingFilter;
-      await loadRatings();
-      return;
-    }
     if (button.dataset.agentRatings) {
       await openAgentRatings(button.dataset.agentRatings);
       return;
@@ -445,7 +556,6 @@ document.addEventListener('click', async (event) => {
     if (button.dataset.clearRating && confirm('确定清除该客服的手动好评率？将恢复显示真实好评率。')) {
       const agentID = button.dataset.clearRating;
       await api(`/api/admin/agents/${encodeURIComponent(agentID)}/rating`, { method: 'DELETE' });
-      if (appState.activeView === 'ratings') await loadRatings();
       await loadAgents();
       notify('手动好评率已清除');
       return;
@@ -453,7 +563,6 @@ document.addEventListener('click', async (event) => {
     if (button.dataset.resetRatings && confirm('确定重置该客服的真实评价数据？所有评价记录和手动好评率都会清空，不可恢复。')) {
       const agentID = button.dataset.resetRatings;
       await api(`/api/admin/agents/${encodeURIComponent(agentID)}/ratings/reset`, { method: 'POST', body: '{}' });
-      if (appState.activeView === 'ratings') await loadRatings();
       await loadAgents();
       notify('真实评价已重置');
       return;
@@ -474,7 +583,7 @@ document.addEventListener('click', async (event) => {
       await api(`/api/admin/agents/${encodeURIComponent(button.dataset.deleteAgent)}`, { method: 'DELETE' });
       await loadAgents(); notify('客服账号已删除');
     }
-    if (button.dataset.messages) await showMessages(button.dataset.messages);
+    if (button.dataset.workspaceConversation) await selectWorkspaceConversation(button.dataset.workspaceConversation);
     if (button.dataset.closeConversation && confirm('确定结束该会话？')) {
       await api(`/api/conversations/${encodeURIComponent(button.dataset.closeConversation)}/close`, { method: 'POST', body: '{}' });
       await loadWorkspace(); notify('会话已结束');
@@ -509,5 +618,10 @@ document.addEventListener('click', async (event) => {
 });
 
 window.addEventListener('unhandledrejection', (event) => notify(event.reason?.message || '后台请求失败', true));
-refreshCurrent().catch((error) => notify(error.message, true));
-setInterval(() => { if (appState.activeView === 'workspace') loadWorkspace().catch(() => {}); }, 10000);
+const initialView = new URLSearchParams(location.search).get('view');
+setView(titles[initialView] ? initialView : 'workspace', false);
+setInterval(() => {
+  if (document.visibilityState !== 'visible') return;
+  if (appState.activeView === 'workspace') loadWorkspace().catch(() => {});
+  if (appState.activeView === 'audit') loadAudit().catch(() => {});
+}, 10000);

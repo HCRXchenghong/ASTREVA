@@ -3,6 +3,8 @@ import '../styles/global.css';
 import Navbar from '../components/Navbar';
 import ChatWidget from '../components/ChatWidget';
 import CookieConsent from '../components/CookieConsent';
+import LanguageController from '../components/LanguageController.astro';
+import { PUBLIC_CONTENT_API_URL } from '../lib/content';
 import { absoluteUrl, organizationJsonLd, pageDescription, pageTitle, websiteJsonLd } from '../lib/seo';
 import type { SEO, SiteContent } from '../lib/types';
 
@@ -23,7 +25,7 @@ const footer = content.site.footer;
 ---
 
 <!doctype html>
-<html lang="zh-CN">
+<html lang={content.site.locale}>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -48,6 +50,7 @@ const footer = content.site.footer;
     ))}
   </head>
   <body>
+    <LanguageController content={content} apiBase={PUBLIC_CONTENT_API_URL} />
     <div class="min-h-screen bg-white font-sans selection:bg-blue-200 selection:text-blue-900">
       <Navbar
         client:only="react"
@@ -63,7 +66,11 @@ const footer = content.site.footer;
         <div class="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
           <div>
             <div class="flex items-center gap-2 mb-6">
-              <img src={content.site.logoUrl} alt={`${content.site.brandName} Logo`} class="w-10 h-10 rounded-full object-cover bg-white shadow-sm ring-1 ring-blue-400/30" />
+              {content.site.logoUrl ? (
+                <img src={content.site.logoUrl} alt={footer.logoAlt} class="w-10 h-10 rounded-full object-cover bg-white shadow-sm ring-1 ring-blue-400/30" />
+              ) : (
+                <span role="img" aria-label={footer.logoAlt} class="grid h-10 w-10 place-items-center rounded-full bg-white text-sm font-black text-[#0a4d8c] shadow-sm ring-1 ring-blue-400/30">{content.site.brandName.slice(0, 1)}</span>
+              )}
               <span class="text-2xl font-bold tracking-wide">{content.site.brandName}</span>
             </div>
             <p class="text-gray-400 text-sm mb-6 leading-relaxed">

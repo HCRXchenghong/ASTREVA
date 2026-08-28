@@ -51,18 +51,20 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
     return currentPath.startsWith(item.href);
   };
 
-  const utilityLinks = [
-    { label: '下载产品目录', href: '/products/', icon: FileText },
-    { label: '查看选型指南', href: '/support/install/', icon: BookOpen },
-    { label: '按应用场景查找', href: '/solutions/', icon: Search },
-    { label: '进入产品中心', href: '/products/', icon: ArrowRight }
-  ];
+  const utilityIconMap = { file: FileText, book: BookOpen, search: Search, arrow: ArrowRight };
+  const productMenu = site.navigation.productMenu;
+  const popularSeriesTitle = productMenu.popularSeriesTitleTemplate.replace('{category}', hoveredCategoryInfo?.name || '');
+  const viewAllCategoryLabel = productMenu.viewAllCategoryLabelTemplate.replace('{category}', hoveredCategoryInfo?.name || '');
 
   return (
     <div className={`fixed left-0 top-0 z-50 w-full transition-all duration-300 ${isScrolled ? 'bg-white shadow-md' : 'bg-white/95 shadow-sm backdrop-blur-sm'}`}>
       <div className="mx-auto flex h-24 max-w-7xl items-center justify-between px-7">
         <a className="flex items-center gap-3" href="/">
-          <img src={site.logoUrl} alt={`${site.brandName} Logo`} className="h-[58px] w-[58px] object-contain" />
+          {site.logoUrl ? (
+            <img src={site.logoUrl} alt={site.brandName} className="h-[58px] w-[58px] object-contain" />
+          ) : (
+            <span role="img" aria-label={site.brandName} className="grid h-[58px] w-[58px] place-items-center rounded-xl bg-[#0a4d8c] text-xl font-black text-white">{site.brandName.slice(0, 1)}</span>
+          )}
           <div className="flex flex-col">
             <span className="text-2xl font-extrabold leading-tight tracking-wide text-[#0a4d8c]">{site.brandName}</span>
             <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">{site.brandTagline}</span>
@@ -90,7 +92,7 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
                 <div className="fixed left-0 top-24 w-screen overflow-hidden rounded-b-lg border-t border-[#d8dee7] bg-white shadow-[0_24px_60px_rgba(18,32,54,0.16)]">
                   <div className="border-b border-[#e1e6ed] bg-[#f7f9fb]">
                     <div className="mx-auto flex max-w-7xl items-center gap-9 px-7">
-                      <span className="shrink-0 py-5 text-xs font-black uppercase tracking-[0.18em] text-[#7a8493]">产品类别</span>
+                      <span className="shrink-0 py-5 text-xs font-black uppercase tracking-[0.18em] text-[#7a8493]">{productMenu.categoryLabel}</span>
                       <div className="flex min-w-0 flex-1 items-center gap-8 overflow-x-auto">
                         {sortedCategories.map((category) => {
                           const active = hoveredCategory === category.slug;
@@ -115,12 +117,12 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
                   <div className="mx-auto max-w-7xl px-7 py-7">
                     <div className="mb-5 flex items-end justify-between gap-6">
                       <div>
-                        <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#b88923]">Popular Series</p>
-                        <h3 className="mt-1.5 text-xl font-black text-[#172033]">{hoveredCategoryInfo?.name} · 热门系列</h3>
+                        <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#b88923]">{productMenu.popularSeriesLabel}</p>
+                        <h3 className="mt-1.5 text-xl font-black text-[#172033]">{popularSeriesTitle}</h3>
                       </div>
                       {hoveredCategoryInfo && (
                         <a href={`/products/${hoveredCategoryInfo.slug}/`} className="inline-flex items-center gap-2 text-sm font-black text-[#0a66c2] hover:text-[#084b8c]">
-                          查看全部{hoveredCategoryInfo.name}产品 <ArrowRight size={16} />
+                          {viewAllCategoryLabel} <ArrowRight size={16} />
                         </a>
                       )}
                     </div>
@@ -132,7 +134,11 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
                           href={`/products/${product.categorySlug}/${product.slug}/`}
                           className="group flex min-w-0 items-center gap-4 px-4 py-4 first:pl-0 last:pr-0"
                         >
-                          <img src={product.coverImage} alt="" className="h-16 w-20 shrink-0 rounded-lg object-cover" />
+                          {product.coverImage ? (
+                            <img src={product.coverImage} alt="" className="h-16 w-20 shrink-0 rounded-lg object-cover" />
+                          ) : (
+                            <span aria-hidden="true" className="grid h-16 w-20 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-slate-100 to-slate-300 text-2xl font-black text-slate-400">◇</span>
+                          )}
                           <span className="min-w-0 flex-1 text-[15px] font-black leading-6 text-[#303a4b] transition-colors group-hover:text-[#0a5ca8]">{product.name}</span>
                           <ArrowRight size={16} className="shrink-0 text-[#9aa5b4] transition-all group-hover:translate-x-1 group-hover:text-[#0a66c2]" />
                         </a>
@@ -142,13 +148,14 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
 
                   <div className="border-t border-[#e1e6ed] bg-[#f7f9fb]">
                     <div className="mx-auto grid max-w-7xl grid-cols-4 divide-x divide-[#e1e6ed] px-7">
-                      {utilityLinks.map(({ label, href, icon: Icon }) => (
-                        <a key={label} href={href} className="group flex items-center justify-center gap-3 px-5 py-4 text-sm font-black text-[#303a4b] transition-colors hover:bg-[#edf5ff] hover:text-[#0a5ca8]">
+                      {productMenu.utilityLinks.map(({ label, href, icon }) => {
+                        const Icon = utilityIconMap[icon as keyof typeof utilityIconMap] || ArrowRight;
+                        return <a key={`${label}-${href}`} href={href} className="group flex items-center justify-center gap-3 px-5 py-4 text-sm font-black text-[#303a4b] transition-colors hover:bg-[#edf5ff] hover:text-[#0a5ca8]">
                           <Icon size={17} className="text-[#0a66c2]" />
                           {label}
                           <ArrowRight size={14} className="text-[#0a66c2] opacity-70 transition-transform group-hover:translate-x-1 group-hover:opacity-100" />
-                        </a>
-                      ))}
+                        </a>;
+                      })}
                     </div>
                   </div>
                 </div>
@@ -180,7 +187,7 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
                       type="button"
                       onClick={() => setMobileProductsOpen((value) => !value)}
                       className="rounded-lg p-2 text-[#536173]"
-                      aria-label="展开产品分类"
+                      aria-label={productMenu.mobileToggleLabel}
                       aria-expanded={mobileProductsOpen}
                     >
                       <ChevronRight size={20} className={`transition-transform ${mobileProductsOpen ? 'rotate-90' : ''}`} />

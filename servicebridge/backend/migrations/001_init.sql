@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS messages (
     revoked_by_kind TEXT NOT NULL DEFAULT '',
     revoked_by_id TEXT NOT NULL DEFAULT '',
     CONSTRAINT messages_sender_type_check CHECK (sender_type IN ('visitor', 'agent', 'ai', 'system')),
-    CONSTRAINT messages_message_type_check CHECK (message_type IN ('text', 'emoji', 'image', 'audio', 'contact_phone', 'contact_wechat', 'system', 'ai_text', 'handoff_request', 'revoked'))
+    CONSTRAINT messages_message_type_check CHECK (message_type IN ('text', 'emoji', 'image', 'audio', 'contact_phone', 'contact_wechat', 'contact_telephone', 'contact_whatsapp', 'contact_telegram', 'system', 'ai_text', 'handoff_request', 'revoked'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at);
@@ -123,8 +123,8 @@ CREATE TABLE IF NOT EXISTS keyword_rules (
     action TEXT NOT NULL DEFAULT 'text',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT keyword_rules_match_type_check CHECK (match_type IN ('contains', 'exact')),
-    CONSTRAINT keyword_rules_action_check CHECK (action IN ('text', 'phone', 'wechat', 'handoff'))
+    CONSTRAINT keyword_rules_match_type_check CHECK (match_type IN ('contains', 'exact', 'prefix')),
+    CONSTRAINT keyword_rules_action_check CHECK (action IN ('text', 'telephone', 'whatsapp', 'telegram', 'handoff'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_keyword_rules_enabled_priority ON keyword_rules(enabled, priority DESC);
@@ -156,11 +156,10 @@ CREATE TABLE IF NOT EXISTS ai_settings (
     max_output_tokens INTEGER NOT NULL DEFAULT 512,
     timeout_seconds INTEGER NOT NULL DEFAULT 20,
     system_prompt TEXT NOT NULL DEFAULT '',
-    agent_no_reply_timeout_seconds INTEGER NOT NULL DEFAULT 60,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT ai_settings_singleton CHECK (id = 1),
     CONSTRAINT ai_settings_mode_check CHECK (mode IN ('human_first', 'always_ai', 'manual_only')),
-    CONSTRAINT ai_settings_api_type_check CHECK (api_type IN ('chat_completions', 'responses')),
+    CONSTRAINT ai_settings_api_type_check CHECK (api_type IN ('chat_completions', 'responses', 'anthropic_messages')),
     CONSTRAINT ai_settings_temperature_check CHECK (temperature >= 0 AND temperature <= 2)
 );
 
@@ -189,9 +188,9 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at
 
 INSERT INTO keyword_rules (id, keyword, match_type, reply, enabled, priority, action)
 VALUES
-    ('kw_phone', '电话', 'contains', '客服电话：400-123-4567', true, 90, 'phone'),
-    ('kw_whatsapp', 'WhatsApp', 'contains', '官方 WhatsApp：+86 400 888 8888', true, 80, 'wechat'),
-    ('kw_telegram', 'Telegram', 'contains', '官方 Telegram：@AstrevaSupport', true, 75, 'text')
+    ('kw_phone', '电话', 'contains', '客服电话：400-123-4567', true, 90, 'telephone'),
+    ('kw_whatsapp', 'WhatsApp', 'contains', '官方 WhatsApp：+86 400 888 8888', true, 80, 'whatsapp'),
+    ('kw_telegram', 'Telegram', 'contains', '官方 Telegram：@AstrevaSupport', true, 75, 'telegram')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO contact_settings (id, phone, wechat, wechat_reply_type, qq, qq_reply_type)

@@ -20,14 +20,15 @@ const { product, category } = Astro.props;
 const path = `/products/${product.categorySlug}/${product.slug}/`;
 const productCenter = content.productCenter;
 const detail = productCenter.detailPage;
-const breadcrumbSeparator = detail.breadcrumbSeparator || '›';
-const badgeIcon = detail.badgeIcon || '✓';
-const featureIcon = detail.featureIcon || '✓';
-const quoteButtonIcon = detail.quoteButtonIcon || '✉';
-const downloadButtonIcon = detail.downloadButtonIcon || '↓';
+const breadcrumbSeparator = detail.breadcrumbSeparator;
+const badgeIcon = detail.badgeIcon;
+const featureIcon = detail.featureIcon;
+const quoteButtonIcon = detail.quoteButtonIcon;
+const downloadButtonIcon = detail.downloadButtonIcon;
 const isMp4Video = product.videoUrl && /\.(mp4|webm|ogg)(\?|#|$)/i.test(product.videoUrl);
+const galleryImages = product.galleryImages.filter(Boolean);
 const jsonLd = [
-  productJsonLd(product, category),
+  productJsonLd(product, category, content.site),
   breadcrumbJsonLd([
     { name: content.site.navigation.homeLabel, url: '/' },
     { name: content.site.navigation.productsLabel, url: '/products/' },
@@ -62,7 +63,11 @@ const jsonLd = [
       <div class="max-w-7xl mx-auto px-6 flex flex-col lg:flex-row gap-16 items-center">
         <div class="lg:w-1/2">
           <div class="rounded-3xl overflow-hidden shadow-2xl border border-gray-100 aspect-[4/3] group relative">
-            <img src={product.coverImage} alt={product.name} class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+            {product.coverImage ? (
+              <img src={product.coverImage} alt={product.name} class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+            ) : (
+              <div role="img" aria-label={product.name} class="grid h-full w-full place-items-center bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"><span aria-hidden="true">◇</span></div>
+            )}
             <div class="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
           </div>
         </div>
@@ -123,12 +128,12 @@ const jsonLd = [
         </div>
       </div>
     </section>
-    {product.galleryImages.length > 0 && (
+    {galleryImages.length > 0 && (
       <section id="product-gallery" class="py-20 bg-white scroll-mt-24">
         <div class="max-w-7xl mx-auto px-6">
           <h2 class="text-3xl font-extrabold text-gray-900 mb-10">{detail.galleryTitle}</h2>
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {product.galleryImages.map((image) => (
+            {galleryImages.map((image) => (
               <div class="aspect-[4/3] rounded-2xl overflow-hidden border border-gray-100 shadow-sm">
                 <img src={image} alt={product.name} class="h-full w-full object-cover" />
               </div>

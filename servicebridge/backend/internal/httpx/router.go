@@ -100,9 +100,11 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		}
 		session, admin, err := service.LoginAdmin(req.Account, req.Password)
 		if err != nil {
+			recordLoginAudit(service, r, trustedProxies, domain.AccountAdmin, req.Account, false)
 			writeError(w, err)
 			return
 		}
+		recordLoginAudit(service, r, trustedProxies, domain.AccountAdmin, admin.ID, true)
 		writeJSON(w, http.StatusOK, map[string]any{"token": session.Token, "admin": admin})
 	})
 
@@ -113,9 +115,11 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		}
 		session, agent, err := service.LoginAgent(req.Account, req.Password)
 		if err != nil {
+			recordLoginAudit(service, r, trustedProxies, domain.AccountAgent, req.Account, false)
 			writeError(w, err)
 			return
 		}
+		recordLoginAudit(service, r, trustedProxies, domain.AccountAgent, agent.ID, true)
 		writeJSON(w, http.StatusOK, map[string]any{"token": session.Token, "agent": agent})
 	})
 
@@ -991,6 +995,34 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		writeJSON(w, http.StatusOK, service.Store().AISettings())
 	})
 
+	mux.HandleFunc("POST /api/admin/ai-settings/models", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req struct {
+			BaseURL        string `json:"base_url"`
+			APIKey         string `json:"api_key"`
+			APIType        string `json:"api_type"`
+			TimeoutSeconds int    `json:"timeout_seconds"`
+		}
+		if !decodeOptionalJSON(w, r, &req) {
+			return
+		}
+		preview := domain.AISettings{BaseURL: req.BaseURL, APIKey: req.APIKey, APIType: req.APIType, TimeoutSeconds: req.TimeoutSeconds}
+		if err := store.ValidateAISettingsForRequest(preview); err != nil {
+			writeError(w, err)
+			return
+		}
+		models, err := service.AIModels(r.Context(), preview)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "ai_models_unavailable", "message": err.Error()})
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "ai_settings.models_sync", "ai_settings", "1", "从上游接口获取 AI 模型列表")
+		writeJSON(w, http.StatusOK, map[string]any{"models": models})
+	})
+
 	mux.HandleFunc("PATCH /api/admin/ai-settings", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(service, r) {
 			writeError(w, store.ErrForbidden)
@@ -1001,17 +1033,16 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			return
 		}
 		next := domain.AISettings{
-			Enabled:               req.Enabled,
-			Mode:                  req.Mode,
-			BaseURL:               req.BaseURL,
-			APIKey:                req.APIKey,
-			Model:                 req.Model,
-			APIType:               req.APIType,
-			Temperature:           req.Temperature,
-			MaxOutputTokens:       req.MaxOutputTokens,
-			TimeoutSeconds:        req.TimeoutSeconds,
-			SystemPrompt:          req.SystemPrompt,
-			NoReplyTimeoutSeconds: req.NoReplyTimeoutSeconds,
+			Enabled:         req.Enabled,
+			Mode:            req.Mode,
+			BaseURL:         req.BaseURL,
+			APIKey:          req.APIKey,
+			Model:           req.Model,
+			APIType:         req.APIType,
+			Temperature:     req.Temperature,
+			MaxOutputTokens: req.MaxOutputTokens,
+			TimeoutSeconds:  req.TimeoutSeconds,
+			SystemPrompt:    req.SystemPrompt,
 		}
 		updated, err := service.Store().UpdateAISettings(next)
 		if err != nil {
@@ -1104,15 +1135,11 @@ func buildVisitorWidgetSettings(service *app.Service) domain.VisitorWidgetSettin
 		})
 	}
 	return domain.VisitorWidgetSettings{
-		Phone:           contacts.Phone,
-		Wechat:          contacts.Wechat,
-		WechatReplyType: contacts.WechatReplyType,
-		WechatImageURL:  contacts.WechatImageURL,
-		QQ:              contacts.QQ,
-		QQReplyType:     contacts.QQReplyType,
-		QQImageURL:      contacts.QQImageURL,
-		EntryReply:      contacts.EntryReply,
-		QuickReplies:    quickReplies,
+		Telephone:    contacts.Telephone,
+		WhatsApp:     contacts.WhatsApp,
+		Telegram:     contacts.Telegram,
+		EntryReply:   contacts.EntryReply,
+		QuickReplies: quickReplies,
 	}
 }
 
@@ -1178,17 +1205,16 @@ type uploadResponse struct {
 }
 
 type aiSettingsRequest struct {
-	Enabled               bool                  `json:"enabled"`
-	Mode                  domain.AICustomerMode `json:"mode"`
-	BaseURL               string                `json:"base_url"`
-	APIKey                string                `json:"api_key"`
-	Model                 string                `json:"model"`
-	APIType               string                `json:"api_type"`
-	Temperature           float64               `json:"temperature"`
-	MaxOutputTokens       int                   `json:"max_output_tokens"`
-	TimeoutSeconds        int                   `json:"timeout_seconds"`
-	SystemPrompt          string                `json:"system_prompt"`
-	NoReplyTimeoutSeconds int                   `json:"agent_no_reply_timeout_seconds"`
+	Enabled         bool                  `json:"enabled"`
+	Mode            domain.AICustomerMode `json:"mode"`
+	BaseURL         string                `json:"base_url"`
+	APIKey          string                `json:"api_key"`
+	Model           string                `json:"model"`
+	APIType         string                `json:"api_type"`
+	Temperature     float64               `json:"temperature"`
+	MaxOutputTokens int                   `json:"max_output_tokens"`
+	TimeoutSeconds  int                   `json:"timeout_seconds"`
+	SystemPrompt    string                `json:"system_prompt"`
 }
 
 const maxJSONBodyBytes = 1 << 20
@@ -1412,6 +1438,25 @@ func recordAudit(service *app.Service, session domain.AuthSession, r *http.Reque
 		Action:      action,
 		Resource:    resource,
 		ResourceID:  resourceID,
+		IPAddress:   clientIP(r, proxies),
+		UserAgent:   r.UserAgent(),
+		Description: description,
+		CreatedAt:   time.Now().UTC(),
+	})
+}
+
+func recordLoginAudit(service *app.Service, r *http.Request, proxies trustedProxySet, kind domain.AccountKind, actorID string, success bool) {
+	action := string(kind) + ".login.failed"
+	description := "登录失败"
+	if success {
+		action = string(kind) + ".login.succeeded"
+		description = "登录成功"
+	}
+	service.Store().RecordAuditEvent(domain.AuditEvent{
+		ActorKind:   kind,
+		ActorID:     strings.TrimSpace(actorID),
+		Action:      action,
+		Resource:    "auth_session",
 		IPAddress:   clientIP(r, proxies),
 		UserAgent:   r.UserAgent(),
 		Description: description,

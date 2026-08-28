@@ -55,6 +55,7 @@ Authorization: Bearer <token>
 | GET/POST | `/api/admin/keyword-rules` | 列表/新增关键词规则 |
 | PATCH | `/api/admin/keyword-rules/{id}` | 修改关键词规则 |
 | GET/PATCH | `/api/admin/ai-settings` | 获取/保存 AI 配置 |
+| POST | `/api/admin/ai-settings/models` | 按所选协议真实读取上游模型列表 |
 | POST | `/api/admin/ai-settings/test` | 测试 AI 回复 |
 | GET/PATCH | `/api/admin/business-hours` | 获取/保存营业时间 |
 | PATCH | `/api/admin/contact-settings` | 保存访客端联系方式和欢迎语 |
@@ -69,9 +70,13 @@ Authorization: Bearer <token>
 
 会话状态：`waiting`、`assigned`、`ai_serving`、`human_requested`、`closed`。
 
-消息类型：`text`、`emoji`、`image`、`audio`、`contact_phone`、`contact_wechat`、`system`、`ai_text`、`handoff_request`、`revoked`。
+消息类型：`text`、`emoji`、`image`、`audio`、`contact_telephone`、`contact_whatsapp`、`contact_telegram`、`system`、`ai_text`、`handoff_request`、`revoked`。数据库仍兼容读取历史 `contact_phone`、`contact_wechat` 消息，但新接口不再产生旧类型。
 
-AI 配置写入字段包括 `enabled`、`mode`、`base_url`、`api_key`、`model`、`api_type`、`temperature`、`max_output_tokens`、`timeout_seconds`、`system_prompt`、`agent_no_reply_timeout_seconds`。返回只包含 `api_key_masked`，不会回传明文 Key。
+AI 配置写入字段包括 `enabled`、`mode`、`base_url`、`api_key`、`model`、`api_type`、`temperature`、`max_output_tokens`、`timeout_seconds`、`system_prompt`。`api_type` 仅允许 `chat_completions`、`responses`、`anthropic_messages`。API Key 使用服务端主密钥加密保存，返回只包含 `api_key_masked`，不会回传明文 Key。
+
+联系方式对外只返回 `telephone`、`whatsapp`、`telegram` 和 `entry_reply`，不再返回微信、QQ 或图片二维码配置。
+
+接待优先级为：人工已分配 / 人工排队 > 明确转人工 > 关键词规则 > AI。会话一旦由人工接管，即使客服离线或 AI 请求稍后返回，也只能转给其他人工或保持人工队列，不会重新触发关键词与 AI。
 
 ## WebSocket
 

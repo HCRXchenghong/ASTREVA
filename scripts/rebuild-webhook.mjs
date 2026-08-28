@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { buildFrontend } from './build-frontend.mjs';
 
 if (existsSync('.env')) {
   const text = readFileSync('.env', 'utf8');
@@ -18,12 +18,14 @@ const port = Number(process.env.REBUILD_WEBHOOK_PORT || 8787);
 const secret = process.env.REBUILD_WEBHOOK_SECRET || '';
 let running = false;
 let queued = false;
+let queuedSource = 'current';
 let lastBuild = {
   status: 'idle',
   startedAt: null,
   finishedAt: null,
   exitCode: null,
-  signal: null
+  signal: null,
+  source: null
 };
 
 function json(res, status, payload) {
@@ -31,9 +33,10 @@ function json(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function runBuild() {
+async function runBuild(source = 'current') {
   if (running) {
     queued = true;
+    queuedSource = source;
     return;
   }
   running = true;
@@ -42,30 +45,41 @@ function runBuild() {
     startedAt: new Date().toISOString(),
     finishedAt: null,
     exitCode: null,
-    signal: null
+    signal: null,
+    source
   };
-  const child = spawn('npm', ['run', 'build:frontend'], {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-    env: process.env
-  });
-  child.on('exit', (code, signal) => {
+  try {
+    await buildFrontend({ source });
     lastBuild = {
       ...lastBuild,
-      status: code === 0 ? 'succeeded' : 'failed',
+      status: 'succeeded',
       finishedAt: new Date().toISOString(),
-      exitCode: code,
-      signal
+      exitCode: 0,
+      signal: null,
+      source
     };
+  } catch (error) {
+    console.error(`[rebuild] ${error.message}`);
+    lastBuild = {
+      ...lastBuild,
+      status: 'failed',
+      finishedAt: new Date().toISOString(),
+      exitCode: 1,
+      signal: null,
+      source
+    };
+  } finally {
     running = false;
     if (queued) {
       queued = false;
-      runBuild();
+      const nextSource = queuedSource;
+      queuedSource = 'current';
+      void runBuild(nextSource);
     }
-  });
+  }
 }
 
-createServer((req, res) => {
+createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/healthz') {
     json(res, 200, { ok: true, running, queued, lastBuild });
     return;
@@ -86,8 +100,25 @@ createServer((req, res) => {
     res.end('unauthorized');
     return;
   }
-  req.resume();
-  runBuild();
+  let raw = '';
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > 4096) {
+      json(res, 413, { error: 'request body too large' });
+      return;
+    }
+  }
+  let source = 'current';
+  if (raw) {
+    try {
+      const requested = JSON.parse(raw).source;
+      if (requested === 'fallback') source = 'fallback';
+    } catch {
+      json(res, 400, { error: 'invalid json' });
+      return;
+    }
+  }
+  void runBuild(source);
   json(res, 202, { ok: true, running, queued, lastBuild });
 }).listen(port, () => {
   console.log(`Rebuild webhook listening on http://127.0.0.1:${port}/rebuild`);

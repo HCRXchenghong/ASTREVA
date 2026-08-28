@@ -34,7 +34,7 @@ func TestChatCompletionsReply(t *testing.T) {
 		Temperature:     0.7,
 		MaxOutputTokens: 128,
 		TimeoutSeconds:  5,
-	}, domain.ContactSettings{Phone: "400", Wechat: "wx", QQ: "qq"}, "你好")
+	}, domain.ContactSettings{Telephone: "400", WhatsApp: "wa", Telegram: "tg"}, "你好")
 	if err != nil {
 		t.Fatalf("reply: %v", err)
 	}
@@ -98,8 +98,87 @@ func TestResponsesReplyParsesNestedOutput(t *testing.T) {
 	}
 }
 
+func TestAnthropicMessagesReplyAndHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/messages" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("x-api-key"); got != "anthropic-secret" {
+			t.Fatalf("unexpected x-api-key: %q", got)
+		}
+		if got := r.Header.Get("anthropic-version"); got != "2023-06-01" {
+			t.Fatalf("unexpected anthropic-version: %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("anthropic request must not send bearer header: %q", got)
+		}
+		writeTestJSON(t, w, map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "Claude 真实回复"}},
+		})
+	}))
+	defer server.Close()
+
+	reply, err := NewClient().Reply(context.Background(), domain.AISettings{
+		APIKey:         "anthropic-secret",
+		BaseURL:        server.URL,
+		Model:          "claude-3-5-haiku-latest",
+		APIType:        "anthropic_messages",
+		TimeoutSeconds: 5,
+	}, domain.ContactSettings{}, "你好")
+	if err != nil {
+		t.Fatalf("reply: %v", err)
+	}
+	if reply != "Claude 真实回复" {
+		t.Fatalf("unexpected reply: %q", reply)
+	}
+}
+
+func TestModelsUsesProtocolHeadersAndDeduplicates(t *testing.T) {
+	tests := []struct {
+		name          string
+		apiType       string
+		wantBearer    string
+		wantAnthropic string
+	}{
+		{name: "openai", apiType: "chat_completions", wantBearer: "Bearer model-secret"},
+		{name: "responses", apiType: "responses", wantBearer: "Bearer model-secret"},
+		{name: "anthropic", apiType: "anthropic_messages", wantAnthropic: "model-secret"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/models" {
+					t.Fatalf("unexpected path: %s", r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != test.wantBearer {
+					t.Fatalf("unexpected authorization: %q", got)
+				}
+				if got := r.Header.Get("x-api-key"); got != test.wantAnthropic {
+					t.Fatalf("unexpected x-api-key: %q", got)
+				}
+				if test.apiType == "anthropic_messages" && r.Header.Get("anthropic-version") == "" {
+					t.Fatal("anthropic-version header is required")
+				}
+				writeTestJSON(t, w, map[string]any{
+					"data": []map[string]any{{"id": "model-a"}, {"id": "model-b"}, {"id": "model-a"}, {"id": ""}},
+				})
+			}))
+			defer server.Close()
+			models, err := NewClient().Models(context.Background(), domain.AISettings{
+				APIKey: "model-secret", BaseURL: server.URL, APIType: test.apiType, TimeoutSeconds: 5,
+			})
+			if err != nil {
+				t.Fatalf("models: %v", err)
+			}
+			if len(models) != 2 || models[0] != "model-a" || models[1] != "model-b" {
+				t.Fatalf("unexpected models: %#v", models)
+			}
+		})
+	}
+}
+
 func TestFallbackReplyWithoutAPIKey(t *testing.T) {
-	reply, err := NewClient().Reply(context.Background(), domain.AISettings{}, domain.ContactSettings{Phone: "400-123"}, "电话是多少")
+	reply, err := NewClient().Reply(context.Background(), domain.AISettings{}, domain.ContactSettings{Telephone: "400-123"}, "电话是多少")
 	if err != nil {
 		t.Fatalf("reply: %v", err)
 	}

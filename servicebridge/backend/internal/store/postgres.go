@@ -76,6 +76,10 @@ func newPostgresStore(ctx context.Context, databaseURL string, options Options, 
 		return nil, err
 	}
 	s := &PostgresStore{pool: pool, options: options}
+	if err := s.ensureCoreTables(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	if err := s.ensureServiceRatingsTable(ctx); err != nil {
 		pool.Close()
 		return nil, err
@@ -85,6 +89,94 @@ func newPostgresStore(ctx context.Context, databaseURL string, options Options, 
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS admin_users (
+			id TEXT PRIMARY KEY, account TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+			password_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE TABLE IF NOT EXISTS agents (
+			id TEXT PRIMARY KEY, account TEXT NOT NULL UNIQUE, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT '',
+			password_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'offline', max_conversations INTEGER NOT NULL DEFAULT 10,
+			current_conversations INTEGER NOT NULL DEFAULT 0, disabled_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), CONSTRAINT agents_status_check CHECK (status IN ('online','busy','offline')),
+			CONSTRAINT agents_max_conversations_check CHECK (max_conversations >= 0),
+			CONSTRAINT agents_current_conversations_check CHECK (current_conversations >= 0)
+		)`,
+		`CREATE TABLE IF NOT EXISTS visitors (
+			id TEXT PRIMARY KEY, ip INET NOT NULL, remark TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'web',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE TABLE IF NOT EXISTS conversations (
+			id TEXT PRIMARY KEY, visitor_id TEXT NOT NULL REFERENCES visitors(id), visitor_ip INET NOT NULL, visitor_remark TEXT NOT NULL,
+			remark_updated_by TEXT NOT NULL DEFAULT '', remark_updated_at TIMESTAMPTZ, status TEXT NOT NULL,
+			assigned_agent_id TEXT REFERENCES agents(id), source TEXT NOT NULL DEFAULT 'web', last_message TEXT NOT NULL DEFAULT '',
+			last_message_at TIMESTAMPTZ, unread_for_agent INTEGER NOT NULL DEFAULT 0, unread_for_visitor INTEGER NOT NULL DEFAULT 0,
+			closed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT conversations_status_check CHECK (status IN ('waiting','assigned','ai_serving','human_requested','closed')),
+			CONSTRAINT conversations_unread_agent_check CHECK (unread_for_agent >= 0),
+			CONSTRAINT conversations_unread_visitor_check CHECK (unread_for_visitor >= 0)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversations_assigned_agent ON conversations(assigned_agent_id) WHERE assigned_agent_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_conversations_status_updated ON conversations(status, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversations_visitor ON conversations(visitor_id)`,
+		`CREATE TABLE IF NOT EXISTS messages (
+			server_msg_id TEXT PRIMARY KEY, client_msg_id TEXT NOT NULL DEFAULT '', conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+			sender_type TEXT NOT NULL, sender_id TEXT NOT NULL DEFAULT '', message_type TEXT NOT NULL, content TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(), revoked_at TIMESTAMPTZ, revoked_by_kind TEXT NOT NULL DEFAULT '', revoked_by_id TEXT NOT NULL DEFAULT '',
+			CONSTRAINT messages_sender_type_check CHECK (sender_type IN ('visitor','agent','ai','system')),
+			CONSTRAINT messages_message_type_check CHECK (message_type IN ('text','emoji','image','audio','contact_phone','contact_wechat','contact_telephone','contact_whatsapp','contact_telegram','system','ai_text','handoff_request','revoked'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_dedup ON messages(conversation_id, sender_type, sender_id, client_msg_id) WHERE client_msg_id <> ''`,
+		`CREATE TABLE IF NOT EXISTS keyword_rules (
+			id TEXT PRIMARY KEY, keyword TEXT NOT NULL, match_type TEXT NOT NULL DEFAULT 'contains', reply TEXT NOT NULL,
+			enabled BOOLEAN NOT NULL DEFAULT true, priority INTEGER NOT NULL DEFAULT 0, action TEXT NOT NULL DEFAULT 'text',
+			show_in_quick_replies BOOLEAN NOT NULL DEFAULT false, quick_reply_text TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT keyword_rules_match_type_check CHECK (match_type IN ('contains','exact','prefix')),
+			CONSTRAINT keyword_rules_action_check CHECK (action IN ('text','telephone','whatsapp','telegram','handoff'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_keyword_rules_enabled_priority ON keyword_rules(enabled, priority DESC)`,
+		`CREATE TABLE IF NOT EXISTS contact_settings (
+			id SMALLINT PRIMARY KEY DEFAULT 1, phone TEXT NOT NULL DEFAULT '', wechat TEXT NOT NULL DEFAULT '',
+			wechat_reply_type TEXT NOT NULL DEFAULT 'text', wechat_image_url TEXT NOT NULL DEFAULT '', qq TEXT NOT NULL DEFAULT '',
+			qq_reply_type TEXT NOT NULL DEFAULT 'text', qq_image_url TEXT NOT NULL DEFAULT '', entry_reply TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), CONSTRAINT contact_settings_singleton CHECK (id=1),
+			CONSTRAINT contact_settings_wechat_reply_type_check CHECK (wechat_reply_type IN ('text','image')),
+			CONSTRAINT contact_settings_qq_reply_type_check CHECK (qq_reply_type IN ('text','image'))
+		)`,
+		`CREATE TABLE IF NOT EXISTS ai_settings (
+			id SMALLINT PRIMARY KEY DEFAULT 1, enabled BOOLEAN NOT NULL DEFAULT true, mode TEXT NOT NULL DEFAULT 'human_first',
+			base_url TEXT NOT NULL DEFAULT 'https://api.openai.com/v1', api_key_ciphertext TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT 'gpt-4o-mini',
+			api_type TEXT NOT NULL DEFAULT 'chat_completions', temperature NUMERIC(3,2) NOT NULL DEFAULT 0.70,
+			max_output_tokens INTEGER NOT NULL DEFAULT 512, timeout_seconds INTEGER NOT NULL DEFAULT 20, system_prompt TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT ai_settings_singleton CHECK (id=1), CONSTRAINT ai_settings_mode_check CHECK (mode IN ('human_first','always_ai','manual_only')),
+			CONSTRAINT ai_settings_api_type_check CHECK (api_type IN ('chat_completions','responses','anthropic_messages')),
+			CONSTRAINT ai_settings_temperature_check CHECK (temperature >= 0 AND temperature <= 2)
+		)`,
+		`CREATE TABLE IF NOT EXISTS business_hours (
+			id SMALLINT PRIMARY KEY DEFAULT 1, timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai', start_time TEXT NOT NULL DEFAULT '09:00',
+			end_time TEXT NOT NULL DEFAULT '18:00', enabled BOOLEAN NOT NULL DEFAULT true, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT business_hours_singleton CHECK (id=1)
+		)`,
+		`CREATE TABLE IF NOT EXISTS auth_sessions (
+			token TEXT PRIMARY KEY, kind TEXT NOT NULL, account_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			expires_at TIMESTAMPTZ NOT NULL, revoked_at TIMESTAMPTZ,
+			CONSTRAINT auth_sessions_kind_check CHECK (kind IN ('admin','agent','visitor'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_auth_sessions_account ON auth_sessions(kind, account_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at)`,
+	}
+	for _, statement := range statements {
+		if _, err := s.pool.Exec(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *PostgresStore) Close() {
@@ -299,28 +391,15 @@ func (s *PostgresStore) SetAgentStatus(agentID string, status domain.AgentStatus
 			}
 			for _, conversation := range conversations {
 				conversation.AssignedAgentID = ""
-				conversation.Status = domain.ConversationWaiting
+				conversation.Status = domain.ConversationHumanRequested
 				conversation.UpdatedAt = now
 				if _, err := tx.Exec(ctx, `
 					UPDATE conversations SET assigned_agent_id=NULL, status=$2, updated_at=$3 WHERE id=$1
 				`, conversation.ID, conversation.Status, conversation.UpdatedAt); err != nil {
 					return err
 				}
-				if err := s.assignConversationTx(ctx, tx, &conversation); err != nil {
+				if err := s.assignHumanConversationTx(ctx, tx, &conversation); err != nil {
 					return err
-				}
-				if conversation.AssignedAgentID == "" {
-					ai, err := s.aiSettingsTx(ctx, tx)
-					if err != nil {
-						return err
-					}
-					if ai.Enabled && ai.Mode != domain.AIModeManualOnly {
-						conversation.Status = domain.ConversationAIServing
-						conversation.UpdatedAt = now
-						if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": now}); err != nil {
-							return err
-						}
-					}
 				}
 				assigned = append(assigned, conversation)
 			}
@@ -604,6 +683,9 @@ func (s *PostgresStore) AddAIMessage(conversationID, content string) (domain.Mes
 		if conversation.Status == domain.ConversationClosed {
 			return ErrForbidden
 		}
+		if conversation.AssignedAgentID != "" || conversation.Status != domain.ConversationAIServing {
+			return ErrConflict
+		}
 		conversation.Status = domain.ConversationAIServing
 		if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": dbNow()}); err != nil {
 			return err
@@ -731,37 +813,6 @@ func (s *PostgresStore) RevokeMessage(actor domain.AuthSession, conversationID, 
 		return err
 	})
 	return msg, conversation, err
-}
-
-func (s *PostgresStore) EscalateNoReplyToAI(conversationID string, visitorMessageSentAt time.Time) (domain.Conversation, bool) {
-	ctx, cancel := dbContext()
-	defer cancel()
-
-	var out domain.Conversation
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		conversation, err := s.conversationByIDForUpdateTx(ctx, tx, conversationID)
-		if err != nil {
-			return err
-		}
-		if conversation.Status != domain.ConversationAssigned || conversation.LastMessageAt == nil {
-			return ErrConflict
-		}
-		if !conversation.LastMessageAt.Equal(visitorMessageSentAt) {
-			return ErrConflict
-		}
-		ai, err := s.aiSettingsTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if !ai.Enabled || ai.Mode == domain.AIModeManualOnly {
-			return ErrConflict
-		}
-		now := dbNow()
-		row := tx.QueryRow(ctx, `UPDATE conversations SET status=$2, updated_at=$3 WHERE id=$1 RETURNING `+conversationColumns, conversationID, domain.ConversationAIServing, now)
-		out, err = scanConversation(row)
-		return err
-	})
-	return out, err == nil
 }
 
 func (s *PostgresStore) CloseConversation(actor domain.AuthSession, conversationID string) (domain.Conversation, domain.Message, error) {
@@ -1136,26 +1187,14 @@ func (s *PostgresStore) UpdateContactSettings(next domain.ContactSettings) (doma
 	if err := validateContactSettings(next); err != nil {
 		return current, err
 	}
-	if strings.TrimSpace(next.Phone) != "" {
-		current.Phone = strings.TrimSpace(next.Phone)
+	if strings.TrimSpace(next.Telephone) != "" {
+		current.Telephone = strings.TrimSpace(next.Telephone)
 	}
-	if strings.TrimSpace(next.Wechat) != "" {
-		current.Wechat = strings.TrimSpace(next.Wechat)
+	if strings.TrimSpace(next.WhatsApp) != "" {
+		current.WhatsApp = strings.TrimSpace(next.WhatsApp)
 	}
-	if normalizeReplyType(next.WechatReplyType) != "" {
-		current.WechatReplyType = normalizeReplyType(next.WechatReplyType)
-	}
-	if strings.TrimSpace(next.WechatImageURL) != "" {
-		current.WechatImageURL = strings.TrimSpace(next.WechatImageURL)
-	}
-	if strings.TrimSpace(next.QQ) != "" {
-		current.QQ = strings.TrimSpace(next.QQ)
-	}
-	if normalizeReplyType(next.QQReplyType) != "" {
-		current.QQReplyType = normalizeReplyType(next.QQReplyType)
-	}
-	if strings.TrimSpace(next.QQImageURL) != "" {
-		current.QQImageURL = strings.TrimSpace(next.QQImageURL)
+	if strings.TrimSpace(next.Telegram) != "" {
+		current.Telegram = strings.TrimSpace(next.Telegram)
 	}
 	current.EntryReply = strings.TrimSpace(next.EntryReply)
 	_, _ = s.pool.Exec(ctx, `
@@ -1171,7 +1210,7 @@ func (s *PostgresStore) UpdateContactSettings(next domain.ContactSettings) (doma
 			qq_image_url=EXCLUDED.qq_image_url,
 			entry_reply=EXCLUDED.entry_reply,
 			updated_at=EXCLUDED.updated_at
-	`, current.Phone, current.Wechat, nonEmpty(current.WechatReplyType, "text"), current.WechatImageURL, current.QQ, nonEmpty(current.QQReplyType, "text"), current.QQImageURL, current.EntryReply, dbNow())
+	`, current.Telephone, current.WhatsApp, "text", "", current.Telegram, "text", "", current.EntryReply, dbNow())
 	return current, nil
 }
 
@@ -1220,7 +1259,7 @@ func (s *PostgresStore) DeleteKeywordRule(id string) (domain.KeywordRule, error)
 	if err != nil {
 		return domain.KeywordRule{}, mapNoRows(err)
 	}
-	if _, err := s.pool.Exec(ctx, `DELETE FROM keyword_rules WHERE id = func (s *PostgresStore) UpdateKeywordRule(id string, next domain.KeywordRule) (domain.KeywordRule, error) {`, id); err != nil {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM keyword_rules WHERE id=$1`, id); err != nil {
 		return domain.KeywordRule{}, err
 	}
 	return current, nil
@@ -1307,9 +1346,6 @@ func (s *PostgresStore) UpdateAISettings(next domain.AISettings) (domain.AISetti
 	if strings.TrimSpace(next.SystemPrompt) != "" {
 		current.SystemPrompt = strings.TrimSpace(next.SystemPrompt)
 	}
-	if next.NoReplyTimeoutSeconds > 0 {
-		current.NoReplyTimeoutSeconds = next.NoReplyTimeoutSeconds
-	}
 	protectedKey, err := protectSecret(s.options.DataEncryptionKey, current.APIKey)
 	if err != nil {
 		return current, err
@@ -1317,9 +1353,9 @@ func (s *PostgresStore) UpdateAISettings(next domain.AISettings) (domain.AISetti
 	_, _ = s.pool.Exec(ctx, `
 		INSERT INTO ai_settings (
 			id, enabled, mode, base_url, api_key_ciphertext, model, api_type,
-			temperature, max_output_tokens, timeout_seconds, system_prompt, agent_no_reply_timeout_seconds, updated_at
+			temperature, max_output_tokens, timeout_seconds, system_prompt, updated_at
 		)
-		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (id) DO UPDATE SET
 			enabled=EXCLUDED.enabled,
 			mode=EXCLUDED.mode,
@@ -1331,9 +1367,8 @@ func (s *PostgresStore) UpdateAISettings(next domain.AISettings) (domain.AISetti
 			max_output_tokens=EXCLUDED.max_output_tokens,
 			timeout_seconds=EXCLUDED.timeout_seconds,
 			system_prompt=EXCLUDED.system_prompt,
-			agent_no_reply_timeout_seconds=EXCLUDED.agent_no_reply_timeout_seconds,
 			updated_at=EXCLUDED.updated_at
-	`, current.Enabled, current.Mode, current.BaseURL, protectedKey, current.Model, current.APIType, current.Temperature, current.MaxOutputTokens, current.TimeoutSeconds, current.SystemPrompt, current.NoReplyTimeoutSeconds, dbNow())
+	`, current.Enabled, current.Mode, current.BaseURL, protectedKey, current.Model, current.APIType, current.Temperature, current.MaxOutputTokens, current.TimeoutSeconds, current.SystemPrompt, dbNow())
 	return current, nil
 }
 
@@ -1652,26 +1687,15 @@ func (s *PostgresStore) DisableAgent(id string) (domain.Agent, error) {
 		}
 		for _, conversation := range conversations {
 			conversation.AssignedAgentID = ""
-			conversation.Status = domain.ConversationWaiting
+			conversation.Status = domain.ConversationHumanRequested
 			conversation.UpdatedAt = now
 			if _, err := tx.Exec(ctx, `
 				UPDATE conversations SET assigned_agent_id=NULL, status=$2, updated_at=$3 WHERE id=$1
 			`, conversation.ID, conversation.Status, conversation.UpdatedAt); err != nil {
 				return err
 			}
-			if err := s.assignConversationTx(ctx, tx, &conversation); err != nil {
+			if err := s.assignHumanConversationTx(ctx, tx, &conversation); err != nil {
 				return err
-			}
-			if conversation.AssignedAgentID == "" {
-				ai, err := s.aiSettingsTx(ctx, tx)
-				if err != nil {
-					return err
-				}
-				if ai.Enabled && ai.Mode != domain.AIModeManualOnly {
-					if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": domain.ConversationAIServing, "updated_at": now}); err != nil {
-						return err
-					}
-				}
 			}
 		}
 		return nil
@@ -1717,26 +1741,15 @@ func (s *PostgresStore) DeleteAgent(id string) (domain.Agent, error) {
 		}
 		for _, conversation := range conversations {
 			conversation.AssignedAgentID = ""
-			conversation.Status = domain.ConversationWaiting
+			conversation.Status = domain.ConversationHumanRequested
 			conversation.UpdatedAt = now
 			if _, err := tx.Exec(ctx, `
 				UPDATE conversations SET assigned_agent_id=NULL, status=$2, updated_at=$3 WHERE id=$1
 			`, conversation.ID, conversation.Status, conversation.UpdatedAt); err != nil {
 				return err
 			}
-			if err := s.assignConversationTx(ctx, tx, &conversation); err != nil {
+			if err := s.assignHumanConversationTx(ctx, tx, &conversation); err != nil {
 				return err
-			}
-			if conversation.AssignedAgentID == "" {
-				ai, err := s.aiSettingsTx(ctx, tx)
-				if err != nil {
-					return err
-				}
-				if ai.Enabled && ai.Mode != domain.AIModeManualOnly {
-					if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": domain.ConversationAIServing, "updated_at": now}); err != nil {
-						return err
-					}
-				}
 			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE conversations SET assigned_agent_id=NULL, updated_at=$2 WHERE assigned_agent_id=$1`, agent.ID, now); err != nil {
@@ -1858,6 +1871,11 @@ func (s *PostgresStore) assignConversationTx(ctx context.Context, tx pgx.Tx, con
 		conversation.UpdatedAt = now
 		return s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": now})
 	}
+	return s.assignHumanConversationTx(ctx, tx, conversation)
+}
+
+func (s *PostgresStore) assignHumanConversationTx(ctx context.Context, tx pgx.Tx, conversation *domain.Conversation) error {
+	now := dbNow()
 	row := tx.QueryRow(ctx, `
 		SELECT `+agentColumns+`
 		FROM agents
@@ -2012,38 +2030,14 @@ func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, co
 	if normalized == "" {
 		return nil, false, nil
 	}
+	// 人工已接管或已进入人工队列时，任何关键词和 AI 都不再自动回复。
+	if conversation.AssignedAgentID != "" || conversation.Status == domain.ConversationAssigned || conversation.Status == domain.ConversationHumanRequested {
+		return nil, false, nil
+	}
 	generated := []domain.Message{}
 	if isHumanKeyword(normalized) {
-		if conversation.AssignedAgentID != "" {
-			conversation.Status = domain.ConversationAssigned
-			if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": dbNow()}); err != nil {
-				return nil, false, err
-			}
-			msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", domain.MessageHandoff, "已为您通知人工客服，请稍候。")
-			if err != nil {
-				return nil, false, err
-			}
-			return append(generated, msg), false, nil
-		}
-		conversation.Status = domain.ConversationHumanRequested
-		if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": dbNow()}); err != nil {
-			return nil, false, err
-		}
-		if err := s.assignConversationTx(ctx, tx, conversation); err != nil {
-			return nil, false, err
-		}
-		if conversation.AssignedAgentID != "" {
-			msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", domain.MessageHandoff, "已为您通知人工客服，请稍候。")
-			if err != nil {
-				return nil, false, err
-			}
-			return append(generated, msg), false, nil
-		}
-		msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderAI, "ai", domain.MessageAIText, "已为您通知人工客服。当前人工暂时不可用，我会先继续帮您处理常见问题。")
-		if err != nil {
-			return nil, false, err
-		}
-		return append(generated, msg), false, nil
+		messages, err := s.requestHumanTx(ctx, tx, conversation)
+		return messages, false, err
 	}
 
 	rules, err := s.keywordRules(ctx, tx)
@@ -2054,15 +2048,19 @@ func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, co
 		if !rule.Enabled || !keywordMatches(rule, normalized) {
 			continue
 		}
-		messageType := domain.MessageText
-		if rule.Action == "phone" {
-			messageType = domain.MessageContactPhone
-		}
-		if rule.Action == "wechat" {
-			messageType = domain.MessageContactWechat
-		}
 		if rule.Action == "handoff" {
-			messageType = domain.MessageHandoff
+			messages, err := s.requestHumanTx(ctx, tx, conversation)
+			return messages, false, err
+		}
+		messageType := domain.MessageText
+		if rule.Action == "telephone" {
+			messageType = domain.MessageContactTelephone
+		}
+		if rule.Action == "whatsapp" {
+			messageType = domain.MessageContactWhatsApp
+		}
+		if rule.Action == "telegram" {
+			messageType = domain.MessageContactTelegram
 		}
 		msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", messageType, rule.Reply)
 		if err != nil {
@@ -2071,9 +2069,6 @@ func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, co
 		return append(generated, msg), false, nil
 	}
 
-	if conversation.Status == domain.ConversationAssigned {
-		return generated, false, nil
-	}
 	ai, err := s.aiSettingsTx(ctx, tx)
 	if err != nil {
 		return nil, false, err
@@ -2093,6 +2088,25 @@ func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, co
 		return nil, false, err
 	}
 	return generated, true, nil
+}
+
+func (s *PostgresStore) requestHumanTx(ctx context.Context, tx pgx.Tx, conversation *domain.Conversation) ([]domain.Message, error) {
+	conversation.Status = domain.ConversationHumanRequested
+	if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": dbNow()}); err != nil {
+		return nil, err
+	}
+	if err := s.assignHumanConversationTx(ctx, tx, conversation); err != nil {
+		return nil, err
+	}
+	content := "已进入人工客服队列，请稍候。排队期间不会再触发 AI 或关键词自动回复。"
+	if conversation.AssignedAgentID != "" {
+		content = "已为您通知人工客服，请稍候。"
+	}
+	msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", domain.MessageHandoff, content)
+	if err != nil {
+		return nil, err
+	}
+	return []domain.Message{msg}, nil
 }
 
 func (s *PostgresStore) updateConversationFieldsTx(ctx context.Context, tx pgx.Tx, conversationID string, fields map[string]any) error {
@@ -2133,16 +2147,9 @@ func (s *PostgresStore) contactSettings(ctx context.Context, exec dbTx) (domain.
 	err := exec.QueryRow(ctx, `
 		SELECT phone, wechat, wechat_reply_type, wechat_image_url, qq, qq_reply_type, qq_image_url, entry_reply
 		FROM contact_settings WHERE id=1
-	`).Scan(&out.Phone, &out.Wechat, &out.WechatReplyType, &out.WechatImageURL, &out.QQ, &out.QQReplyType, &out.QQImageURL, &out.EntryReply)
+	`).Scan(&out.Telephone, &out.WhatsApp, new(string), new(string), &out.Telegram, new(string), new(string), &out.EntryReply)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.ContactSettings{
-			Phone:           "400-123-4567",
-			Wechat:          "+86 400 888 8888",
-			WechatReplyType: "text",
-			QQ:              "@AstrevaSupport",
-			QQReplyType:     "text",
-			EntryReply:      "您好，欢迎咨询在线客服，请问有什么可以帮您？",
-		}, nil
+		return domain.ContactSettings{Telephone: "400-123-4567", WhatsApp: "+86 400 888 8888", Telegram: "@AstrevaSupport", EntryReply: "您好，欢迎咨询在线客服，请问有什么可以帮您？"}, nil
 	}
 	return out, err
 }
@@ -2202,22 +2209,21 @@ func (s *PostgresStore) aiSettingsTx(ctx context.Context, exec dbTx) (domain.AIS
 	var out domain.AISettings
 	var storedKey string
 	err := exec.QueryRow(ctx, `
-		SELECT enabled, mode, base_url, api_key_ciphertext, model, api_type, temperature, max_output_tokens, timeout_seconds, system_prompt, agent_no_reply_timeout_seconds
+		SELECT enabled, mode, base_url, api_key_ciphertext, model, api_type, temperature, max_output_tokens, timeout_seconds, system_prompt
 		FROM ai_settings WHERE id=1
-	`).Scan(&out.Enabled, &out.Mode, &out.BaseURL, &storedKey, &out.Model, &out.APIType, &out.Temperature, &out.MaxOutputTokens, &out.TimeoutSeconds, &out.SystemPrompt, &out.NoReplyTimeoutSeconds)
+	`).Scan(&out.Enabled, &out.Mode, &out.BaseURL, &storedKey, &out.Model, &out.APIType, &out.Temperature, &out.MaxOutputTokens, &out.TimeoutSeconds, &out.SystemPrompt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		out = domain.AISettings{
-			Enabled:               true,
-			Mode:                  domain.AIModeHumanFirst,
-			BaseURL:               nonEmpty(s.options.OpenAIBaseURL, "https://api.openai.com/v1"),
-			APIKey:                strings.TrimSpace(s.options.OpenAIAPIKey),
-			Model:                 nonEmpty(s.options.OpenAIModel, "gpt-4o-mini"),
-			APIType:               nonEmpty(s.options.OpenAIAPIType, "chat_completions"),
-			Temperature:           0.7,
-			MaxOutputTokens:       512,
-			TimeoutSeconds:        20,
-			SystemPrompt:          defaultPrompt(),
-			NoReplyTimeoutSeconds: 60,
+			Enabled:         true,
+			Mode:            domain.AIModeHumanFirst,
+			BaseURL:         nonEmpty(s.options.OpenAIBaseURL, "https://api.openai.com/v1"),
+			APIKey:          strings.TrimSpace(s.options.OpenAIAPIKey),
+			Model:           nonEmpty(s.options.OpenAIModel, "gpt-4o-mini"),
+			APIType:         nonEmpty(s.options.OpenAIAPIType, "chat_completions"),
+			Temperature:     0.7,
+			MaxOutputTokens: 512,
+			TimeoutSeconds:  20,
+			SystemPrompt:    defaultPrompt(),
 		}
 		out.APIKeyMasked = maskAPIKey(out.APIKey)
 		return out, nil
@@ -2280,9 +2286,9 @@ func (s *PostgresStore) seedDefaults(ctx context.Context) error {
 			sql: `
 				INSERT INTO keyword_rules (id, keyword, match_type, reply, enabled, priority, action)
 				VALUES
-					('kw_phone', '电话', 'contains', '客服电话：400-123-4567', true, 90, 'phone'),
-					('kw_whatsapp', 'WhatsApp', 'contains', '官方 WhatsApp：+86 400 888 8888', true, 80, 'wechat'),
-					('kw_telegram', 'Telegram', 'contains', '官方 Telegram：@AstrevaSupport', true, 75, 'text')
+					('kw_phone', '电话', 'contains', '客服电话：400-123-4567', true, 90, 'telephone'),
+					('kw_whatsapp', 'WhatsApp', 'contains', '官方 WhatsApp：+86 400 888 8888', true, 80, 'whatsapp'),
+					('kw_telegram', 'Telegram', 'contains', '官方 Telegram：@AstrevaSupport', true, 75, 'telegram')
 				ON CONFLICT (id) DO NOTHING
 			`,
 		},
@@ -2295,8 +2301,8 @@ func (s *PostgresStore) seedDefaults(ctx context.Context) error {
 		},
 		{
 			sql: `
-				INSERT INTO ai_settings (id, enabled, mode, base_url, api_key_ciphertext, model, api_type, temperature, max_output_tokens, timeout_seconds, system_prompt, agent_no_reply_timeout_seconds)
-				VALUES (1, true, 'human_first', $1, $2, $3, $4, 0.70, 512, 20, $5, 60)
+				INSERT INTO ai_settings (id, enabled, mode, base_url, api_key_ciphertext, model, api_type, temperature, max_output_tokens, timeout_seconds, system_prompt)
+				VALUES (1, true, 'human_first', $1, $2, $3, $4, 0.70, 512, 20, $5)
 				ON CONFLICT (id) DO NOTHING
 			`,
 			args: []any{
@@ -2340,11 +2346,20 @@ func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 		`UPDATE contact_settings SET entry_reply='您好，欢迎咨询在线客服，请问有什么可以帮您？' WHERE id=1 AND entry_reply=''`,
 		`ALTER TABLE keyword_rules ADD COLUMN IF NOT EXISTS show_in_quick_replies BOOLEAN NOT NULL DEFAULT false`,
 		`ALTER TABLE keyword_rules ADD COLUMN IF NOT EXISTS quick_reply_text TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE keyword_rules DROP CONSTRAINT IF EXISTS keyword_rules_match_type_check`,
+		`ALTER TABLE keyword_rules ADD CONSTRAINT keyword_rules_match_type_check CHECK (match_type IN ('contains', 'exact', 'prefix'))`,
+		`ALTER TABLE keyword_rules DROP CONSTRAINT IF EXISTS keyword_rules_action_check`,
+		`UPDATE keyword_rules SET action='telephone' WHERE action='phone'`,
+		`UPDATE keyword_rules SET action='whatsapp' WHERE action='wechat'`,
+		`ALTER TABLE keyword_rules ADD CONSTRAINT keyword_rules_action_check CHECK (action IN ('text', 'telephone', 'whatsapp', 'telegram', 'handoff'))`,
 		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ`,
 		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS revoked_by_kind TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS revoked_by_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_message_type_check`,
-		`ALTER TABLE messages ADD CONSTRAINT messages_message_type_check CHECK (message_type IN ('text', 'emoji', 'image', 'audio', 'contact_phone', 'contact_wechat', 'system', 'ai_text', 'handoff_request', 'revoked'))`,
+		`ALTER TABLE messages ADD CONSTRAINT messages_message_type_check CHECK (message_type IN ('text', 'emoji', 'image', 'audio', 'contact_phone', 'contact_wechat', 'contact_telephone', 'contact_whatsapp', 'contact_telegram', 'system', 'ai_text', 'handoff_request', 'revoked'))`,
+		`ALTER TABLE ai_settings DROP CONSTRAINT IF EXISTS ai_settings_api_type_check`,
+		`ALTER TABLE ai_settings ADD CONSTRAINT ai_settings_api_type_check CHECK (api_type IN ('chat_completions', 'responses', 'anthropic_messages'))`,
+		`ALTER TABLE ai_settings DROP COLUMN IF EXISTS agent_no_reply_timeout_seconds`,
 		`CREATE TABLE IF NOT EXISTS service_ratings (
 			id TEXT PRIMARY KEY,
 			conversation_id TEXT NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE,

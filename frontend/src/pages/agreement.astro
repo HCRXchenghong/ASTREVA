@@ -5,18 +5,17 @@ import { getContent, staticPage } from '../lib/content';
 
 const content = await getContent();
 const page = staticPage(content, 'agreement');
-const aboutHero = staticPage(content, 'about').hero;
 ---
 
 <BaseLayout content={content} seo={page.seo} path="/agreement/">
   <div class="w-full pt-24">
     <InnerPageHero
       id="agreement-hero"
-      eyebrow={page.hero?.eyebrow}
-      title={page.hero?.title || page.title}
-      description={page.hero?.description || page.seo.description}
-      backgroundImage={page.hero?.backgroundImage || aboutHero?.backgroundImage}
-      backgroundVideo={page.hero?.backgroundVideo || aboutHero?.backgroundVideo}
+      eyebrow={page.hero.eyebrow}
+      title={page.hero.title}
+      description={page.hero.description}
+      backgroundImage={page.hero.backgroundImage}
+      backgroundVideo={page.hero.backgroundVideo}
     />
     <div id="agreement-content" class="py-24 bg-white min-h-[60vh] scroll-mt-24">
       <div class="max-w-4xl mx-auto px-6">
