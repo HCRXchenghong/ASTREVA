@@ -39,7 +39,7 @@ func TestChatCompletionsIncludesHistory(t *testing.T) {
 		Model:          "gpt-4o-mini",
 		APIType:        "chat_completions",
 		TimeoutSeconds: 5,
-	}, domain.ContactSettings{}, history, "那 201 呢？", LangZh)
+	}, domain.ContactSettings{}, history, "那 201 呢？", LangZh, "")
 	if err != nil {
 		t.Fatalf("reply: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestResponsesIncludesHistory(t *testing.T) {
 		Model:          "gpt-5",
 		APIType:        "responses",
 		TimeoutSeconds: 5,
-	}, domain.ContactSettings{}, history, "what did I just say?", LangEn)
+	}, domain.ContactSettings{}, history, "what did I just say?", LangEn, "conv_test")
 	if err != nil {
 		t.Fatalf("reply: %v", err)
 	}

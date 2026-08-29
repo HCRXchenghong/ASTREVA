@@ -1416,6 +1416,46 @@ func (s *PostgresStore) UpdateAISettings(next domain.AISettings) (domain.AISetti
 	return current, nil
 }
 
+// AICacheProbe 读取模型缓存探测结果；无记录时返回空结果。
+func (s *PostgresStore) AICacheProbe() domain.AICacheProbe {
+	ctx, cancel := dbContext()
+	defer cancel()
+	var out domain.AICacheProbe
+	var resultsJSON string
+	var probedAt sql.NullTime
+	err := s.pool.QueryRow(ctx, "SELECT COALESCE(model_results::text, '{}'), status, error, probed_at FROM ai_cache_probe WHERE id=1").
+		Scan(&resultsJSON, &out.Status, &out.Error, &probedAt)
+	if err != nil {
+		out.ModelResults = map[string]string{}
+		return out
+	}
+	out.ModelResults = parseTranslationsJSON(resultsJSON)
+	if probedAt.Valid {
+		out.ProbedAt = &probedAt.Time
+	}
+	return out
+}
+
+// SaveAICacheProbe 保存模型缓存探测结果。
+func (s *PostgresStore) SaveAICacheProbe(probe domain.AICacheProbe) {
+	ctx, cancel := dbContext()
+	defer cancel()
+	resultsJSON, err := json.Marshal(probe.ModelResults)
+	if err != nil {
+		resultsJSON = []byte("{}")
+	}
+	_, _ = s.pool.Exec(ctx, `
+		INSERT INTO ai_cache_probe (id, model_results, status, error, probed_at, updated_at)
+		VALUES (1, $1::jsonb, $2, $3, $4, $5)
+		ON CONFLICT (id) DO UPDATE SET
+			model_results=EXCLUDED.model_results,
+			status=EXCLUDED.status,
+			error=EXCLUDED.error,
+			probed_at=EXCLUDED.probed_at,
+			updated_at=EXCLUDED.updated_at
+	`, string(resultsJSON), probe.Status, probe.Error, probe.ProbedAt, dbNow())
+}
+
 func (s *PostgresStore) BusinessHours() domain.BusinessHours {
 	ctx, cancel := dbContext()
 	defer cancel()
@@ -2418,6 +2458,16 @@ func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 		`ALTER TABLE messages ADD CONSTRAINT messages_message_type_check CHECK (message_type IN ('text', 'emoji', 'image', 'audio', 'contact_phone', 'contact_wechat', 'contact_telephone', 'contact_whatsapp', 'contact_telegram', 'system', 'ai_text', 'handoff_request', 'revoked'))`,
 		`ALTER TABLE ai_settings DROP CONSTRAINT IF EXISTS ai_settings_api_type_check`,
 		`ALTER TABLE ai_settings ADD CONSTRAINT ai_settings_api_type_check CHECK (api_type IN ('chat_completions', 'responses', 'anthropic_messages'))`,
+		`CREATE TABLE IF NOT EXISTS ai_cache_probe (
+			id INTEGER PRIMARY KEY CHECK (id=1),
+			model_results JSONB NOT NULL DEFAULT '{}',
+			status TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			probed_at TIMESTAMPTZ,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT ai_cache_probe_status_check CHECK (status IN ('', 'running', 'done', 'error'))
+		)`,
+		`INSERT INTO ai_cache_probe (id) VALUES (1) ON CONFLICT (id) DO NOTHING`,
 		`ALTER TABLE ai_settings DROP COLUMN IF EXISTS agent_no_reply_timeout_seconds`,
 		`CREATE TABLE IF NOT EXISTS service_ratings (
 			id TEXT PRIMARY KEY,

@@ -1600,6 +1600,7 @@ function renderSystemSettingsPage(bootstrap, options = {}) {
           <label class="wide">系统提示词<textarea name="system_prompt" rows="6">${escapeHtml(ai.system_prompt)}</textarea></label>
           <div class="form-actions wide"><span class="form-state" aria-live="polite"></span><button class="button" type="button" id="fetchAiModels">获取上游模型</button><button class="button primary" type="submit">加密保存 AI 设置</button></div>
         </form>
+        <div class="form-actions wide"><span class="form-state" id="aiCacheProbeStatus" aria-live="polite"></span><button class="button" type="button" id="probeAiCache">重新探测模型缓存</button></div>
       </article>
 
       <article class="panel wide-panel">

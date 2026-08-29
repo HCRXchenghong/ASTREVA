@@ -97,7 +97,8 @@ func (s *Service) TestAIReply(ctx context.Context, userText string) (string, err
 	if userText == "" {
 		userText = "你好，请简单介绍一下你能提供什么帮助。"
 	}
-	return s.ai.Reply(ctx, s.store.AISettings(), s.store.ContactSettings(), nil, userText, ai.LangZh)
+	settings := s.settingsWithCacheMode()
+	return s.ai.Reply(ctx, settings, s.store.ContactSettings(), nil, userText, ai.LangZh, "")
 }
 
 func (s *Service) AIModels(ctx context.Context, preview domain.AISettings) ([]string, error) {
@@ -115,6 +116,69 @@ func (s *Service) AIModels(ctx context.Context, preview domain.AISettings) ([]st
 		settings.TimeoutSeconds = preview.TimeoutSeconds
 	}
 	return s.ai.Models(ctx, settings)
+}
+
+// settingsWithCacheMode 读取 AI 配置，并按探测结果解析当前模型的缓存模式。
+// 探测结果为 auto（自动缓存）或 explicit（显式标记）时启用对应的最高效请求方式，
+// 其余情况（none/未探测）保持原有请求格式，行为与改造前完全一致。
+func (s *Service) settingsWithCacheMode() domain.AISettings {
+	settings := s.store.AISettings()
+	probe := s.store.AICacheProbe()
+	mode := strings.TrimSpace(probe.ModelResults[settings.Model])
+	if mode == ai.CacheModeAuto || mode == ai.CacheModeExplicit {
+		settings.CacheMode = mode
+	}
+	return settings
+}
+
+// ProbeModelCaches 逐个实测模型的提示词缓存支持并持久化结果（最多 20 个模型）。
+// 当前配置的模型永远第一个探测；同一时刻只允许一个探测任务，避免重复消耗。
+func (s *Service) ProbeModelCaches(ctx context.Context, models []string) {
+	current := s.store.AICacheProbe()
+	if current.Status == "running" {
+		return
+	}
+	settings := s.store.AISettings()
+	seen := map[string]bool{}
+	ordered := make([]string, 0, len(models)+1)
+	if strings.TrimSpace(settings.Model) != "" {
+		configured := strings.TrimSpace(settings.Model)
+		ordered = append(ordered, configured)
+		seen[configured] = true
+	}
+	const maxProbeModels = 20
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" || seen[model] {
+			continue
+		}
+		seen[model] = true
+		ordered = append(ordered, model)
+		if len(ordered) >= maxProbeModels {
+			break
+		}
+	}
+	probe := domain.AICacheProbe{
+		ModelResults: map[string]string{},
+		Status:       "running",
+	}
+	for model, mode := range current.ModelResults {
+		probe.ModelResults[model] = mode
+	}
+	s.store.SaveAICacheProbe(probe)
+	for _, model := range ordered {
+		mode, err := s.ai.ProbeCacheSupport(ctx, settings, model)
+		if err != nil {
+			s.logger.Warn("cache probe failed", "model", model, "error", err)
+			mode = ai.CacheModeNone
+		}
+		probe.ModelResults[model] = mode
+		s.store.SaveAICacheProbe(probe)
+	}
+	now := time.Now().UTC()
+	probe.Status = "done"
+	probe.ProbedAt = &now
+	s.store.SaveAICacheProbe(probe)
 }
 
 func (s *Service) SubmitRating(conversationID string, score int, tags []string, comment string) (domain.ServiceRating, error) {
@@ -291,7 +355,9 @@ func (s *Service) generateAIReply(conversationID, currentMsgID, userText string,
 	visitorLang = ai.NormalizeLang(visitorLang, ai.LangZh)
 	// 仅读取本会话的历史消息作为上下文，按 conversationID 隔离，绝不跨会话共享。
 	history := s.conversationAITurns(conversationID, currentMsgID, visitorLang)
-	reply, err := s.ai.Reply(ctx, s.store.AISettings(), s.store.ContactSettings(), history, userText, visitorLang)
+	settings := s.settingsWithCacheMode()
+	// cacheKey 用会话 ID：同一会话的多轮请求共享同一缓存前缀，跨会话天然隔离。
+	reply, err := s.ai.Reply(ctx, settings, s.store.ContactSettings(), history, userText, visitorLang, conversationID)
 	if err != nil {
 		s.logger.Warn("AI reply failed", "conversation_id", conversationID, "error", err)
 		reply = aiBusyText(visitorLang)

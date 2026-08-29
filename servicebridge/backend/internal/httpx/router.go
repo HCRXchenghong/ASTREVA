@@ -1073,7 +1073,53 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			return
 		}
 		recordAuditFromRequest(service, r, trustedProxies, "ai_settings.update", "ai_settings", "1", "更新 AI 配置")
+		// 保存后自动逐个实测模型缓存支持：先取上游模型列表（最多 20 个），
+		// 支持的模型后续自动走最高效缓存方式，不支持的保持原样。
+		go func() {
+			probeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			defer cancel()
+			var models []string
+			if list, listErr := service.AIModels(probeCtx, updated); listErr == nil {
+				models = list
+			}
+			service.ProbeModelCaches(probeCtx, models)
+		}()
 		writeJSON(w, http.StatusOK, updated)
+	})
+
+	mux.HandleFunc("GET /api/admin/ai-settings/cache-probe", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		writeJSON(w, http.StatusOK, service.Store().AICacheProbe())
+	})
+
+	mux.HandleFunc("POST /api/admin/ai-settings/cache-probe", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req struct {
+			Models []string `json:"models"`
+		}
+		_ = decodeOptionalJSON(w, r, &req)
+		if service.Store().AICacheProbe().Status == "running" {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "probe_running", "message": "缓存探测正在进行中"})
+			return
+		}
+		go func() {
+			probeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			defer cancel()
+			models := req.Models
+			if len(models) == 0 {
+				if settings := service.Store().AISettings(); strings.TrimSpace(settings.Model) != "" {
+					models = []string{settings.Model}
+				}
+			}
+			service.ProbeModelCaches(probeCtx, models)
+		}()
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 	})
 
 	mux.HandleFunc("POST /api/admin/ai-settings/test", func(w http.ResponseWriter, r *http.Request) {

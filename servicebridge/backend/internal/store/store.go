@@ -15,6 +15,8 @@ type Store interface {
 
 	CreateVisitorConversation(ip, source, lang, ipSource string) (domain.VisitorSession, error)
 	UpdateVisitorLang(conversationID, lang string) (domain.Conversation, error)
+	AICacheProbe() domain.AICacheProbe
+	SaveAICacheProbe(probe domain.AICacheProbe)
 	SetAgentStatus(agentID string, status domain.AgentStatus) (domain.Agent, []domain.Conversation, error)
 	ConversationsForAgent(agentID string) ([]domain.Conversation, error)
 	AllConversations() []domain.Conversation

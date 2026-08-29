@@ -233,6 +233,18 @@ type AISettings struct {
 	MaxOutputTokens int            `json:"max_output_tokens"`
 	TimeoutSeconds  int            `json:"timeout_seconds"`
 	SystemPrompt    string         `json:"system_prompt"`
+	// CacheMode 为当前 Model 解析出的缓存模式（运行时字段，不入库）：
+	// auto=上游自动提示词缓存；explicit=需显式标记（Anthropic）；空=不启用缓存优化。
+	CacheMode string `json:"-"`
+}
+
+// AICacheProbe 记录各模型的提示词缓存探测结果，与 ai_settings 分表存放。
+// Mode 取值：auto=自动缓存；explicit=需显式 cache_control；none=不支持。
+type AICacheProbe struct {
+	ModelResults map[string]string `json:"model_results"`
+	Status       string            `json:"status"`
+	Error        string            `json:"error,omitempty"`
+	ProbedAt     *time.Time        `json:"probed_at,omitempty"`
 }
 
 type BusinessHours struct {

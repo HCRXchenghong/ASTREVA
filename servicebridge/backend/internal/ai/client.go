@@ -18,6 +18,13 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// 缓存模式常量。
+const (
+	CacheModeAuto     = "auto"     // 上游自动提示词缓存（OpenAI 系）
+	CacheModeExplicit = "explicit" // 需显式 cache_control 标记（Anthropic）
+	CacheModeNone     = "none"     // 探测确认不支持或未知
+)
+
 func NewClient() *Client {
 	return &Client{
 		httpClient: &http.Client{Timeout: 90 * time.Second},
@@ -52,7 +59,8 @@ func normalizeHistory(history []HistoryTurn) []HistoryTurn {
 
 // Reply 根据访客语言生成 AI 客服回复。replyLang 为访客端看到的语言（zh/en/ar）。
 // history 为当前会话的历史对话轮次（按会话隔离传入，不得跨会话复用）。
-func (c *Client) Reply(ctx context.Context, settings domain.AISettings, contacts domain.ContactSettings, history []HistoryTurn, userText, replyLang string) (string, error) {
+// cacheKey 为会话级缓存路由键（会话 ID），仅在支持缓存的上游生效。
+func (c *Client) Reply(ctx context.Context, settings domain.AISettings, contacts domain.ContactSettings, history []HistoryTurn, userText, replyLang, cacheKey string) (string, error) {
 	userText = strings.TrimSpace(userText)
 	if userText == "" {
 		return "", errors.New("empty user text")
@@ -61,7 +69,7 @@ func (c *Client) Reply(ctx context.Context, settings domain.AISettings, contacts
 	if strings.TrimSpace(settings.APIKey) == "" {
 		return fallbackReply(userText, contacts, replyLang), nil
 	}
-	return c.complete(ctx, settings, replyPrompt(settings.SystemPrompt, contacts, replyLang), normalizeHistory(history), userText)
+	return c.complete(ctx, settings, replyPrompt(settings.SystemPrompt, contacts, replyLang), normalizeHistory(history), userText, cacheKey)
 }
 
 // Translate 翻译一条客服对话内容。会先理解口语表达、语气和语境，再输出自然、地道的译文，
@@ -80,7 +88,7 @@ func (c *Client) Translate(ctx context.Context, settings domain.AISettings, text
 		return "", errors.New("AI API key is required for translation")
 	}
 	// 翻译是单条内容处理，不需要会话历史上下文。
-	out, err := c.complete(ctx, settings, translationPrompt(sourceLang, targetLang), nil, text)
+	out, err := c.complete(ctx, settings, translationPrompt(sourceLang, targetLang), nil, text, "")
 	if err != nil {
 		return "", err
 	}
@@ -92,7 +100,7 @@ func (c *Client) Translate(ctx context.Context, settings domain.AISettings, text
 }
 
 // complete 调用配置的上游模型（chat_completions / responses / anthropic_messages），返回文本结果。
-func (c *Client) complete(ctx context.Context, settings domain.AISettings, systemPrompt string, history []HistoryTurn, userText string) (string, error) {
+func (c *Client) complete(ctx context.Context, settings domain.AISettings, systemPrompt string, history []HistoryTurn, userText, cacheKey string) (string, error) {
 	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 20 * time.Second
@@ -106,7 +114,7 @@ func (c *Client) complete(ctx context.Context, settings domain.AISettings, syste
 	}
 	switch apiType {
 	case "responses":
-		return c.responses(ctx, settings, systemPrompt, history, userText)
+		return c.responses(ctx, settings, systemPrompt, history, userText, cacheKey)
 	case "anthropic_messages":
 		return c.anthropicMessages(ctx, settings, systemPrompt, history, userText)
 	case "chat_completions":
@@ -212,7 +220,7 @@ func (c *Client) chatCompletions(ctx context.Context, settings domain.AISettings
 	return strings.TrimSpace(out.Choices[0].Message.Content), nil
 }
 
-func (c *Client) responses(ctx context.Context, settings domain.AISettings, systemPrompt string, history []HistoryTurn, userText string) (string, error) {
+func (c *Client) responses(ctx context.Context, settings domain.AISettings, systemPrompt string, history []HistoryTurn, userText, cacheKey string) (string, error) {
 	baseURL := normalizeBaseURL(settings.BaseURL)
 	input := make([]map[string]string, 0, len(history)+1)
 	for _, turn := range history {
@@ -224,6 +232,11 @@ func (c *Client) responses(ctx context.Context, settings domain.AISettings, syst
 		"instructions": systemPrompt,
 		"input":        input,
 		"temperature":  settings.Temperature,
+	}
+	// 探测确认支持自动缓存时，用会话 ID 作为缓存路由键：
+	// 同一会话的多轮请求会被路由到同一缓存槽，前缀（系统提示词+历史）命中率最高。
+	if settings.CacheMode == CacheModeAuto && strings.TrimSpace(cacheKey) != "" {
+		body["prompt_cache_key"] = cacheKey
 	}
 	if settings.MaxOutputTokens > 0 {
 		body["max_output_tokens"] = settings.MaxOutputTokens
@@ -271,20 +284,37 @@ func (c *Client) responses(ctx context.Context, settings domain.AISettings, syst
 }
 
 func (c *Client) anthropicMessages(ctx context.Context, settings domain.AISettings, systemPrompt string, history []HistoryTurn, userText string) (string, error) {
-	messages := make([]map[string]string, 0, len(history)+1)
+	type contentBlock struct {
+		Type         string          `json:"type"`
+		Text         string          `json:"text"`
+		CacheControl *map[string]string `json:"cache_control,omitempty"`
+	}
+	ephemeral := map[string]string{"type": "ephemeral"}
+	// 探测确认支持显式缓存时，把缓存断点打在"系统提示词 + 全部历史"末尾：
+	// 下一轮请求的前缀（系统+历史）与本轮完全一致，即可命中缓存（读取仅 1 折计费）。
+	useCache := settings.CacheMode == CacheModeExplicit
+	system := any(systemPrompt)
+	if useCache {
+		system = []contentBlock{{Type: "text", Text: systemPrompt, CacheControl: &ephemeral}}
+	}
+	messages := make([]map[string]any, 0, len(history)+1)
 	for _, turn := range history {
-		messages = append(messages, map[string]string{"role": turn.Role, "content": turn.Content})
+		messages = append(messages, map[string]any{"role": turn.Role, "content": turn.Content})
 	}
 	// Anthropic 要求首条消息必须是 user：若历史以 assistant 开头，裁掉开头连续的 assistant。
 	for len(messages) > 0 && messages[0]["role"] == "assistant" {
 		messages = messages[1:]
 	}
-	messages = append(messages, map[string]string{"role": "user", "content": userText})
+	if useCache && len(messages) > 0 {
+		last := messages[len(messages)-1]
+		last["content"] = []contentBlock{{Type: "text", Text: fmt.Sprintf("%v", last["content"]), CacheControl: &ephemeral}}
+	}
+	messages = append(messages, map[string]any{"role": "user", "content": userText})
 	body := map[string]any{
 		"model":       nonEmpty(settings.Model, "claude-3-5-haiku-latest"),
 		"max_tokens":  maxInt(settings.MaxOutputTokens, 512),
 		"temperature": settings.Temperature,
-		"system":      systemPrompt,
+		"system":      system,
 		"messages":    messages,
 	}
 	payload, _ := json.Marshal(body)
@@ -317,6 +347,156 @@ func (c *Client) anthropicMessages(ctx context.Context, settings domain.AISettin
 		}
 	}
 	return "", errors.New("empty AI response")
+}
+
+// probeText 生成约 1300 token 的确定性探测文本。
+// OpenAI 自动缓存要求前缀 >=1024 token，必须足够长才能触发。
+func probeText() string {
+	base := "Cache verification paragraph for prompt caching support detection. Stainless steel channel steel supply chain context. "
+	return strings.Repeat(base, 96)
+}
+
+// ProbeCacheSupport 对单个模型实测是否支持提示词缓存：
+// 连续发送两次相同的大前缀请求，第二次若报告缓存命中（OpenAI 自动缓存），
+// 或写入缓存成功（Anthropic 显式缓存），即判定支持。
+// 返回 CacheModeAuto / CacheModeExplicit / CacheModeNone。
+func (c *Client) ProbeCacheSupport(ctx context.Context, settings domain.AISettings, model string) (string, error) {
+	settings.Model = model
+	if strings.TrimSpace(settings.APIKey) == "" {
+		return CacheModeNone, errors.New("AI API key is required")
+	}
+	apiType := strings.TrimSpace(settings.APIType)
+	if apiType == "" {
+		apiType = "chat_completions"
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	switch apiType {
+	case "responses":
+		return c.probeResponses(probeCtx, settings)
+	case "anthropic_messages":
+		return c.probeAnthropic(probeCtx, settings)
+	default:
+		return c.probeChatCompletions(probeCtx, settings)
+	}
+}
+
+func (c *Client) probeRequest(ctx context.Context, url string, settings domain.AISettings, body map[string]any) (map[string]any, error) {
+	payload, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	setAPIHeaders(req, settings)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, responseError(resp)
+	}
+	out := map[string]any{}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// usageDetail 从 usage 的 *tokens_details 子对象里取字段（兼容各家命名）。
+func usageDetail(usage map[string]any, detailKey, field string) float64 {
+	details, _ := usage[detailKey].(map[string]any)
+	if details == nil {
+		return 0
+	}
+	value, _ := details[field].(float64)
+	return value
+}
+
+func (c *Client) probeChatCompletions(ctx context.Context, settings domain.AISettings) (string, error) {
+	url := normalizeBaseURL(settings.BaseURL) + "/chat/completions"
+	text := probeText()
+	mkBody := func() map[string]any {
+		return map[string]any{
+			"model":       nonEmpty(settings.Model, "gpt-4o-mini"),
+			"temperature": 0,
+			"max_tokens":  1,
+			"messages": []map[string]string{
+				{"role": "user", "content": text},
+			},
+		}
+	}
+	if _, err := c.probeRequest(ctx, url, settings, mkBody()); err != nil {
+		return CacheModeNone, err
+	}
+	time.Sleep(3 * time.Second)
+	second, err := c.probeRequest(ctx, url, settings, mkBody())
+	if err != nil {
+		return CacheModeNone, err
+	}
+	usage, _ := second["usage"].(map[string]any)
+	if usage != nil && usageDetail(usage, "prompt_tokens_details", "cached_tokens") > 0 {
+		return CacheModeAuto, nil
+	}
+	return CacheModeNone, nil
+}
+
+func (c *Client) probeResponses(ctx context.Context, settings domain.AISettings) (string, error) {
+	url := normalizeBaseURL(settings.BaseURL) + "/responses"
+	text := probeText()
+	mkBody := func() map[string]any {
+		return map[string]any{
+			"model":               nonEmpty(settings.Model, "gpt-4o-mini"),
+			"temperature":         0,
+			"max_output_tokens":   1,
+			"input":               text,
+		}
+	}
+	if _, err := c.probeRequest(ctx, url, settings, mkBody()); err != nil {
+		return CacheModeNone, err
+	}
+	time.Sleep(3 * time.Second)
+	second, err := c.probeRequest(ctx, url, settings, mkBody())
+	if err != nil {
+		return CacheModeNone, err
+	}
+	usage, _ := second["usage"].(map[string]any)
+	if usage != nil && usageDetail(usage, "input_tokens_details", "cached_tokens") > 0 {
+		return CacheModeAuto, nil
+	}
+	return CacheModeNone, nil
+}
+
+func (c *Client) probeAnthropic(ctx context.Context, settings domain.AISettings) (string, error) {
+	url := normalizeBaseURL(settings.BaseURL) + "/messages"
+	body := map[string]any{
+		"model":      nonEmpty(settings.Model, "claude-3-5-haiku-latest"),
+		"max_tokens": 1,
+		"messages": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{
+						"type":          "text",
+						"text":          probeText(),
+						"cache_control": map[string]string{"type": "ephemeral"},
+					},
+				},
+			},
+		},
+	}
+	out, err := c.probeRequest(ctx, url, settings, body)
+	if err != nil {
+		return CacheModeNone, err
+	}
+	usage, _ := out["usage"].(map[string]any)
+	if usage != nil {
+		if created, _ := usage["cache_creation_input_tokens"].(float64); created > 0 {
+			return CacheModeExplicit, nil
+		}
+	}
+	return CacheModeNone, nil
 }
 
 func setAPIHeaders(req *http.Request, settings domain.AISettings) {

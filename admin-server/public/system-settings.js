@@ -94,8 +94,58 @@ document.querySelector('#aiForm').addEventListener('submit', (event) => {
     }
     if (!payload.api_key) delete payload.api_key;
     await api('/api/admin/ai-settings', { method: 'PATCH', body: JSON.stringify(payload) });
+    // 保存后后端自动逐个实测模型缓存支持，前端开始轮询展示结果。
+    setTimeout(refreshAiCacheProbe, 2500);
   }, 'AI 设置已保存');
 });
+
+// === 模型提示词缓存探测 ===
+const CACHE_MODE_LABELS = { auto: '支持自动缓存', explicit: '支持显式缓存', none: '不支持' };
+
+async function refreshAiCacheProbe() {
+  const statusEl = document.querySelector('#aiCacheProbeStatus');
+  if (!statusEl) return;
+  try {
+    const probe = await api('/api/admin/ai-settings/cache-probe');
+    const entries = Object.entries(probe.model_results || {});
+    let text;
+    if (probe.status === 'running') {
+      const done = entries.map(([model]) => model).join('、') || '准备中';
+      text = '缓存探测进行中（已完成 ' + entries.length + ' 个：' + done + '），每个模型需真实发两轮请求，请稍候…';
+      setTimeout(refreshAiCacheProbe, 4000);
+    } else if (!entries.length) {
+      text = '尚未探测缓存支持：保存 AI 设置会自动逐个实测，也可点右侧按钮立即探测。';
+    } else {
+      text = '缓存探测结果：' + entries.map(([model, mode]) => model + ' → ' + (CACHE_MODE_LABELS[mode] || mode)).join('；');
+      if (probe.probed_at) {
+        text += '（上次探测：' + new Date(probe.probed_at).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) + '）';
+      }
+      text += ' 支持的模型已自动按最高效方式启用缓存，不支持的保持原样。';
+    }
+    statusEl.textContent = text;
+    statusEl.className = 'form-state' + (probe.status === 'running' ? '' : ' success');
+  } catch (error) {
+    /* 探测状态读取失败不影响主流程 */
+  }
+}
+
+document.querySelector('#probeAiCache')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const select = document.querySelector('#aiModelSelect');
+    const models = [...new Set([...select.options].map((option) => option.value).filter(Boolean))];
+    await api('/api/admin/ai-settings/cache-probe', { method: 'POST', body: JSON.stringify({ models }) });
+    notify('缓存探测已启动，正在逐个模型实测');
+    setTimeout(refreshAiCacheProbe, 2000);
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+refreshAiCacheProbe();
 
 document.querySelector('#fetchAiModels').addEventListener('click', async (event) => {
   const form = event.currentTarget.form;

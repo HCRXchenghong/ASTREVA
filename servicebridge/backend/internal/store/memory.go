@@ -46,6 +46,7 @@ type MemoryStore struct {
 	appReleases  map[string]*domain.AppRelease
 	contacts     domain.ContactSettings
 	ai           domain.AISettings
+	cacheProbe   domain.AICacheProbe
 	business     domain.BusinessHours
 }
 
@@ -1436,6 +1437,27 @@ func (s *MemoryStore) UpdateAISettings(next domain.AISettings) (domain.AISetting
 		s.ai.SystemPrompt = strings.TrimSpace(next.SystemPrompt)
 	}
 	return s.ai, nil
+}
+
+// AICacheProbe 读取模型缓存探测结果。
+func (s *MemoryStore) AICacheProbe() domain.AICacheProbe {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.cacheProbe
+	if out.ModelResults == nil {
+		out.ModelResults = map[string]string{}
+	}
+	return out
+}
+
+// SaveAICacheProbe 保存模型缓存探测结果。
+func (s *MemoryStore) SaveAICacheProbe(probe domain.AICacheProbe) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if probe.ModelResults == nil {
+		probe.ModelResults = map[string]string{}
+	}
+	s.cacheProbe = probe
 }
 
 func (s *MemoryStore) BusinessHours() domain.BusinessHours {
