@@ -56,6 +56,8 @@
 
         /* "正在回复"输入中的三个小点动画 */
         .typing-dots { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; }
+        /* 顶部"正在回复"提示：宽度自适应、不换行、不被截断 */
+        #header-typing { white-space: nowrap; max-width: 78%; overflow: visible; }
         .typing-dots span {
             width: 7px; height: 7px; border-radius: 9999px; background: #9aa7b4;
             animation: typing-blink 1.2s infinite ease-in-out;
@@ -464,7 +466,7 @@
                         <span id="header-ai-badge" class="bg-blue-100 text-blue-600 text-[10px] px-1 rounded-sm border border-blue-200">AI</span>
                     </div>
                     <!-- 打字状态提示 (默认隐藏) -->
-                    <span id="header-typing" class="text-xs text-gray-500 hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-wc-header w-32 text-center" data-i18n="typing">
+                    <span id="header-typing" class="text-xs text-gray-500 hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-wc-header px-3 whitespace-nowrap text-center" dir="auto" data-i18n="typing">
                         对方正在输入...
                     </span>
                 </div>
@@ -1579,6 +1581,10 @@
             State.typingSender = senderType === 'agent' ? 'agent' : 'ai';
             DOM.headerTyping.textContent = State.typingSender === 'agent' ? t('agentTyping') : t('aiTyping');
             DOM.headerTyping.classList.remove('hidden');
+            // 提示展示期间隐藏标题与 AI 徽标，避免文字重叠。
+            if (DOM.headerTitle && DOM.headerTitle.parentElement) {
+                DOM.headerTitle.parentElement.style.visibility = 'hidden';
+            }
             const avatar = State.typingSender === 'agent' ? State.agentAvatar : './assets/img/avatar-service.svg';
             const html = `
                 <div class="flex gap-3 msg-wrapper typing-indicator">
@@ -1603,6 +1609,9 @@
             }
             State.typingSender = '';
             DOM.headerTyping.classList.add('hidden');
+            if (DOM.headerTitle && DOM.headerTitle.parentElement) {
+                DOM.headerTitle.parentElement.style.visibility = '';
+            }
             DOM.chatList.querySelectorAll('.typing-indicator').forEach((node) => node.remove());
         }
 
