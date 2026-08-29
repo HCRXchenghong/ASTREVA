@@ -634,6 +634,15 @@ func isTranslatableMessageType(messageType domain.MessageType) bool {
 var knownSystemTexts = map[string]map[string]string{
 	"会话已结束":     {"en": "The conversation has ended.", "ar": "انتهت المحادثة."},
 	"对方撤回了一条消息": {"en": "A message was recalled.", "ar": "تم سحب رسالة."},
+	// 默认欢迎语：静态三语映射，保证会话创建响应里就带译文，访客端零延迟、不闪中文。
+	"您好，欢迎咨询在线客服，请问有什么可以帮您？": {
+		"en": "Hello! Welcome to our live support — how can we help you today?",
+		"ar": "مرحبًا! أهلاً بك في خدمة الدعم المباشر، كيف يمكننا مساعدتك اليوم؟",
+	},
+	"我已收到您的问题。您可以继续补充细节，人工客服会尽快为您跟进。": {
+		"en": "I've got your question — feel free to add more details and our team will follow up shortly.",
+		"ar": "استلمنا سؤالك، يمكنك إضافة المزيد من التفاصيل وسيتابع فريق الدعم معك في أقرب وقت.",
+	},
 }
 
 func knownSystemText(content, lang string) (string, bool) {

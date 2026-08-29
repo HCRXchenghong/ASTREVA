@@ -1695,6 +1695,12 @@
             const pending = Array.isArray(State.pendingInitialMessages) ? [...State.pendingInitialMessages] : [];
             State.pendingInitialMessages = [];
             for (const msg of pending) {
+                // 非中文访客的 AI 欢迎语等初始消息若还没有当前语言译文，先不渲染，
+                // 等翻译完成后的推送/历史同步补上，避免"先闪一下中文"。
+                if (initialMessageAwaitingTranslation(msg)) {
+                    scheduleInitialMessageFallback(msg);
+                    continue;
+                }
                 if (msg.server_msg_id) State.renderedServerMsgIds.add(msg.server_msg_id);
                 if (msg.client_msg_id) State.renderedClientMsgIds.add(msg.client_msg_id);
                 renderServerMessage(msg, 'append', { force: true, silent: true });
@@ -1703,6 +1709,22 @@
             if (!State.quickRepliesRendered) {
                 renderQuickRepliesCard();
             }
+        }
+
+        function initialMessageAwaitingTranslation(msg) {
+            const lang = window.__CHAT_LANG__ || 'zh';
+            if (lang === 'zh' || !msg) return false;
+            if (msg.sender_type !== 'ai' || msg.message_type !== 'ai_text') return false;
+            const translated = msg.translations && msg.translations[lang];
+            return !String(translated || '').trim();
+        }
+
+        function scheduleInitialMessageFallback(msg) {
+            // 翻译迟迟不到（或失败）时的兜底：6 秒后仍无译文就显示原文，保证欢迎语不丢。
+            setTimeout(() => {
+                if (!msg.server_msg_id || State.renderedServerMsgIds.has(msg.server_msg_id)) return;
+                renderServerMessage(msg, 'append', { force: true, silent: true });
+            }, 6000);
         }
 
         function connectSocket() {
