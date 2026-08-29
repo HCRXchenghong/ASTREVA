@@ -34,7 +34,7 @@ func TestChatCompletionsReply(t *testing.T) {
 		Temperature:     0.7,
 		MaxOutputTokens: 128,
 		TimeoutSeconds:  5,
-	}, domain.ContactSettings{Telephone: "400", WhatsApp: "wa", Telegram: "tg"}, "你好", LangZh)
+	}, domain.ContactSettings{Telephone: "400", WhatsApp: "wa", Telegram: "tg"}, nil, "你好", LangZh)
 	if err != nil {
 		t.Fatalf("reply: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestResponsesReplyParsesOutputText(t *testing.T) {
 		Model:          "gpt-4o-mini",
 		APIType:        "responses",
 		TimeoutSeconds: 5,
-	}, domain.ContactSettings{}, "你好", LangZh)
+	}, domain.ContactSettings{}, nil, "你好", LangZh)
 	if err != nil {
 		t.Fatalf("reply: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestResponsesReplyParsesNestedOutput(t *testing.T) {
 		Model:          "gpt-4o-mini",
 		APIType:        "responses",
 		TimeoutSeconds: 5,
-	}, domain.ContactSettings{}, "你好", LangZh)
+	}, domain.ContactSettings{}, nil, "你好", LangZh)
 	if err != nil {
 		t.Fatalf("reply: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestAnthropicMessagesReplyAndHeaders(t *testing.T) {
 		Model:          "claude-3-5-haiku-latest",
 		APIType:        "anthropic_messages",
 		TimeoutSeconds: 5,
-	}, domain.ContactSettings{}, "你好", LangZh)
+	}, domain.ContactSettings{}, nil, "你好", LangZh)
 	if err != nil {
 		t.Fatalf("reply: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestModelsUsesProtocolHeadersAndDeduplicates(t *testing.T) {
 }
 
 func TestFallbackReplyWithoutAPIKey(t *testing.T) {
-	reply, err := NewClient().Reply(context.Background(), domain.AISettings{}, domain.ContactSettings{Telephone: "400-123"}, "电话是多少", LangZh)
+	reply, err := NewClient().Reply(context.Background(), domain.AISettings{}, domain.ContactSettings{Telephone: "400-123"}, nil, "电话是多少", LangZh)
 	if err != nil {
 		t.Fatalf("reply: %v", err)
 	}

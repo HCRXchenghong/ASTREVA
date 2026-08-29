@@ -97,7 +97,7 @@ func (s *Service) TestAIReply(ctx context.Context, userText string) (string, err
 	if userText == "" {
 		userText = "你好，请简单介绍一下你能提供什么帮助。"
 	}
-	return s.ai.Reply(ctx, s.store.AISettings(), s.store.ContactSettings(), userText, ai.LangZh)
+	return s.ai.Reply(ctx, s.store.AISettings(), s.store.ContactSettings(), nil, userText, ai.LangZh)
 }
 
 func (s *Service) AIModels(ctx context.Context, preview domain.AISettings) ([]string, error) {
@@ -280,16 +280,18 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 	if result.NeedAI {
 		// 访客端显示"AI 正在回复"输入指示，AI 消息送达或生成结束时关闭。
 		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.typing", Data: map[string]any{"sender_type": "ai", "typing": true}})
-		go s.generateAIReply(conversationID, result.AIText, visitorLang)
+		go s.generateAIReply(conversationID, result.Input.ServerMsgID, result.AIText, visitorLang)
 	}
 	return result, nil
 }
 
-func (s *Service) generateAIReply(conversationID, userText string, visitorLang string) {
+func (s *Service) generateAIReply(conversationID, currentMsgID, userText string, visitorLang string) {
 	ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
 	defer cancel()
 	visitorLang = ai.NormalizeLang(visitorLang, ai.LangZh)
-	reply, err := s.ai.Reply(ctx, s.store.AISettings(), s.store.ContactSettings(), userText, visitorLang)
+	// 仅读取本会话的历史消息作为上下文，按 conversationID 隔离，绝不跨会话共享。
+	history := s.conversationAITurns(conversationID, currentMsgID, visitorLang)
+	reply, err := s.ai.Reply(ctx, s.store.AISettings(), s.store.ContactSettings(), history, userText, visitorLang)
 	if err != nil {
 		s.logger.Warn("AI reply failed", "conversation_id", conversationID, "error", err)
 		reply = aiBusyText(visitorLang)
@@ -318,6 +320,62 @@ func (s *Service) generateAIReply(conversationID, userText string, visitorLang s
 	}
 	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: conversation})
+}
+
+// conversationAITurns 构造传给 AI 的当前会话历史上下文。
+// 隔离保证：只按 conversationID 从存储读取本会话消息，AI 客户端无状态、
+// 不缓存任何会话内容，因此不同会话之间不可能互相看到对方的对话。
+// 上限控制：最多取最近 30 条消息，且总长度不超过 6000 字符，
+// 超出时丢弃最旧的轮次，避免提示词无限膨胀。
+func (s *Service) conversationAITurns(conversationID, currentMsgID, visitorLang string) []ai.HistoryTurn {
+	messages := s.store.Messages(conversationID)
+	if len(messages) == 0 {
+		return nil
+	}
+	const maxMessages = 30
+	const maxTotalChars = 6000
+	start := 0
+	if len(messages) > maxMessages {
+		start = len(messages) - maxMessages
+	}
+	turns := make([]ai.HistoryTurn, 0, maxMessages)
+	for _, msg := range messages[start:] {
+		if msg.ServerMsgID == currentMsgID {
+			continue
+		}
+		var role, content string
+		switch {
+		case msg.SenderType == domain.SenderVisitor && msg.MessageType == domain.MessageText:
+			role, content = "user", msg.Content
+		case msg.SenderType == domain.SenderAI && msg.MessageType == domain.MessageAIText:
+			role, content = "assistant", msg.Content
+		case msg.SenderType == domain.SenderAgent && msg.MessageType == domain.MessageText:
+			// 客服消息对访客展示的是译文，AI 上下文同样使用访客语言的译文，
+			// 避免把中文原文混进外语对话导致 AI 串语言。
+			role = "assistant"
+			if translated := strings.TrimSpace(msg.Translations[visitorLang]); translated != "" {
+				content = translated
+			} else {
+				content = msg.Content
+			}
+		default:
+			continue
+		}
+		content = strings.TrimSpace(content)
+		if content == "" {
+			continue
+		}
+		turns = append(turns, ai.HistoryTurn{Role: role, Content: content})
+	}
+	total := 0
+	for _, turn := range turns {
+		total += len([]rune(turn.Content))
+	}
+	for len(turns) > 0 && total > maxTotalChars {
+		total -= len([]rune(turns[0].Content))
+		turns = turns[1:]
+	}
+	return turns
 }
 
 func (s *Service) AddAgentMessage(agentID, conversationID, clientMsgID, content string, messageType domain.MessageType) (store.MessageResult, error) {

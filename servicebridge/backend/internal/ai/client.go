@@ -24,8 +24,35 @@ func NewClient() *Client {
 	}
 }
 
+// HistoryTurn 是会话历史中的一轮对话（按时间顺序），仅用于当前会话的上下文。
+type HistoryTurn struct {
+	Role    string // "user" 或 "assistant"
+	Content string
+}
+
+// normalizeHistory 去掉空轮次、合并相邻同角色轮次，保证满足各家 API 的消息序列要求。
+func normalizeHistory(history []HistoryTurn) []HistoryTurn {
+	out := make([]HistoryTurn, 0, len(history))
+	for _, turn := range history {
+		content := strings.TrimSpace(turn.Content)
+		if content == "" {
+			continue
+		}
+		if turn.Role != "user" && turn.Role != "assistant" {
+			continue
+		}
+		if n := len(out); n > 0 && out[n-1].Role == turn.Role {
+			out[n-1].Content += "\n" + content
+			continue
+		}
+		out = append(out, HistoryTurn{Role: turn.Role, Content: content})
+	}
+	return out
+}
+
 // Reply 根据访客语言生成 AI 客服回复。replyLang 为访客端看到的语言（zh/en/ar）。
-func (c *Client) Reply(ctx context.Context, settings domain.AISettings, contacts domain.ContactSettings, userText, replyLang string) (string, error) {
+// history 为当前会话的历史对话轮次（按会话隔离传入，不得跨会话复用）。
+func (c *Client) Reply(ctx context.Context, settings domain.AISettings, contacts domain.ContactSettings, history []HistoryTurn, userText, replyLang string) (string, error) {
 	userText = strings.TrimSpace(userText)
 	if userText == "" {
 		return "", errors.New("empty user text")
@@ -34,7 +61,7 @@ func (c *Client) Reply(ctx context.Context, settings domain.AISettings, contacts
 	if strings.TrimSpace(settings.APIKey) == "" {
 		return fallbackReply(userText, contacts, replyLang), nil
 	}
-	return c.complete(ctx, settings, replyPrompt(settings.SystemPrompt, contacts, replyLang), userText)
+	return c.complete(ctx, settings, replyPrompt(settings.SystemPrompt, contacts, replyLang), normalizeHistory(history), userText)
 }
 
 // Translate 翻译一条客服对话内容。会先理解口语表达、语气和语境，再输出自然、地道的译文，
@@ -52,7 +79,8 @@ func (c *Client) Translate(ctx context.Context, settings domain.AISettings, text
 	if strings.TrimSpace(settings.APIKey) == "" {
 		return "", errors.New("AI API key is required for translation")
 	}
-	out, err := c.complete(ctx, settings, translationPrompt(sourceLang, targetLang), text)
+	// 翻译是单条内容处理，不需要会话历史上下文。
+	out, err := c.complete(ctx, settings, translationPrompt(sourceLang, targetLang), nil, text)
 	if err != nil {
 		return "", err
 	}
@@ -64,7 +92,7 @@ func (c *Client) Translate(ctx context.Context, settings domain.AISettings, text
 }
 
 // complete 调用配置的上游模型（chat_completions / responses / anthropic_messages），返回文本结果。
-func (c *Client) complete(ctx context.Context, settings domain.AISettings, systemPrompt, userText string) (string, error) {
+func (c *Client) complete(ctx context.Context, settings domain.AISettings, systemPrompt string, history []HistoryTurn, userText string) (string, error) {
 	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 20 * time.Second
@@ -78,11 +106,11 @@ func (c *Client) complete(ctx context.Context, settings domain.AISettings, syste
 	}
 	switch apiType {
 	case "responses":
-		return c.responses(ctx, settings, systemPrompt, userText)
+		return c.responses(ctx, settings, systemPrompt, history, userText)
 	case "anthropic_messages":
-		return c.anthropicMessages(ctx, settings, systemPrompt, userText)
+		return c.anthropicMessages(ctx, settings, systemPrompt, history, userText)
 	case "chat_completions":
-		return c.chatCompletions(ctx, settings, systemPrompt, userText)
+		return c.chatCompletions(ctx, settings, systemPrompt, history, userText)
 	}
 	return "", fmt.Errorf("unsupported AI API type: %s", apiType)
 }
@@ -133,15 +161,19 @@ func (c *Client) Models(ctx context.Context, settings domain.AISettings) ([]stri
 	return models, nil
 }
 
-func (c *Client) chatCompletions(ctx context.Context, settings domain.AISettings, systemPrompt, userText string) (string, error) {
+func (c *Client) chatCompletions(ctx context.Context, settings domain.AISettings, systemPrompt string, history []HistoryTurn, userText string) (string, error) {
 	baseURL := normalizeBaseURL(settings.BaseURL)
+	messages := []map[string]string{
+		{"role": "system", "content": systemPrompt},
+	}
+	for _, turn := range history {
+		messages = append(messages, map[string]string{"role": turn.Role, "content": turn.Content})
+	}
+	messages = append(messages, map[string]string{"role": "user", "content": userText})
 	body := map[string]any{
 		"model":       nonEmpty(settings.Model, "gpt-4o-mini"),
 		"temperature": settings.Temperature,
-		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userText},
-		},
+		"messages":    messages,
 	}
 	if settings.MaxOutputTokens > 0 {
 		body["max_tokens"] = settings.MaxOutputTokens
@@ -180,12 +212,17 @@ func (c *Client) chatCompletions(ctx context.Context, settings domain.AISettings
 	return strings.TrimSpace(out.Choices[0].Message.Content), nil
 }
 
-func (c *Client) responses(ctx context.Context, settings domain.AISettings, systemPrompt, userText string) (string, error) {
+func (c *Client) responses(ctx context.Context, settings domain.AISettings, systemPrompt string, history []HistoryTurn, userText string) (string, error) {
 	baseURL := normalizeBaseURL(settings.BaseURL)
+	input := make([]map[string]string, 0, len(history)+1)
+	for _, turn := range history {
+		input = append(input, map[string]string{"role": turn.Role, "content": turn.Content})
+	}
+	input = append(input, map[string]string{"role": "user", "content": userText})
 	body := map[string]any{
 		"model":        nonEmpty(settings.Model, "gpt-4o-mini"),
 		"instructions": systemPrompt,
-		"input":        userText,
+		"input":        input,
 		"temperature":  settings.Temperature,
 	}
 	if settings.MaxOutputTokens > 0 {
@@ -233,15 +270,22 @@ func (c *Client) responses(ctx context.Context, settings domain.AISettings, syst
 	return "", errors.New("empty AI response")
 }
 
-func (c *Client) anthropicMessages(ctx context.Context, settings domain.AISettings, systemPrompt, userText string) (string, error) {
+func (c *Client) anthropicMessages(ctx context.Context, settings domain.AISettings, systemPrompt string, history []HistoryTurn, userText string) (string, error) {
+	messages := make([]map[string]string, 0, len(history)+1)
+	for _, turn := range history {
+		messages = append(messages, map[string]string{"role": turn.Role, "content": turn.Content})
+	}
+	// Anthropic 要求首条消息必须是 user：若历史以 assistant 开头，裁掉开头连续的 assistant。
+	for len(messages) > 0 && messages[0]["role"] == "assistant" {
+		messages = messages[1:]
+	}
+	messages = append(messages, map[string]string{"role": "user", "content": userText})
 	body := map[string]any{
 		"model":       nonEmpty(settings.Model, "claude-3-5-haiku-latest"),
 		"max_tokens":  maxInt(settings.MaxOutputTokens, 512),
 		"temperature": settings.Temperature,
 		"system":      systemPrompt,
-		"messages": []map[string]string{
-			{"role": "user", "content": userText},
-		},
+		"messages":    messages,
 	}
 	payload, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, normalizeBaseURL(settings.BaseURL)+"/messages", bytes.NewReader(payload))
