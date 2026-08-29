@@ -163,6 +163,7 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
   let stored = null;
   const queued = new Map();
   const latestRevision = new Map();
+  const progressByLocale = new Map();
   let draining = false;
 
   async function loadSetting() {
@@ -254,9 +255,11 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
     if (!config.enabled) throw Object.assign(new Error('自动翻译已停用。'), { code: 'TRANSLATION_UNCONFIGURED' });
     if (!apiKey || !config.model) throw Object.assign(new Error('翻译上游未完整配置：需要 API Key 和模型。'), { code: 'TRANSLATION_UNCONFIGURED' });
     const startedAt = new Date().toISOString();
+    const entries = collectTranslatableEntries(content);
+    const total = entries.length;
+    progressByLocale.set(locale, { done: 0, total, updatedAt: Date.now() });
     const previous = await platformStore.readContentTranslation(locale);
     await platformStore.saveContentTranslation(locale, { ...previous, sourceRevision, status: 'running', lastError: '', startedAt, finishedAt: null });
-    const entries = collectTranslatableEntries(content);
     const translatedContent = structuredClone(content);
     translatedContent.site.locale = locale;
     for (let index = 0; index < entries.length; index += config.batchSize) {
@@ -264,8 +267,10 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
       if (latestRevision.get(locale) !== sourceRevision) return;
       const result = await requestBatch(config, apiKey, locale, entries.slice(index, index + config.batchSize));
       for (const [path, value] of result) setAtPath(translatedContent, path, value);
+      progressByLocale.set(locale, { done: Math.min(index + config.batchSize, total), total, updatedAt: Date.now() });
     }
     if (latestRevision.get(locale) !== sourceRevision) return;
+    progressByLocale.set(locale, { done: total, total, updatedAt: Date.now() });
     await platformStore.saveContentTranslation(locale, {
       content: translatedContent,
       sourceRevision,
@@ -293,6 +298,8 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
       if (isRetryableUpstreamError(error) && attempts < JOB_REQUEUE_DELAYS_MS.length) {
         const delay = JOB_REQUEUE_DELAYS_MS[attempts];
         logger.warn('[网站翻译] ' + job.locale + ' 上游暂不可用（' + error.message + '），' + delay + 'ms 后自动重排（第 ' + (attempts + 1) + ' 次）。');
+        const existingProgress = progressByLocale.get(job.locale);
+        if (existingProgress) progressByLocale.set(job.locale, { ...existingProgress, done: 0, updatedAt: Date.now() });
         await platformStore.saveContentTranslation(job.locale, {
           content: job.content,
           sourceRevision: job.sourceRevision,
@@ -308,6 +315,7 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
         }, delay);
         return;
       }
+      progressByLocale.delete(job.locale);
       const previous = await platformStore.readContentTranslation(job.locale);
       await platformStore.saveContentTranslation(job.locale, {
         ...previous,
@@ -337,8 +345,10 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
 
   async function schedule(content, sourceRevision, locales = TARGET_LOCALES) {
     const existing = new Map((await platformStore.listContentTranslations()).map((item) => [item.locale, item]));
+    const progressTotal = collectTranslatableEntries(content).length;
     for (const locale of locales.filter((item) => TARGET_LOCALES.includes(item))) {
       latestRevision.set(locale, sourceRevision);
+      progressByLocale.set(locale, { done: 0, total: progressTotal, updatedAt: Date.now() });
       await platformStore.saveContentTranslation(locale, {
         content: existing.get(locale)?.content || null,
         sourceRevision,
@@ -358,7 +368,10 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
     saveSettings,
     requestModels,
     schedule,
-    list: () => platformStore.listContentTranslations(),
+    list: async () => (await platformStore.listContentTranslations()).map((item) => {
+      const progress = progressByLocale.get(item.locale);
+      return { ...item, progress: progress ? { ...progress } : null };
+    }),
     read: (locale) => platformStore.readContentTranslation(locale)
   };
 }
