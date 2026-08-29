@@ -1330,13 +1330,24 @@ class _ChatPageState extends State<ChatPage> {
   List<ChatMessage> _messages = const [];
   bool _loading = true;
   bool _sendingImage = false;
+  DateTime _lastTypingSent = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
     super.initState();
     _events = widget.client.events.listen(_handleEvent);
+    _messageController.addListener(_onTypingChanged);
     _loadMessages();
     widget.client.markRead(widget.conversation.id).catchError((_) {});
+  }
+
+  void _onTypingChanged() {
+    // 输入中每 2.5 秒最多上报一次，访客端据此显示"客服正在回复"。
+    if (_messageController.text.trim().isEmpty) return;
+    final now = DateTime.now();
+    if (now.difference(_lastTypingSent).inMilliseconds < 2500) return;
+    _lastTypingSent = now;
+    widget.client.sendTyping(widget.conversation.id);
   }
 
   void _handleEvent(Map<String, dynamic> event) {
@@ -1377,6 +1388,7 @@ class _ChatPageState extends State<ChatPage> {
         widget.conversation.id,
         _messageController.text,
       );
+      widget.client.sendTyping(widget.conversation.id, typing: false);
       _messageController.clear();
     } catch (error) {
       _showMessage(context, _readableError(error));
@@ -1428,6 +1440,7 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void dispose() {
     _events?.cancel();
+    _messageController.removeListener(_onTypingChanged);
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();

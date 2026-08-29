@@ -256,6 +256,8 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 		s.notifyAgent(result.Conversation)
 	}
 	if result.NeedAI {
+		// 访客端显示"AI 正在回复"输入指示，AI 消息送达或生成结束时关闭。
+		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.typing", Data: map[string]any{"sender_type": "ai", "typing": true}})
 		go s.generateAIReply(conversationID, result.AIText, visitorLang)
 	}
 	return result, nil
@@ -279,6 +281,8 @@ func (s *Service) generateAIReply(conversationID, userText string, visitorLang s
 	}
 	msg, conversation, err := s.store.AddAIMessage(conversationID, reply, translations)
 	if err != nil {
+		// 无论静默撤出还是保存失败，都要关掉访客端的"AI 正在回复"指示。
+		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.typing", Data: map[string]any{"sender_type": "ai", "typing": false}})
 		if errors.Is(err, store.ErrConflict) {
 			// 人工客服已经实际回复，AI 静默撤出，实现无痕转人工。
 			return
@@ -439,6 +443,22 @@ func (s *Service) allowWebSocketOrigin(r *http.Request) bool {
 
 func (s *Service) handleSocketEvent(client *realtime.Client, event realtime.IncomingEvent) {
 	switch event.Event {
+	case "conversation.typing":
+		// 客服端输入中指示：透传给访客，让访客聊天窗口显示"正在回复"。
+		if client.Role != realtime.RoleAgent {
+			return
+		}
+		var req struct {
+			ConversationID string `json:"conversation_id"`
+			Typing         bool   `json:"typing"`
+		}
+		if err := json.Unmarshal(event.Data, &req); err != nil {
+			return
+		}
+		if strings.TrimSpace(req.ConversationID) == "" {
+			return
+		}
+		s.hub.SendToVisitor(req.ConversationID, realtime.Event{Event: "conversation.typing", Data: map[string]any{"sender_type": "agent", "typing": req.Typing}})
 	case "message.send":
 		var req struct {
 			ClientMsgID    string             `json:"client_msg_id"`

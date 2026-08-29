@@ -54,6 +54,19 @@
             --wc-border: #d5d5d5;
         }
 
+        /* "正在回复"输入中的三个小点动画 */
+        .typing-dots { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; }
+        .typing-dots span {
+            width: 7px; height: 7px; border-radius: 9999px; background: #9aa7b4;
+            animation: typing-blink 1.2s infinite ease-in-out;
+        }
+        .typing-dots span:nth-child(2) { animation-delay: .2s; }
+        .typing-dots span:nth-child(3) { animation-delay: .4s; }
+        @keyframes typing-blink {
+            0%, 80%, 100% { opacity: .25; transform: translateY(0); }
+            40% { opacity: 1; transform: translateY(-2px); }
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Segoe UI, Arial, Roboto, 'PingFang SC', 'miui', 'Hiragino Sans GB', 'Microsoft Yahei', sans-serif;
             background-color: #333; /* PC端大背景设为深色，突出中间的手机外壳 */
@@ -671,6 +684,8 @@
             recordPendingForceCancel: false,
             activeAudioElement: null,
             activeAudioButton: null,
+            typingTimer: null,
+            typingSender: '',
             contacts: {
                 telephone: '400-123-4567',
                 whatsapp: '+86 400 888 8888',
@@ -1119,6 +1134,7 @@
             DOM.input.style.height = '40px';
             DOM.btnPlus.style.display = 'flex';
             DOM.btnSend.style.display = 'none';
+            hideTypingIndicator();
             DOM.headerTyping.classList.add('hidden');
             DOM.uploadImageInput.value = '';
             closeAllPanels();
@@ -1557,6 +1573,39 @@
             appendMessage(html, false);
         }
 
+        // === "正在回复"输入指示 ===
+        function showTypingIndicator(senderType) {
+            hideTypingIndicator();
+            State.typingSender = senderType === 'agent' ? 'agent' : 'ai';
+            DOM.headerTyping.textContent = State.typingSender === 'agent' ? t('agentTyping') : t('aiTyping');
+            DOM.headerTyping.classList.remove('hidden');
+            const avatar = State.typingSender === 'agent' ? State.agentAvatar : './assets/img/avatar-service.svg';
+            const html = `
+                <div class="flex gap-3 msg-wrapper typing-indicator">
+                    <img src="${avatar}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
+                    <div class="flex flex-col max-w-[70%] items-start">
+                        <span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>
+                        <div class="bg-wc-ai border border-gray-200/50 p-2.5 rounded-lg shadow-sm relative bubble-left min-h-[40px] flex items-center">
+                            <span class="typing-dots" dir="ltr"><span></span><span></span><span></span></span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            appendMessage(html, false, 'append', { silent: true });
+            // 兜底：AI 生成较慢给足时间；人工输入指示超时未续报则自动消失。
+            State.typingTimer = setTimeout(() => hideTypingIndicator(), State.typingSender === 'agent' ? 8000 : 45000);
+        }
+
+        function hideTypingIndicator() {
+            if (State.typingTimer) {
+                clearTimeout(State.typingTimer);
+                State.typingTimer = null;
+            }
+            State.typingSender = '';
+            DOM.headerTyping.classList.add('hidden');
+            DOM.chatList.querySelectorAll('.typing-indicator').forEach((node) => node.remove());
+        }
+
         // === 状态机与业务动作 ===
 
         function updateSessionState(newState) {
@@ -1783,10 +1832,18 @@
             }
             if (payload.event === 'message.receive') {
                 const msg = payload.data;
+                // AI/客服的消息到达即结束"正在回复"指示。
+                if (msg && (msg.sender_type === 'ai' || msg.sender_type === 'agent')) hideTypingIndicator();
                 renderServerMessage(msg, 'append');
                 if (msg && msg.sender_type !== 'visitor') {
                     notifyHost('servicebridge:unread', { delta: 1 });
                 }
+                return;
+            }
+            if (payload.event === 'conversation.typing') {
+                const data = payload.data || {};
+                if (data.typing) showTypingIndicator(data.sender_type === 'agent' ? 'agent' : 'ai');
+                else hideTypingIndicator();
                 return;
             }
             if (payload.event === 'message.revoked') {

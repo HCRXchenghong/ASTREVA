@@ -215,6 +215,22 @@ class ServiceBridgeClient {
     );
   }
 
+  /// 客服正在输入指示：访客聊天窗口会显示"客服正在回复"。
+  void sendTyping(String conversationId, {bool typing = true}) {
+    if (_channel == null) return;
+    try {
+      _channel!.sink.add(
+        jsonEncode({
+          'event': 'conversation.typing',
+          'data': {
+            'conversation_id': conversationId,
+            'typing': typing,
+          },
+        }),
+      );
+    } catch (_) {}
+  }
+
   void connect() {
     if (token.isEmpty) return;
     _closedByUser = false;
