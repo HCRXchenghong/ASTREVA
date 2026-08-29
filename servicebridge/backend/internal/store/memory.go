@@ -253,6 +253,18 @@ func (s *MemoryStore) CreateVisitorConversation(ip, source, lang, ipSource strin
 	}, nil
 }
 
+func (s *MemoryStore) UpdateVisitorLang(conversationID, lang string) (domain.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	conversation, ok := s.conversations[conversationID]
+	if !ok {
+		return domain.Conversation{}, ErrNotFound
+	}
+	conversation.VisitorLang = lang
+	conversation.UpdatedAt = time.Now().UTC()
+	return *conversation, nil
+}
+
 func (s *MemoryStore) SetAgentStatus(agentID string, status domain.AgentStatus) (domain.Agent, []domain.Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

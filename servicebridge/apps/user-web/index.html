@@ -1289,6 +1289,10 @@
             await loadContactSettings();
             State.visitorToken = saved.visitorToken;
             State.conversationId = saved.conversationId;
+            // 恢复旧会话时，把当前网站语言同步给后端：
+            // 会话语言是创建时记录的，访客切换网站语言后若不同步，
+            // AI 会继续按旧语言（如中文）回复。
+            syncVisitorLangToServer();
             State.startingConversation = false;
             DOM.entryBtn.disabled = false;
             DOM.entryBtn.textContent = t('consultService');
@@ -1817,6 +1821,21 @@
                 };
                 State.quickReplies = Array.isArray(data.quick_replies) ? data.quick_replies : [];
             } catch (err) {}
+        }
+
+        // 把当前网站语言同步到会话（访客切换语言后，AI 回复与翻译按新语言处理）。
+        // 语言未变时后端直接返回，无副作用；失败不影响正常聊天。
+        function syncVisitorLangToServer() {
+            if (!State.visitorToken || !State.conversationId) return;
+            const lang = window.__CHAT_LANG__ || 'zh';
+            fetch(`${State.apiBase}/api/visitor/lang`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${State.visitorToken}`
+                },
+                body: JSON.stringify({ lang })
+            }).catch(() => {});
         }
 
         async function drainPendingInitialMessages() {

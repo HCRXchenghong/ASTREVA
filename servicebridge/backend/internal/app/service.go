@@ -145,6 +145,28 @@ func (s *Service) CreateVisitorConversation(ip, source, lang, ipSource string) (
 	return session, nil
 }
 
+// UpdateVisitorLang 访客切换网站语言后同步会话语言；语言未变时直接返回，
+// 变更后广播会话状态，让客服/后台侧同步看到新的访客语言。
+func (s *Service) UpdateVisitorLang(conversationID, lang string) (domain.Conversation, error) {
+	normalized := ai.NormalizeLang(lang, ai.LangZh)
+	current, ok := s.store.Conversation(conversationID)
+	if !ok {
+		return domain.Conversation{}, store.ErrNotFound
+	}
+	if current.VisitorLang == normalized {
+		return current, nil
+	}
+	updated, err := s.store.UpdateVisitorLang(conversationID, normalized)
+	if err != nil {
+		return domain.Conversation{}, err
+	}
+	if updated.AssignedAgentID != "" {
+		s.hub.SendToAgent(updated.AssignedAgentID, realtime.Event{Event: "conversation.status_changed", Data: updated})
+	}
+	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: updated})
+	return updated, nil
+}
+
 func (s *Service) SetAgentStatus(agentID string, status domain.AgentStatus) (domain.Agent, error) {
 	agent, assigned, err := s.store.SetAgentStatus(agentID, status)
 	if err != nil {

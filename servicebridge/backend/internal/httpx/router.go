@@ -142,6 +142,27 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		writeJSON(w, http.StatusOK, buildVisitorWidgetSettings(service))
 	})
 
+	// 访客切换网站语言后，前端把当前语言同步到会话，后续 AI 回复与翻译按新语言处理。
+	mux.HandleFunc("POST /api/visitor/lang", func(w http.ResponseWriter, r *http.Request) {
+		session, err := service.AuthVisitorFromRequest(r)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		var req struct {
+			Lang string `json:"lang"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		conversation, err := service.UpdateVisitorLang(session.AccountID, req.Lang)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, conversation)
+	})
+
 	mux.Handle("GET /uploads/", upload.LocalFileHandler(cfg))
 
 	mux.HandleFunc("POST /api/uploads", func(w http.ResponseWriter, r *http.Request) {

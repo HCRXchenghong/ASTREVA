@@ -333,6 +333,18 @@ func (s *PostgresStore) CreateVisitorConversation(ip, source, lang, ipSource str
 	return out, err
 }
 
+// UpdateVisitorLang 更新会话的访客语言（访客切换网站语言后由前端同步），
+// 后续 AI 回复与双向翻译都会按新语言处理。
+func (s *PostgresStore) UpdateVisitorLang(conversationID, lang string) (domain.Conversation, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+	row := s.pool.QueryRow(ctx, `
+		UPDATE conversations SET visitor_lang=$2, updated_at=now()
+		WHERE id=$1
+		RETURNING `+conversationColumns, conversationID, lang)
+	return scanConversation(row)
+}
+
 func (s *PostgresStore) SetAgentStatus(agentID string, status domain.AgentStatus) (domain.Agent, []domain.Conversation, error) {
 	ctx, cancel := dbContext()
 	defer cancel()
