@@ -19,3 +19,6 @@ cms/public/uploads/
 servicebridge/backend/customer-service
 servicebridge/backend/coverage.out
 servicebridge/backend/uploads/
+
+# 生产数据库备份
+backups/
