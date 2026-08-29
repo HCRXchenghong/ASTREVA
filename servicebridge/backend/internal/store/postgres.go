@@ -26,7 +26,7 @@ const (
 
 	adminColumns        = `id, account, name, password_hash, created_at`
 	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate`
-	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
+	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
 	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id`
 	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
 	auditColumns        = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
@@ -244,7 +244,7 @@ func (s *PostgresStore) AuthVisitor(token string) (domain.AuthSession, bool) {
 	return session, ok
 }
 
-func (s *PostgresStore) CreateVisitorConversation(ip, source, lang string) (domain.VisitorSession, error) {
+func (s *PostgresStore) CreateVisitorConversation(ip, source, lang, ipSource string) (domain.VisitorSession, error) {
 	ctx, cancel := dbContext()
 	defer cancel()
 
@@ -280,6 +280,7 @@ func (s *PostgresStore) CreateVisitorConversation(ip, source, lang string) (doma
 			ID:             conversationID,
 			VisitorID:      visitorID,
 			VisitorIP:      ip,
+			VisitorIPSource: strings.TrimSpace(ipSource),
 			VisitorRemark:  ip,
 			Status:         domain.ConversationWaiting,
 			Source:         source,
@@ -292,11 +293,11 @@ func (s *PostgresStore) CreateVisitorConversation(ip, source, lang string) (doma
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO conversations (
-				id, visitor_id, visitor_ip, visitor_remark, status, source, visitor_lang,
+				id, visitor_id, visitor_ip, visitor_ip_source, visitor_remark, status, source, visitor_lang,
 				last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at
 			)
-			VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, $9, 0, 0, $10, $11)
-		`, conversation.ID, conversation.VisitorID, conversation.VisitorIP, conversation.VisitorRemark, conversation.Status, conversation.Source, conversation.VisitorLang, conversation.LastMessage, conversation.LastMessageAt, conversation.CreatedAt, conversation.UpdatedAt); err != nil {
+			VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, $9, $10, 0, 0, $11, $12)
+		`, conversation.ID, conversation.VisitorID, conversation.VisitorIP, conversation.VisitorIPSource, conversation.VisitorRemark, conversation.Status, conversation.Source, conversation.VisitorLang, conversation.LastMessage, conversation.LastMessageAt, conversation.CreatedAt, conversation.UpdatedAt); err != nil {
 			return err
 		}
 
@@ -2453,6 +2454,7 @@ func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 			UNIQUE (platform, version_code)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_app_releases_platform ON app_releases(platform, version_code DESC)`,
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS visitor_ip_source TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, statement := range statements {
 		if _, err := s.pool.Exec(ctx, statement); err != nil {
@@ -2518,6 +2520,7 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 		&out.ID,
 		&out.VisitorID,
 		&out.VisitorIP,
+		&out.VisitorIPSource,
 		&out.VisitorRemark,
 		&out.RemarkUpdatedBy,
 		&remarkUpdatedAt,

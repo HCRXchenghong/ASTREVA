@@ -256,7 +256,7 @@ func TestVisitorMessagePageMasksRevokedAgentMessage(t *testing.T) {
 	if _, _, err := st.SetAgentStatus(agent.ID, domain.AgentOnline); err != nil {
 		t.Fatalf("set agent online: %v", err)
 	}
-	visitor, err := st.CreateVisitorConversation("198.51.100.23", "web", "zh")
+	visitor, err := st.CreateVisitorConversation("198.51.100.23", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -344,11 +344,11 @@ func TestLoginAttemptsAreAuditedWithoutPassword(t *testing.T) {
 	}
 }
 
-func TestClientIPUsesFirstForwardedFor(t *testing.T) {
+func TestClientIPUsesRightmostUntrustedForwardedFor(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "127.0.0.1:30001"
 	req.Header.Set("X-Forwarded-For", "203.0.113.9, 198.51.100.22")
-	if got := clientIP(req, parseTrustedProxyCIDRs(config.DefaultTrustedProxyCIDRs)); got != "203.0.113.9" {
+	if got := clientIP(req, parseTrustedProxyCIDRs(config.DefaultTrustedProxyCIDRs)); got != "198.51.100.22" {
 		t.Fatalf("unexpected client IP: %q", got)
 	}
 }

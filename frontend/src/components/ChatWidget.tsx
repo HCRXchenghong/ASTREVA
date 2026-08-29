@@ -10,6 +10,43 @@ type ChatCopy = {
   initialUnreadCount: number;
 };
 
+// The visitor session token is held by the host page (first-party) localStorage:
+// the chat widget is a cross-site iframe (api.astreva.ltd) whose own storage is
+// blocked by Safari ITP / privacy modes, losing the session on refresh. Scripts
+// running in the host page can read/write first-party storage without restriction.
+const VISITOR_SESSION_KEY = 'customer_service_visitor_session_v1';
+const CONSENT_KEY = 'astreva_cookie_consent';
+
+type VisitorSessionPayload = {
+  visitorToken: string;
+  conversationId: string;
+  sessionType: string;
+  savedAt: number;
+};
+
+function consentAllowsStorage(): boolean {
+  try {
+    const value = window.localStorage.getItem(CONSENT_KEY);
+    return value === null || value === 'accepted';
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeVisitorSession(data: unknown): VisitorSessionPayload | null {
+  if (!data || typeof data !== 'object') return null;
+  const record = data as Record<string, unknown>;
+  const visitorToken = String(record.visitorToken || '').trim();
+  const conversationId = String(record.conversationId || '').trim();
+  if (!visitorToken || !conversationId) return null;
+  return {
+    visitorToken,
+    conversationId,
+    sessionType: String(record.sessionType || ''),
+    savedAt: Number(record.savedAt || 0),
+  };
+}
+
 export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUrl: string; chat: ChatCopy }) {
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(Number(chat.initialUnreadCount));
@@ -71,6 +108,39 @@ export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUr
       }
       if (data.type === 'servicebridge:unread' && !isOpen) {
         setUnreadCount((value) => value + Number(data.delta || 1));
+      }
+      // === first-party session storage bridge ===
+      if (data.type === 'servicebridge:session-get') {
+        let session: VisitorSessionPayload | null = null;
+        if (consentAllowsStorage()) {
+          try {
+            const raw = window.localStorage.getItem(VISITOR_SESSION_KEY);
+            session = raw ? sanitizeVisitorSession(JSON.parse(raw)) : null;
+          } catch {
+            session = null;
+          }
+        }
+        event.source?.postMessage({ type: 'servicebridge:session-restore', session }, event.origin);
+        return;
+      }
+      if (data.type === 'servicebridge:session-put') {
+        if (!consentAllowsStorage()) return;
+        const session = sanitizeVisitorSession(data.session);
+        if (!session) return;
+        try {
+          window.localStorage.setItem(VISITOR_SESSION_KEY, JSON.stringify(session));
+        } catch {
+          /* storage unavailable - ignore */
+        }
+        return;
+      }
+      if (data.type === 'servicebridge:session-clear') {
+        try {
+          window.localStorage.removeItem(VISITOR_SESSION_KEY);
+        } catch {
+          /* ignore */
+        }
+        return;
       }
     };
     window.addEventListener('message', onMessage);

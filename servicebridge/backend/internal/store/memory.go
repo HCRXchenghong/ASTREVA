@@ -185,7 +185,7 @@ func (s *MemoryStore) AuthVisitor(token string) (domain.AuthSession, bool) {
 	return session, true
 }
 
-func (s *MemoryStore) CreateVisitorConversation(ip, source, lang string) (domain.VisitorSession, error) {
+func (s *MemoryStore) CreateVisitorConversation(ip, source, lang, ipSource string) (domain.VisitorSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -212,6 +212,7 @@ func (s *MemoryStore) CreateVisitorConversation(ip, source, lang string) (domain
 		ID:             conversationID,
 		VisitorID:      visitorID,
 		VisitorIP:      ip,
+		VisitorIPSource: strings.TrimSpace(ipSource),
 		VisitorRemark:  ip,
 		Status:         domain.ConversationWaiting,
 		Source:         source,

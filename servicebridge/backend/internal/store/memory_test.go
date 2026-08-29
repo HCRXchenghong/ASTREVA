@@ -9,7 +9,7 @@ import (
 
 func TestRemarkUpdateKeepsOriginalIP(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	visitor, err := s.CreateVisitorConversation("203.0.113.7:53100", "web_pc", "zh")
+	visitor, err := s.CreateVisitorConversation("203.0.113.7:53100", "web_pc", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestRemarkUpdateKeepsOriginalIP(t *testing.T) {
 
 func TestAgentCannotEditUnassignedConversation(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	visitor, err := s.CreateVisitorConversation("198.51.100.9", "web", "zh")
+	visitor, err := s.CreateVisitorConversation("198.51.100.9", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestHumanKeywordSilentlyAssignsAndKeepsAIUntilAgentReplies(t *testing.T) {
 	if _, _, err := s.SetAgentStatus(agent.ID, domain.AgentOnline); err != nil {
 		t.Fatalf("set agent online: %v", err)
 	}
-	visitor, err := s.CreateVisitorConversation("192.0.2.18", "web", "zh")
+	visitor, err := s.CreateVisitorConversation("192.0.2.18", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestAgentOfflineKeepsTakenOverConversationInHumanQueue(t *testing.T) {
 	if _, _, err := s.SetAgentStatus(agent.ID, domain.AgentOnline); err != nil {
 		t.Fatalf("set agent online: %v", err)
 	}
-	visitor, err := s.CreateVisitorConversation("192.0.2.188", "web", "zh")
+	visitor, err := s.CreateVisitorConversation("192.0.2.188", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestAlwaysAIModeStillHonorsExplicitHumanHandoff(t *testing.T) {
 	if _, err := s.UpdateAISettings(domain.AISettings{Enabled: true, Mode: domain.AIModeAlwaysAI, APIKey: "sk-test-123456", Model: "gpt-4o-mini", APIType: "chat_completions", TimeoutSeconds: 5}); err != nil {
 		t.Fatalf("update AI settings: %v", err)
 	}
-	visitor, err := s.CreateVisitorConversation("192.0.2.210", "web", "zh")
+	visitor, err := s.CreateVisitorConversation("192.0.2.210", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestAlwaysAIModeStillHonorsExplicitHumanHandoff(t *testing.T) {
 
 func TestPhoneKeywordGeneratesStructuredContactReply(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	visitor, err := s.CreateVisitorConversation("192.0.2.19", "web", "zh")
+	visitor, err := s.CreateVisitorConversation("192.0.2.19", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestPhoneKeywordGeneratesStructuredContactReply(t *testing.T) {
 
 func TestClientMessageIDIsIdempotent(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	visitor, err := s.CreateVisitorConversation("192.0.2.21", "web", "zh")
+	visitor, err := s.CreateVisitorConversation("192.0.2.21", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestClientMessageIDIsIdempotent(t *testing.T) {
 
 func TestPagedMessagesReturnsNewestPageAndCursor(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	visitor, err := s.CreateVisitorConversation("192.0.2.22", "web", "zh")
+	visitor, err := s.CreateVisitorConversation("192.0.2.22", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestHumanTakeoverBlocksKeywordAndAIReplies(t *testing.T) {
 	if _, _, err := s.SetAgentStatus(agent.ID, domain.AgentOnline); err != nil {
 		t.Fatalf("set agent online: %v", err)
 	}
-	visitor, err := s.CreateVisitorConversation("192.0.2.20", "web", "zh")
+	visitor, err := s.CreateVisitorConversation("192.0.2.20", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestRevokeAgentMessageUpdatesConversationAndPreservesOriginalContent(t *tes
 		t.Fatalf("set agent online: %v", err)
 	}
 
-	visitor, err := s.CreateVisitorConversation("192.0.2.30", "web", "zh")
+	visitor, err := s.CreateVisitorConversation("192.0.2.30", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestCreateVisitorConversationUsesConfiguredEntryReply(t *testing.T) {
 		t.Fatalf("update contact settings: %v", err)
 	}
 
-	visitor, err := s.CreateVisitorConversation("192.0.2.88", "web", "zh")
+	visitor, err := s.CreateVisitorConversation("192.0.2.88", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -502,7 +502,7 @@ func TestAdminTransferConversationReleasesOldAgent(t *testing.T) {
 	if _, _, err := s.SetAgentStatus(oldAgent.ID, domain.AgentOnline); err != nil {
 		t.Fatalf("set old agent online: %v", err)
 	}
-	visitor, err := s.CreateVisitorConversation("192.0.2.30", "web", "zh")
+	visitor, err := s.CreateVisitorConversation("192.0.2.30", "web", "zh", "direct")
 	if err != nil {
 		t.Fatalf("create visitor: %v", err)
 	}

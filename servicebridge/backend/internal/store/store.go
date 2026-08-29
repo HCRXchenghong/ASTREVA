@@ -13,7 +13,7 @@ type Store interface {
 	Auth(token string) (domain.AuthSession, bool)
 	AuthVisitor(token string) (domain.AuthSession, bool)
 
-	CreateVisitorConversation(ip, source, lang string) (domain.VisitorSession, error)
+	CreateVisitorConversation(ip, source, lang, ipSource string) (domain.VisitorSession, error)
 	SetAgentStatus(agentID string, status domain.AgentStatus) (domain.Agent, []domain.Conversation, error)
 	ConversationsForAgent(agentID string) ([]domain.Conversation, error)
 	AllConversations() []domain.Conversation

@@ -129,8 +129,8 @@ func (s *Service) SubmitRating(conversationID string, score int, tags []string, 
 	return rating, nil
 }
 
-func (s *Service) CreateVisitorConversation(ip, source, lang string) (domain.VisitorSession, error) {
-	session, err := s.store.CreateVisitorConversation(ip, source, lang)
+func (s *Service) CreateVisitorConversation(ip, source, lang, ipSource string) (domain.VisitorSession, error) {
+	session, err := s.store.CreateVisitorConversation(ip, source, lang, ipSource)
 	if err != nil {
 		return domain.VisitorSession{}, err
 	}

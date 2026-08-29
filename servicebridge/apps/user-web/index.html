@@ -776,6 +776,7 @@
             try {
                 window.localStorage.removeItem(STORAGE_KEYS.visitorSession);
             } catch (err) {}
+            notifyHostSessionClear();
         }
 
         function loadVisitorSession() {
@@ -807,14 +808,16 @@
             if (!State.visitorToken || !State.conversationId || State.entryVisible || !ACTIVE_SESSION_TYPES.has(State.sessionType)) {
                 return;
             }
+            const payload = {
+                visitorToken: State.visitorToken,
+                conversationId: State.conversationId,
+                sessionType: State.sessionType,
+                savedAt: Date.now()
+            };
             try {
-                window.localStorage.setItem(STORAGE_KEYS.visitorSession, JSON.stringify({
-                    visitorToken: State.visitorToken,
-                    conversationId: State.conversationId,
-                    sessionType: State.sessionType,
-                    savedAt: Date.now()
-                }));
+                window.localStorage.setItem(STORAGE_KEYS.visitorSession, JSON.stringify(payload));
             } catch (err) {}
+            notifyHostSessionSave(payload);
         }
 
         function escapeHTML(value) {
@@ -874,6 +877,69 @@
         function notifyHost(type, payload = {}) {
             if (!isEmbedMode() || window.parent === window) return;
             window.parent.postMessage({ type, ...payload }, '*');
+        }
+
+        // === 主站一级存储桥 ===
+        // 聊天窗口是跨站 iframe（api.astreva.ltd），其 localStorage 会被 Safari ITP /
+        // 隐私模式等第三方存储拦截，导致刷新后丢会话。这里通过 postMessage 请主站
+        // 页面（第一方）代为保存访客会话令牌，刷新后再向主站取回，即可恢复会话与历史。
+        function hostTargetOrigin() {
+            try {
+                const referrer = new URL(document.referrer);
+                if (referrer.protocol === 'http:' || referrer.protocol === 'https:') {
+                    return referrer.origin;
+                }
+            } catch (err) {}
+            return '*';
+        }
+
+        function isFramed() {
+            try { return window.self !== window.top; } catch (err) { return true; }
+        }
+
+        function notifyHostSessionSave(session) {
+            if (!isFramed() || window.parent === window) return;
+            try {
+                window.parent.postMessage({ type: 'servicebridge:session-put', session }, hostTargetOrigin());
+            } catch (err) {}
+        }
+
+        function notifyHostSessionClear() {
+            if (!isFramed() || window.parent === window) return;
+            try {
+                window.parent.postMessage({ type: 'servicebridge:session-clear' }, hostTargetOrigin());
+            } catch (err) {}
+        }
+
+        // 向主站请求访客会话；超时或主站未托管时返回 null。
+        function requestHostSession(timeoutMs) {
+            return new Promise((resolve) => {
+                if (!isFramed() || window.parent === window) { resolve(null); return; }
+                let settled = false;
+                const finish = (session) => {
+                    if (settled) return;
+                    settled = true;
+                    window.removeEventListener('message', onMessage);
+                    resolve(session);
+                };
+                const onMessage = (event) => {
+                    if (event.source !== window.parent) return;
+                    const data = event.data || {};
+                    if (data.type !== 'servicebridge:session-restore') return;
+                    const raw = data.session;
+                    const visitorToken = String(raw?.visitorToken || '').trim();
+                    const conversationId = String(raw?.conversationId || '').trim();
+                    if (!visitorToken || !conversationId) { finish(null); return; }
+                    let sessionType = ACTIVE_SESSION_TYPES.has(raw?.sessionType) ? raw.sessionType : 'AI';
+                    if (sessionType === 'QUEUING') sessionType = 'AI';
+                    finish({ visitorToken, conversationId, sessionType });
+                };
+                window.addEventListener('message', onMessage);
+                try {
+                    window.parent.postMessage({ type: 'servicebridge:session-get' }, hostTargetOrigin());
+                } catch (err) {}
+                setTimeout(() => finish(null), timeoutMs || 800);
+            });
         }
 
         function resetSystemBanner() {
@@ -1248,7 +1314,11 @@
         }
 
         async function bootApp() {
-            const savedSession = loadVisitorSession();
+            let savedSession = loadVisitorSession();
+            // iframe 自身存储被拦截/清空时，向主站第一方存储取回会话令牌。
+            if (!savedSession && isEmbedMode()) {
+                savedSession = await requestHostSession();
+            }
             if (savedSession) {
                 const restored = await restoreConsultation(savedSession);
                 if (restored) return;

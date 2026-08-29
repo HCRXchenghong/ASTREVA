@@ -152,6 +152,22 @@ function conversationName(conversation) {
   return conversation?.visitor_remark || conversation?.visitor_ip || conversation?.id || '未知访客';
 }
 
+function visitorIPSourceLabel(source) {
+  switch (source) {
+    case 'cloudflare': return 'Cloudflare 校验';
+    case 'xff': return '代理转发';
+    case 'x-real-ip': return 'X-Real-IP';
+    case 'direct': return '直连';
+    default: return '历史数据';
+  }
+}
+
+function visitorIPLabel(conversation) {
+  const ip = conversation?.visitor_ip;
+  if (!ip) return '-';
+  return ip + '（' + visitorIPSourceLabel(conversation?.visitor_ip_source) + '）';
+}
+
 function renderWorkspaceConversationList() {
   const query = String($('#workspaceConversationSearch')?.value || '').trim().toLowerCase();
   const filtered = appState.conversations.filter((conversation) => {
@@ -187,7 +203,7 @@ async function selectWorkspaceConversation(id, updateList = true) {
     ['接待客服', agent ? `${agent.name}（${agent.account}）` : '未分配'],
     ['客服分组', agent?.group || '未分组'],
     ['来源', conversation.source || '-'],
-    ['访客 IP', conversation.visitor_ip || '-'],
+    ['访客 IP', visitorIPLabel(conversation)],
     ['会话 ID', conversation.id],
     ['创建时间', localTime(conversation.created_at)],
     ['更新时间', localTime(conversation.updated_at)]

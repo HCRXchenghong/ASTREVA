@@ -129,7 +129,8 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		if !decodeOptionalJSON(w, r, &req) {
 			return
 		}
-		session, err := service.CreateVisitorConversation(clientIP(r, trustedProxies), req.Source, req.Lang)
+		ipInfo := resolveClientIP(r, trustedProxies)
+		session, err := service.CreateVisitorConversation(ipInfo.IP, req.Source, req.Lang, ipInfo.Source)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -1474,22 +1475,101 @@ func recordLoginAudit(service *app.Service, r *http.Request, proxies trustedProx
 	})
 }
 
-func clientIP(r *http.Request, proxies trustedProxySet) string {
-	remoteIP := normalizeIP(r.RemoteAddr)
-	if isTrustedProxy(remoteIP, proxies) {
-		for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
-			value := strings.TrimSpace(r.Header.Get(header))
-			if value != "" {
-				if header == "X-Forwarded-For" {
-					value = strings.TrimSpace(strings.Split(value, ",")[0])
-				}
-				if normalized := normalizeIP(value); net.ParseIP(normalized) != nil {
-					return normalized
-				}
-			}
+// cloudflareCIDRs 来自 https://www.cloudflare.com/ips/ （Cloudflare 官方公布的边缘节点段）。
+// 请求经 Cloudflare 进入时，X-Forwarded-For 链中会出现这些地址：扫描转发链时应跳过它们，
+// 并优先采信 Cloudflare 在边缘注入、访客无法伪造的 CF-Connecting-IP（IPv4/IPv6 均支持）。
+// 若 Cloudflare 调整了地址段，更新此列表即可。
+var cloudflareCIDRs = mustParseCIDRs([]string{
+	"173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+	"141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+	"197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+	"104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+	"2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+	"2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+})
+
+func mustParseCIDRs(values []string) []*net.IPNet {
+	out := make([]*net.IPNet, 0, len(values))
+	for _, value := range values {
+		_, network, err := net.ParseCIDR(value)
+		if err != nil {
+			panic("invalid CIDR: " + value)
+		}
+		out = append(out, network)
+	}
+	return out
+}
+
+func isCloudflareIP(value string) bool {
+	ip := net.ParseIP(value)
+	if ip == nil {
+		return false
+	}
+	for _, network := range cloudflareCIDRs {
+		if network.Contains(ip) {
+			return true
 		}
 	}
-	return remoteIP
+	return false
+}
+
+type clientIPResult struct {
+	IP     string
+	Source string
+}
+
+// resolveClientIP 解析真实访客 IP：
+//  1. 直连地址不在可信代理内时，直接返回直连地址；
+//  2. 否则从右往左扫描 X-Forwarded-For，跳过可信代理与 Cloudflare 边缘，
+//     第一个非可信条目即真实访客（最左侧条目可被访客伪造，绝不采用）；
+//  3. 转发链经过 Cloudflare 时，优先采用 CF-Connecting-IP（Cloudflare 边缘注入，
+//     访客无法伪造，IPv6 同样适用）；
+//  4. 兜底使用 X-Real-IP / 直连地址。
+func resolveClientIP(r *http.Request, proxies trustedProxySet) clientIPResult {
+	remoteIP := normalizeIP(r.RemoteAddr)
+	if !isTrustedProxy(remoteIP, proxies) {
+		return clientIPResult{IP: remoteIP, Source: "direct"}
+	}
+	cfIP := normalizeIP(r.Header.Get("CF-Connecting-IP"))
+	cfValid := cfIP != "" && net.ParseIP(cfIP) != nil
+	sawCloudflareHop := false
+	if value := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); value != "" {
+		entries := strings.Split(value, ",")
+		for i := len(entries) - 1; i >= 0; i-- {
+			entry := normalizeIP(entries[i])
+			if net.ParseIP(entry) == nil {
+				continue
+			}
+			if isCloudflareIP(entry) {
+				sawCloudflareHop = true
+				continue
+			}
+			if isTrustedProxy(entry, proxies) {
+				continue
+			}
+			if cfValid && sawCloudflareHop {
+				return clientIPResult{IP: cfIP, Source: "cloudflare"}
+			}
+			return clientIPResult{IP: entry, Source: "xff"}
+		}
+	}
+	if cfValid && sawCloudflareHop {
+		return clientIPResult{IP: cfIP, Source: "cloudflare"}
+	}
+	if realIP := normalizeIP(r.Header.Get("X-Real-IP")); realIP != "" && net.ParseIP(realIP) != nil {
+		if isCloudflareIP(realIP) {
+			if cfValid {
+				return clientIPResult{IP: cfIP, Source: "cloudflare"}
+			}
+			return clientIPResult{IP: remoteIP, Source: "direct"}
+		}
+		return clientIPResult{IP: realIP, Source: "x-real-ip"}
+	}
+	return clientIPResult{IP: remoteIP, Source: "direct"}
+}
+
+func clientIP(r *http.Request, proxies trustedProxySet) string {
+	return resolveClientIP(r, proxies).IP
 }
 
 func parseTrustedProxyCIDRs(value string) trustedProxySet {
@@ -1544,9 +1624,15 @@ func normalizeIP(value string) string {
 		return ""
 	}
 	if host, _, err := net.SplitHostPort(value); err == nil {
-		return strings.Trim(host, "[]")
+		value = strings.Trim(host, "[]")
+	} else {
+		value = strings.Trim(value, "[]")
 	}
-	return strings.Trim(value, "[]")
+	// 统一为压缩形式（含 IPv6），保证入库与展示一致。
+	if parsed := net.ParseIP(value); parsed != nil {
+		return parsed.String()
+	}
+	return value
 }
 
 func bearerToken(r *http.Request) string {

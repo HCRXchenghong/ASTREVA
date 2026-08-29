@@ -119,6 +119,7 @@ type Conversation struct {
 	ID               string             `json:"id"`
 	VisitorID        string             `json:"visitor_id"`
 	VisitorIP        string             `json:"visitor_ip"`
+	VisitorIPSource  string             `json:"visitor_ip_source,omitempty"`
 	VisitorRemark    string             `json:"visitor_remark"`
 	RemarkUpdatedBy  string             `json:"remark_updated_by,omitempty"`
 	RemarkUpdatedAt  *time.Time         `json:"remark_updated_at,omitempty"`
