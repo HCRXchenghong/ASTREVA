@@ -429,8 +429,8 @@
     <div id="app-container" class="relative w-full h-full md:w-[400px] md:h-[800px] md:max-h-[95vh] md:rounded-xl md:shadow-2xl overflow-hidden bg-wc-bg flex flex-col">
         <div id="entry-view" class="absolute inset-0 z-30 bg-white flex items-center justify-center px-8">
             <div class="entry-view-inner">
-                <img src="./assets/001.png" alt="咨询客服入口图片" class="entry-hero">
-                <button id="entry-btn" class="w-full max-w-[220px] bg-[#07c160] text-white py-3 rounded-lg text-[17px] font-medium active:bg-[#06ad56]" onclick="openConsultation()">
+                <img src="./assets/001.png" alt="咨询客服入口图片" data-i18n-alt="entryImageAlt" class="entry-hero">
+                <button id="entry-btn" class="w-full max-w-[220px] bg-[#07c160] text-white py-3 rounded-lg text-[17px] font-medium active:bg-[#06ad56]" onclick="openConsultation()" data-i18n="consultService">
                     咨询客服
                 </button>
             </div>
@@ -446,12 +446,12 @@
                 <!-- 中间标题与状态 -->
                 <div class="flex-1 flex flex-col items-center justify-center text-center">
                     <div class="flex items-center gap-1">
-                        <span id="header-title" class="text-[17px] font-semibold text-wc-main truncate max-w-[150px]">官方客服</span>
+                        <span id="header-title" class="text-[17px] font-semibold text-wc-main truncate max-w-[150px]" data-i18n="officialService">官方客服</span>
                         <!-- AI 标识 -->
                         <span id="header-ai-badge" class="bg-blue-100 text-blue-600 text-[10px] px-1 rounded-sm border border-blue-200">AI</span>
                     </div>
                     <!-- 打字状态提示 (默认隐藏) -->
-                    <span id="header-typing" class="text-xs text-gray-500 hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-wc-header w-32 text-center">
+                    <span id="header-typing" class="text-xs text-gray-500 hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-wc-header w-32 text-center" data-i18n="typing">
                         对方正在输入...
                     </span>
                 </div>
@@ -459,13 +459,13 @@
                 <!-- 右侧更多 -->
                 <div class="flex items-center justify-end w-16 gap-3">
                     <i id="btn-sound" class="fas fa-volume-up text-lg text-gray-700 cursor-pointer"></i>
-                    <i id="btn-more-top" class="fas fa-ellipsis-h text-xl text-gray-700 cursor-pointer" title="结束会话等操作"></i>
+                    <i id="btn-more-top" class="fas fa-ellipsis-h text-xl text-gray-700 cursor-pointer" title="结束会话等操作" data-i18n-title="moreActionsTitle"></i>
                 </div>
             </header>
 
             <!-- 系统提示横幅 (排队/营业时间等) -->
             <div id="sys-banner" class="bg-[#fdf6ec] text-[#e6a23c] text-xs px-3 py-2 flex items-center justify-center border-b border-[#faecd8] hidden shrink-0 z-10 shadow-sm relative">
-                <span id="sys-banner-text">提示信息</span>
+                <span id="sys-banner-text" data-i18n="notice">提示信息</span>
                 <i class="fas fa-times absolute right-3 cursor-pointer text-[#e6a23c]" onclick="this.parentElement.classList.add('hidden')"></i>
             </div>
 
@@ -473,7 +473,7 @@
             <main id="chat-list" class="flex-1 overflow-y-auto p-4 space-y-5 hide-scrollbar pb-6 relative z-0" onclick="closeAllPanels()">
                 <!-- 历史记录拉取提示 -->
                 <div class="text-center" id="history-anchor">
-                    <span id="load-history" class="text-xs text-blue-500 cursor-pointer hover:underline" onclick="loadOlderMessages()">点击加载更多历史记录</span>
+                    <span id="load-history" class="text-xs text-blue-500 cursor-pointer hover:underline" onclick="loadOlderMessages()" data-i18n="loadMoreHistory">点击加载更多历史记录</span>
                 </div>
             </main>
 
@@ -500,7 +500,7 @@
                     <div id="btn-plus" class="w-8 h-8 flex items-center justify-center shrink-0 mb-1 cursor-pointer" onclick="togglePanel('more')">
                         <i class="fas fa-plus-circle text-3xl text-gray-700"></i>
                     </div>
-                    <div id="btn-send" class="h-8 bg-[#07c160] text-white px-4 rounded font-medium text-[15px] flex items-center justify-center shrink-0 mb-1 cursor-pointer active:bg-[#06ad56]" style="display: none;" onclick="handleSend()">
+                    <div id="btn-send" class="h-8 bg-[#07c160] text-white px-4 rounded font-medium text-[15px] flex items-center justify-center shrink-0 mb-1 cursor-pointer active:bg-[#06ad56]" style="display: none;" onclick="handleSend()" data-i18n="send">
                         发送
                     </div>
                 </div>
@@ -521,7 +521,7 @@
                             <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
                                 <i class="fas fa-image text-[28px] text-gray-600"></i>
                             </div>
-                            <span class="text-xs text-gray-500">相册</span>
+                            <span class="text-xs text-gray-500" data-i18n="album">相册</span>
                         </div>
 
                         <!-- 2. 电话联系 -->
@@ -529,7 +529,7 @@
                             <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
                                 <i class="fas fa-phone-alt text-[24px] text-gray-600"></i>
                             </div>
-                            <span class="text-xs text-gray-500">电话联系</span>
+                            <span class="text-xs text-gray-500" data-i18n="phoneContact">电话联系</span>
                         </div>
 
                         <!-- 3. 加 WhatsApp -->
@@ -537,7 +537,7 @@
                             <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
                                 <i class="fab fa-whatsapp text-[32px] text-[#25D366]"></i>
                             </div>
-                            <span class="text-xs text-gray-500">加WhatsApp</span>
+                            <span class="text-xs text-gray-500" data-i18n="addWhatsapp">加WhatsApp</span>
                         </div>
 
                         <!-- 4. 加 Telegram -->
@@ -545,7 +545,7 @@
                             <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
                                 <i class="fab fa-telegram text-[30px] text-[#2AABEE]"></i>
                             </div>
-                            <span class="text-xs text-gray-500">加Telegram</span>
+                            <span class="text-xs text-gray-500" data-i18n="addTelegram">加Telegram</span>
                         </div>
                     </div>
                 </div>
@@ -556,56 +556,56 @@
         <div id="eval-overlay" class="absolute inset-0 bg-black/50 z-50 hidden flex-col justify-end">
             <div class="bg-white rounded-t-xl w-full pt-4 pb-8 px-6 transform translate-y-full" id="eval-sheet">
                 <div class="flex justify-between items-center mb-6">
-                    <h3 class="text-lg font-medium text-gray-800">服务评价</h3>
+                    <h3 class="text-lg font-medium text-gray-800" data-i18n="serviceRating">服务评价</h3>
                     <i class="fas fa-times text-gray-400 cursor-pointer text-xl p-2" onclick="closeEval()"></i>
                 </div>
                 
-                <p class="text-sm text-gray-500 mb-6 text-center">会话已结束，请对本次服务（在线客服）进行评价</p>
+                <p class="text-sm text-gray-500 mb-6 text-center" data-i18n="ratingDescription">会话已结束，请对本次服务（在线客服）进行评价</p>
                 
                 <div class="flex justify-around mb-8">
                     <div class="flex flex-col items-center gap-2 cursor-pointer eval-star" data-score="5">
                         <i class="fas fa-laugh-squint text-4xl text-gray-300 transition-colors"></i>
-                        <span class="text-xs text-gray-500">非常满意</span>
+                        <span class="text-xs text-gray-500" data-i18n="verySatisfied">非常满意</span>
                     </div>
                     <div class="flex flex-col items-center gap-2 cursor-pointer eval-star" data-score="3">
                         <i class="fas fa-meh text-4xl text-gray-300 transition-colors"></i>
-                        <span class="text-xs text-gray-500">一般</span>
+                        <span class="text-xs text-gray-500" data-i18n="neutral">一般</span>
                     </div>
                     <div class="flex flex-col items-center gap-2 cursor-pointer eval-star" data-score="1">
                         <i class="fas fa-frown text-4xl text-gray-300 transition-colors"></i>
-                        <span class="text-xs text-gray-500">不满意</span>
+                        <span class="text-xs text-gray-500" data-i18n="unsatisfied">不满意</span>
                     </div>
                 </div>
 
                 <div id="eval-advice-box" class="hidden mb-5">
-                    <label class="block text-sm text-gray-600 mb-2">请告诉我们哪里做得不够好</label>
+                    <label class="block text-sm text-gray-600 mb-2" data-i18n="feedbackLabel">请告诉我们哪里做得不够好</label>
                     <textarea
                         id="eval-advice"
                         class="w-full min-h-[96px] bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 resize-none focus:outline-none focus:border-[#07c160]"
                         maxlength="300"
-                        placeholder="请输入您的建议，客服团队会看到这条反馈"
+                        placeholder="请输入您的建议，客服团队会看到这条反馈" data-i18n-placeholder="feedbackPlaceholder"
                     ></textarea>
                 </div>
 
-                <button class="w-full bg-[#07c160] text-white py-3 rounded-lg font-medium active:bg-[#06ad56]" onclick="submitEval()">提交评价</button>
+                <button class="w-full bg-[#07c160] text-white py-3 rounded-lg font-medium active:bg-[#06ad56]" onclick="submitEval()" data-i18n="submitRating">提交评价</button>
             </div>
         </div>
 
         <div id="end-confirm-overlay" class="end-confirm-overlay hidden">
             <div id="end-confirm-sheet" class="end-confirm-sheet">
                 <div class="end-confirm-body">
-                    <div class="end-confirm-title">确认要结束当前会话吗？</div>
-                    <div class="end-confirm-desc">结束后将返回咨询客服入口</div>
+                    <div class="end-confirm-title" data-i18n="endConfirmTitle">确认要结束当前会话吗？</div>
+                    <div class="end-confirm-desc" data-i18n="endConfirmDescription">结束后将返回咨询客服入口</div>
                 </div>
                 <div class="end-confirm-actions">
-                    <button id="end-confirm-cancel" type="button" class="end-confirm-btn cancel">取消</button>
-                    <button id="end-confirm-submit" type="button" class="end-confirm-btn danger">结束</button>
+                    <button id="end-confirm-cancel" type="button" class="end-confirm-btn cancel" data-i18n="cancel">取消</button>
+                    <button id="end-confirm-submit" type="button" class="end-confirm-btn danger" data-i18n="end">结束</button>
                 </div>
             </div>
         </div>
 
         <!-- 居中 Toast 提示 -->
-        <div id="toast" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/70 text-white text-[14px] px-4 py-2 rounded shadow-lg pointer-events-none opacity-0 z-[60]">
+        <div id="toast" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/70 text-white text-[14px] px-4 py-2 rounded shadow-lg pointer-events-none opacity-0 z-[60]" data-i18n="notice">
             提示信息
         </div>
 
@@ -613,12 +613,12 @@
             <div class="record-overlay-stack">
                 <div id="record-overlay-card" class="record-overlay-card bg-black/80 text-white rounded-2xl px-6 py-5 text-center min-w-[188px] shadow-lg">
                     <i class="fas fa-microphone-alt text-3xl mb-3"></i>
-                    <div id="record-overlay-text" class="text-[15px] font-medium">松开发送语音</div>
-                    <div id="record-overlay-tip" class="text-[12px] text-white/80 mt-2">上滑进入取消区域</div>
+                    <div id="record-overlay-text" class="text-[15px] font-medium" data-i18n="releaseToSend">松开发送语音</div>
+                    <div id="record-overlay-tip" class="text-[12px] text-white/80 mt-2" data-i18n="slideUpToCancelArea">上滑进入取消区域</div>
                 </div>
                 <div id="record-overlay-cancel" class="record-cancel-bar">
                     <i class="fas fa-times-circle text-[14px]"></i>
-                    <span id="record-overlay-cancel-text">上滑取消发送</span>
+                    <span id="record-overlay-cancel-text" data-i18n="slideUpToCancel">上滑取消发送</span>
                 </div>
             </div>
         </div>
@@ -628,11 +628,12 @@
         <input id="upload-image-input" type="file" accept="image/*" class="hidden">
     </div>
 
+    <script src="./assets/i18n.js"></script>
     <script>
         // === 状态管理 ===
         const State = {
             sessionType: 'AI', // 'AI', 'QUEUING', 'HUMAN', 'ENDED'
-            agentName: '在线客服',
+            agentName: t('agentNameDefault'),
             agentAvatar: './assets/img/avatar-service.svg',
             soundEnabled: true,
             activePanel: null, // 'emoji', 'more', or null
@@ -859,7 +860,7 @@
         function resetSystemBanner() {
             DOM.sysBanner.className = DEFAULT_SYS_BANNER_CLASS;
             DOM.sysBanner.classList.add('hidden');
-            DOM.sysBannerText.textContent = '提示信息';
+            DOM.sysBannerText.textContent = t('notice');
         }
 
         function refreshChatRefs() {
@@ -927,9 +928,9 @@
             DOM.recordOverlay.classList.add('hidden');
             DOM.recordOverlayCard.classList.remove('record-cancel');
             DOM.recordOverlayCancel.classList.remove('record-cancel-active');
-            DOM.recordOverlayText.textContent = '松开发送语音';
-            DOM.recordOverlayTip.textContent = '上滑进入取消区域';
-            DOM.recordOverlayCancelText.textContent = '上滑取消发送';
+            DOM.recordOverlayText.textContent = t('releaseToSend');
+            DOM.recordOverlayTip.textContent = t('slideUpToCancelArea');
+            DOM.recordOverlayCancelText.textContent = t('slideUpToCancel');
             DOM.btnVoice.classList.remove('recording');
         }
 
@@ -938,9 +939,9 @@
             DOM.recordOverlay.classList.add('flex');
             DOM.recordOverlayCard.classList.toggle('record-cancel', !!isCancel);
             DOM.recordOverlayCancel.classList.toggle('record-cancel-active', !!isCancel);
-            DOM.recordOverlayText.textContent = isCancel ? '松开手指，取消发送' : '松开发送语音';
-            DOM.recordOverlayTip.textContent = isCancel ? '已进入取消区域，松手不发送' : '上滑进入取消区域';
-            DOM.recordOverlayCancelText.textContent = isCancel ? '松开取消发送' : '上滑取消发送';
+            DOM.recordOverlayText.textContent = isCancel ? t('releaseToCancelSend') : t('releaseToSend');
+            DOM.recordOverlayTip.textContent = isCancel ? t('inCancelArea') : t('slideUpToCancelArea');
+            DOM.recordOverlayCancelText.textContent = isCancel ? t('releaseToCancel') : t('slideUpToCancel');
             DOM.btnVoice.classList.add('recording');
         }
 
@@ -1017,7 +1018,7 @@
                     if (Number.isFinite(audio.duration) && audio.duration > 0) {
                         durationText.textContent = `${Math.max(1, Math.round(audio.duration))}"`;
                     } else {
-                        durationText.textContent = '语音';
+                        durationText.textContent = t('voice');
                     }
                 };
                 audio.addEventListener('loadedmetadata', syncDuration);
@@ -1049,7 +1050,7 @@
                         } catch (err) {
                             console.error(err);
                             stopCurrentAudio(false);
-                            showToast('语音播放失败');
+                            showToast(t('voicePlayFailed'));
                         }
                         return;
                     }
@@ -1122,7 +1123,7 @@
             resetSystemBanner();
             hideEndConfirmImmediately();
             DOM.chatList.scrollTop = 0;
-            if (DOM.loadHistory) DOM.loadHistory.textContent = '点击加载更多历史记录';
+            if (DOM.loadHistory) DOM.loadHistory.textContent = t('loadMoreHistory');
         }
 
         function disconnectSocket() {
@@ -1146,7 +1147,7 @@
             updateSessionState('AI');
             State.startingConversation = false;
             DOM.entryBtn.disabled = false;
-            DOM.entryBtn.textContent = '咨询客服';
+            DOM.entryBtn.textContent = t('consultService');
             if (isEmbedMode()) {
                 showChatView();
                 if (message) appendSystemMessage(message);
@@ -1156,7 +1157,7 @@
             if (message) showToast(message);
         }
 
-        function promptForRatingOrReturn(message = '会话已结束') {
+        function promptForRatingOrReturn(message) {
             State.pendingReturnToEntry = false;
             State.connected = false;
             disconnectSocket();
@@ -1173,7 +1174,7 @@
             if (State.startingConversation) return;
             State.startingConversation = true;
             DOM.entryBtn.disabled = true;
-            DOM.entryBtn.textContent = '连接中...';
+            DOM.entryBtn.textContent = t('connecting');
             clearVisitorSession();
             resetConversationRuntime();
             resetChatView();
@@ -1184,7 +1185,7 @@
             const ok = await initConversation();
             State.startingConversation = false;
             DOM.entryBtn.disabled = false;
-            DOM.entryBtn.textContent = '咨询客服';
+            DOM.entryBtn.textContent = t('consultService');
             if (!ok) return;
             showChatView();
             saveVisitorSession();
@@ -1204,7 +1205,7 @@
             State.conversationId = saved.conversationId;
             State.startingConversation = false;
             DOM.entryBtn.disabled = false;
-            DOM.entryBtn.textContent = '咨询客服';
+            DOM.entryBtn.textContent = t('consultService');
             showChatView();
             updateSessionState(saved.sessionType || 'AI');
             let syncState = null;
@@ -1214,7 +1215,7 @@
                 console.error(err);
             }
             if (syncState === false) {
-                returnToEntry("会话已失效");
+                returnToEntry(t("sessionExpired"));
                 return false;
             }
             if (!State.quickRepliesRendered) {
@@ -1344,7 +1345,7 @@
                     <div class="flex flex-col max-w-[70%] ${isUser ? 'items-end' : 'items-start'}">
                         ${nameLabel}
                         <div class="bubble-image mt-0.5">
-                            <img src="${safeSrc}" alt="图片" class="border border-gray-200/50 shadow-sm">
+                            <img src="${safeSrc}" alt="${t('image')}" class="border border-gray-200/50 shadow-sm">
                         </div>
                     </div>
                 </div>
@@ -1364,10 +1365,10 @@
                     <div class="flex flex-col max-w-[70%] ${isUser ? 'items-end' : 'items-start'}">
                         ${nameLabel}
                         <div class="${bubbleBg} bubble-audio rounded-2xl shadow-sm relative ${bubbleDir}">
-                            <button type="button" class="voice-bubble-btn ${isUser ? 'voice-bubble-self' : 'voice-bubble-other'}" data-audio-bubble aria-label="播放语音消息">
+                            <button type="button" class="voice-bubble-btn ${isUser ? 'voice-bubble-self' : 'voice-bubble-other'}" data-audio-bubble aria-label="${t('playVoiceMessage')}">
                                 <span class="voice-play-icon"><i class="fas fa-play" data-voice-icon></i></span>
                                 <span class="voice-wave" aria-hidden="true"><i></i><i></i><i></i></span>
-                                <span class="voice-duration" data-audio-duration>语音</span>
+                                <span class="voice-duration" data-audio-duration>${t('voice')}</span>
                             </button>
                             <audio class="voice-audio-element" preload="metadata" src="${safeSrc}"></audio>
                         </div>
@@ -1392,7 +1393,7 @@
                 return createAudioMessageHTML(resolveAssetURL(msg.content), isUser, meta);
             }
             if (msg.message_type === 'revoked' || msg.revoked_at) {
-                return createRevokedMessageHTML(msg.content || '对方撤回了一条消息', isUser, meta);
+                return createRevokedMessageHTML(msg.content || t('messageRecalled'), isUser, meta);
             }
             return createMessageHTML(msg.content || '', isUser, false, meta);
         }
@@ -1427,7 +1428,7 @@
                 <div class="flex gap-3 msg-wrapper quick-replies-card">
                     <div class="w-10 shrink-0"></div>
                     <div class="bg-white p-3 rounded-lg shadow-sm border border-gray-200/50 w-[75%]">
-                        <div class="text-sm text-gray-500 mb-2 border-b border-gray-100 pb-1">猜你想问</div>
+                        <div class="text-sm text-gray-500 mb-2 border-b border-gray-100 pb-1">${t('suggestedQuestions')}</div>
                         <div class="space-y-1">${items}</div>
                     </div>
                 </div>
@@ -1479,7 +1480,7 @@
 
         function handleSend(manualText = null, displayText = null) {
             if (State.sessionType === 'ENDED') {
-                showToast("会话已结束，无法发送消息");
+                showToast(t("sessionEndedCannotSend"));
                 return;
             }
             
@@ -1502,7 +1503,7 @@
             if (State.connected) {
                 sendSocketMessage(outgoingText);
             } else {
-                appendMessage(createMessageHTML("当前未连接服务器，请稍后重试。", false), false);
+                appendMessage(createMessageHTML(t("serverDisconnected"), false), false);
             }
         }
 
@@ -1512,7 +1513,7 @@
             wrapper.remove(); // 移除旧消息
             DOM.input.value = text;
             DOM.input.dispatchEvent(new Event('input'));
-            showToast("已恢复内容");
+            showToast(t("contentRestored"));
         };
 
         async function uploadMedia(file, filename = '') {
@@ -1553,26 +1554,26 @@
 
             switch (newState) {
                 case 'AI':
-                    State.agentName = '在线客服';
+                    State.agentName = t('agentNameDefault');
                     State.agentAvatar = './assets/img/avatar-service.svg';
                     DOM.headerAiBadge.classList.remove('hidden');
                     break;
                 case 'QUEUING':
                     DOM.sysBanner.classList.remove('hidden');
-                    DOM.sysBannerText.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>正在转接人工客服，请稍候...';
+                    DOM.sysBannerText.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>' + t('transferringHuman');
                     break;
                 case 'HUMAN':
-                    State.agentName = '客服-李雪';
+                    State.agentName = t('agentNameHumanPrefix') + '李雪';
                     State.agentAvatar = './assets/img/avatar-agent-xue.svg';
                     DOM.sysBanner.classList.remove('hidden');
                     DOM.sysBanner.className = 'bg-[#f0f9eb] text-[#67c23a] text-xs px-3 py-2 flex items-center justify-center border-b border-[#e1f3d8] shrink-0 z-10 shadow-sm relative';
-                    DOM.sysBannerText.innerHTML = '<i class="fas fa-check-circle mr-1"></i>已接入人工客服';
+                    DOM.sysBannerText.innerHTML = '<i class="fas fa-check-circle mr-1"></i>' + t('humanConnected');
                     setTimeout(() => DOM.sysBanner.classList.add('hidden'), 3000);
                     break;
                 case 'ENDED':
-                    State.agentName = '会话已结束';
+                    State.agentName = t('sessionEnded');
                     DOM.input.disabled = true;
-                    DOM.input.placeholder = "会话已结束";
+                    DOM.input.placeholder = t("sessionEnded");
                     break;
             }
             DOM.headerTitle.textContent = State.agentName;
@@ -1583,33 +1584,33 @@
             
             if (action === 'photo') {
                 if (State.sessionType === 'ENDED') {
-                    showToast("会话已结束");
+                    showToast(t("sessionEnded"));
                     return;
                 }
                 DOM.uploadImageInput.click();
             }
             else if (action === 'human') {
                 if (State.sessionType === 'HUMAN' || State.sessionType === 'QUEUING') {
-                    showToast("当前已是人工服务相关状态");
+                    showToast(t("alreadyHumanState"));
                     return;
                 }
                 updateSessionState('QUEUING');
-                appendSystemMessage("正在为您转接人工客服...");
+                appendSystemMessage(t("transferringSystem"));
                 sendSocketMessage("人工客服");
             } 
             else if (action === 'phone') {
 				const telephone = State.contacts.telephone;
-                appendSystemMessage(`客服电话：<a href="tel:${escapeHTML(telephone)}" class="text-blue-500">${escapeHTML(telephone)}</a> (点击拨打)`);
+                appendSystemMessage(t('supportPhonePrefix') + `<a href="tel:${escapeHTML(telephone)}" class="text-blue-500">${escapeHTML(telephone)}</a> ` + t('tapToDial'));
                 if (State.connected) sendSocketMessage("电话");
             }
             else if (action === 'whatsapp') {
                 const whatsapp = State.contacts.whatsapp;
-                appendSystemMessage(`官方 WhatsApp：<span class="text-wc-user font-bold select-all">${escapeHTML(whatsapp)}</span> (长按复制)`);
+                appendSystemMessage(t('officialWhatsappPrefix') + `<span class="text-wc-user font-bold select-all">${escapeHTML(whatsapp)}</span> ` + t('longPressCopy'));
                 if (State.connected) sendSocketMessage("WhatsApp");
             }
             else if (action === 'telegram') {
                 const telegram = State.contacts.telegram;
-                appendSystemMessage(`官方 Telegram：<span class="text-wc-user font-bold select-all">${escapeHTML(telegram)}</span> (长按复制)`);
+                appendSystemMessage(t('officialTelegramPrefix') + `<span class="text-wc-user font-bold select-all">${escapeHTML(telegram)}</span> ` + t('longPressCopy'));
                 if (State.connected) sendSocketMessage("Telegram");
             }
             else if (action === 'end') {
@@ -1623,11 +1624,11 @@
                     }));
                     setTimeout(() => {
                         if (State.pendingReturnToEntry) {
-                            promptForRatingOrReturn("会话已结束");
+                            promptForRatingOrReturn(t("sessionEnded"));
                         }
                     }, 600);
                 } else {
-                    promptForRatingOrReturn("会话已结束");
+                    promptForRatingOrReturn(t("sessionEnded"));
                 }
             }
         }
@@ -1651,7 +1652,7 @@
                 return true;
             } catch (err) {
                 console.error(err);
-                showToast("连接客服系统失败，请确认后端已启动", 3000);
+                showToast(t("connectSystemFailed"), 3000);
                 return false;
             }
         }
@@ -1691,7 +1692,7 @@
             State.ws = new WebSocket(url);
             State.ws.onopen = () => {
                 State.connected = true;
-                showToast("客服通道已连接");
+                showToast(t("channelConnected"));
                 drainPendingInitialMessages()
                     .catch(() => {})
                     .finally(() => {
@@ -1715,7 +1716,7 @@
 
         function sendSocketMessage(text, type = 'text') {
             if (!State.connected || !State.ws) {
-                appendMessage(createMessageHTML("消息未发送，客服通道正在重连。", false), false);
+                appendMessage(createMessageHTML(t("messageNotSentReconnecting"), false), false);
                 return '';
             }
             const id = clientMsgId();
@@ -1753,10 +1754,10 @@
             if (payload.event === 'error') {
                 const code = payload.data?.code || '';
                 if (code === 'unauthorized' || code === 'forbidden' || code === 'not_found') {
-                    returnToEntry("会话已失效");
+                    returnToEntry(t("sessionExpired"));
                     return;
                 }
-                showToast(payload.data?.message || "客服通道异常");
+                showToast(payload.data?.message || t("channelError"));
             }
         }
 
@@ -1790,7 +1791,7 @@
             const data = await resp.json();
             State.hasMoreHistory = !!data.has_more;
             State.nextBefore = data.next_before || (data.messages?.[0]?.server_msg_id || State.nextBefore);
-            if (DOM.loadHistory) DOM.loadHistory.textContent = State.hasMoreHistory ? '点击加载更多历史记录' : '暂无更多历史记录';
+            if (DOM.loadHistory) DOM.loadHistory.textContent = State.hasMoreHistory ? t('loadMoreHistory') : t('noMoreHistory');
             (data.messages || []).forEach((msg) => renderServerMessage(msg, mode));
             return true;
         }
@@ -1798,7 +1799,7 @@
         async function loadOlderMessages() {
             if (State.loadingHistory) return;
             if (!State.hasMoreHistory || !State.nextBefore) {
-                showToast("暂无更多历史记录");
+                showToast(t("noMoreHistory"));
                 return;
             }
             State.loadingHistory = true;
@@ -1811,9 +1812,9 @@
                 State.hasMoreHistory = !!data.has_more;
                 State.nextBefore = data.next_before || (data.messages?.[0]?.server_msg_id || State.nextBefore);
                 [...(data.messages || [])].reverse().forEach((msg) => renderServerMessage(msg, 'prepend'));
-                DOM.loadHistory.textContent = State.hasMoreHistory ? '点击加载更多历史记录' : '暂无更多历史记录';
+                DOM.loadHistory.textContent = State.hasMoreHistory ? t('loadMoreHistory') : t('noMoreHistory');
             } catch (err) {
-                showToast("历史记录加载失败");
+                showToast(t("historyLoadFailed"));
             } finally {
                 State.loadingHistory = false;
             }
@@ -1828,7 +1829,7 @@
             } else if (conversation.status === 'waiting' || conversation.status === 'human_requested') {
                 updateSessionState('QUEUING');
             } else if (conversation.status === 'closed') {
-                promptForRatingOrReturn("会话已结束");
+                promptForRatingOrReturn(t("sessionEnded"));
                 return;
             }
             saveVisitorSession();
@@ -1910,17 +1911,17 @@
 
         window.submitEval = async function() {
             if(!State.selectedRatingScore) {
-                showToast("请先选择评价等级");
+                showToast(t("chooseRatingFirst"));
                 return;
             }
             const advice = DOM.evalAdvice.value.trim();
             if (State.selectedRatingScore < 5 && !advice) {
-                showToast("请输入您的建议");
+                showToast(t("enterSuggestion"));
                 DOM.evalAdvice.focus();
                 return;
             }
             if (State.ratingSubmitted) {
-                showToast("评价已提交");
+                showToast(t("ratingSubmitted"));
                 closeEval(true);
                 return;
             }
@@ -1939,17 +1940,17 @@
                 });
                 if (!resp.ok && resp.status !== 409) throw new Error('rating failed');
                 State.ratingSubmitted = true;
-                showToast("感谢您的评价！");
+                showToast(t("thanksRating"));
                 closeEval(true);
             } catch (err) {
-                showToast("评价提交失败，请稍后重试");
+                showToast(t("ratingSubmitFailed"));
             }
         }
 
         function ratingTags(score) {
-            if (score >= 5) return ['非常满意'];
-            if (score >= 3) return ['一般'];
-            return ['不满意'];
+            if (score >= 5) return [t('verySatisfied')];
+            if (score >= 3) return [t('neutral')];
+            return [t('unsatisfied')];
         }
 
         // 顶部按钮事件
@@ -1957,10 +1958,10 @@
             State.soundEnabled = !State.soundEnabled;
             if (State.soundEnabled) {
                 this.className = 'fas fa-volume-up text-lg text-gray-700 cursor-pointer';
-                showToast("提示音已开启");
+                showToast(t("soundOn"));
             } else {
                 this.className = 'fas fa-volume-mute text-lg text-gray-400 cursor-pointer';
-                showToast("提示音已关闭");
+                showToast(t("soundOff"));
             }
         });
 
@@ -1983,11 +1984,11 @@
             this.value = '';
             if (!file) return;
             if (!State.visitorToken) {
-                showToast("客服通道尚未初始化");
+                showToast(t("channelNotInitialized"));
                 return;
             }
             try {
-                showToast("图片上传中...");
+                showToast(t("imageUploading"));
                 const data = await uploadMedia(file, file.name || `image-${Date.now()}.png`);
                 const imageURL = resolveAssetURL(data.url);
                 appendMessage(createImageMessageHTML(imageURL, true), true);
@@ -1996,7 +1997,7 @@
                 }
             } catch (err) {
                 console.error(err);
-                showToast("图片上传失败");
+                showToast(t("imageUploadFailed"));
             }
         });
 
@@ -2021,7 +2022,7 @@
         async function startVoiceRecording(startY = 0) {
             if (State.isRecording || State.sessionType === 'ENDED') return;
             if (!navigator.mediaDevices || typeof MediaRecorder === 'undefined') {
-                showToast('当前浏览器不支持录音');
+                showToast(t('recordingNotSupported'));
                 State.recordGestureSource = '';
                 State.recordPointerId = null;
                 return;
@@ -2062,15 +2063,15 @@
                     stopRecordingStream();
                     hideRecordingOverlay();
                     if (canceled) {
-                        showToast('已取消发送');
+                        showToast(t('sendingCancelled'));
                         return;
                     }
                     if (!chunks.length || Date.now() - startedAt < 400) {
-                        showToast('录音时间太短');
+                        showToast(t('recordingTooShort'));
                         return;
                     }
                     try {
-                        showToast('语音上传中...');
+                        showToast(t('voiceUploading'));
                         const blob = new Blob(chunks, { type });
                         const fileName = `voice-${Date.now()}${audioExtension(type)}`;
                         let payload = blob;
@@ -2083,11 +2084,11 @@
                         if (State.connected) {
                             sendSocketMessage(data.url, 'audio');
                         } else {
-                            appendMessage(createMessageHTML('当前未连接服务器，请稍后重试。', false), false);
+                            appendMessage(createMessageHTML(t('serverDisconnected'), false), false);
                         }
                     } catch (err) {
                         console.error(err);
-                        showToast('语音发送失败');
+                        showToast(t('voiceSendFailed'));
                     }
                 };
                 recorder.start();
@@ -2102,7 +2103,7 @@
                 State.recordPendingForceCancel = false;
                 stopRecordingStream();
                 hideRecordingOverlay();
-                showToast('无法启用麦克风，请检查权限');
+                showToast(t('micPermissionDenied'));
             }
         }
 

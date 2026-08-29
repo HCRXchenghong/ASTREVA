@@ -14,6 +14,7 @@ export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUr
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(Number(chat.initialUnreadCount));
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [siteLocale, setSiteLocale] = useState<string>(() => (typeof document !== 'undefined' ? document.documentElement.lang || 'zh-CN' : 'zh-CN'));
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const envBridgeUrl = (import.meta.env.PUBLIC_SERVICEBRIDGE_URL || '').trim().replace(/\/$/, '');
 
@@ -37,11 +38,22 @@ export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUr
         url.hostname = window.location.hostname;
       }
       url.searchParams.set('embed', '1');
+      const lang = String(siteLocale || '').toLowerCase().startsWith('ar') ? 'ar' : String(siteLocale || '').toLowerCase().startsWith('en') ? 'en' : 'zh-CN';
+      url.searchParams.set('lang', lang);
       return url.toString();
     } catch {
       return `${base.replace(/\/$/, '')}/?embed=1`;
     }
-  }, [serviceBridgeUrl, envBridgeUrl]);
+  }, [serviceBridgeUrl, envBridgeUrl, siteLocale]);
+
+  useEffect(() => {
+    const onLocale = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      setSiteLocale(typeof detail === 'string' && detail ? detail : document.documentElement.lang || 'zh-CN');
+    };
+    window.addEventListener('astreva:locale', onLocale);
+    return () => window.removeEventListener('astreva:locale', onLocale);
+  }, []);
 
   useEffect(() => {
     const expectedOrigin = new URL(iframeUrl).origin;
