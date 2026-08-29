@@ -125,6 +125,7 @@ type Conversation struct {
 	Status           ConversationStatus `json:"status"`
 	AssignedAgentID  string             `json:"assigned_agent_id,omitempty"`
 	Source           string             `json:"source"`
+	VisitorLang      string             `json:"visitor_lang,omitempty"`
 	LastMessage      string             `json:"last_message"`
 	LastMessageAt    *time.Time         `json:"last_message_at,omitempty"`
 	UnreadForAgent   int                `json:"unread_for_agent"`
@@ -141,10 +142,16 @@ type Message struct {
 	SenderID       string      `json:"sender_id"`
 	MessageType    MessageType `json:"message_type"`
 	Content        string      `json:"content"`
-	CreatedAt      time.Time   `json:"created_at"`
-	RevokedAt      *time.Time  `json:"revoked_at,omitempty"`
-	RevokedByKind  AccountKind `json:"revoked_by_kind,omitempty"`
-	RevokedByID    string      `json:"revoked_by_id,omitempty"`
+	// Translations 保存该消息面向其他语言的译文（语言代码 -> 译文）。原文始终保存在 Content。
+	Translations map[string]string `json:"translations,omitempty"`
+	// OriginalContent 仅在下发时填充：当 Content 被替换为译文时保留原文，供客服端「查看原文」使用。
+	OriginalContent string `json:"original_content,omitempty"`
+	// HiddenFromVisitor 仅在生成访客视图时使用：该消息不应展示给访客（如仅客服端可见的转接提示）。
+	HiddenFromVisitor bool        `json:"-"`
+	CreatedAt         time.Time   `json:"created_at"`
+	RevokedAt         *time.Time  `json:"revoked_at,omitempty"`
+	RevokedByKind     AccountKind `json:"revoked_by_kind,omitempty"`
+	RevokedByID       string      `json:"revoked_by_id,omitempty"`
 }
 
 type KeywordRule struct {

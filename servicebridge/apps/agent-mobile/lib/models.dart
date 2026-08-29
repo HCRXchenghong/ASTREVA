@@ -71,6 +71,7 @@ class ChatMessage {
     required this.createdAt,
     this.clientMessageId = '',
     this.revoked = false,
+    this.originalContent = '',
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
@@ -80,6 +81,7 @@ class ChatMessage {
     senderType: '${json['sender_type'] ?? ''}',
     messageType: '${json['message_type'] ?? 'text'}',
     content: '${json['content'] ?? ''}',
+    originalContent: '${json['original_content'] ?? ''}',
     createdAt:
         DateTime.tryParse('${json['created_at'] ?? ''}')?.toLocal() ??
         DateTime.now(),
@@ -92,6 +94,7 @@ class ChatMessage {
   final String senderType;
   final String messageType;
   final String content;
+  final String originalContent;
   final DateTime createdAt;
   final bool revoked;
 }

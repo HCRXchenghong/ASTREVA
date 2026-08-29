@@ -1527,7 +1527,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
+class _MessageBubble extends StatefulWidget {
   const _MessageBubble({
     required this.message,
     required this.baseUrl,
@@ -1538,7 +1538,16 @@ class _MessageBubble extends StatelessWidget {
   final String? myAvatarUrl;
 
   @override
+  State<_MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<_MessageBubble> {
+  bool _showOriginal = false;
+
+  @override
   Widget build(BuildContext context) {
+    final message = widget.message;
+    final myAvatarUrl = widget.myAvatarUrl;
     final isMine = message.senderType == 'agent';
     final isAI = message.senderType == 'ai';
     final isSystem = message.senderType == 'system' ||
@@ -1640,6 +1649,8 @@ class _MessageBubble extends StatelessWidget {
   }
 
   Widget _buildBubbleBody(BuildContext context, bool isMine, bool isAI) {
+    final message = widget.message;
+    final baseUrl = widget.baseUrl;
     final bubbleColor = isMine ? AppColors.chatBubbleMine : AppColors.surface;
     final textColor = isMine
         ? AppColors.textPrimary
@@ -1671,6 +1682,11 @@ class _MessageBubble extends StatelessWidget {
       );
     }
 
+    // 客服端默认展示中文译文，点击「查看原文」可展开访客/客服输入的原文。
+    final original = message.originalContent.trim();
+    final hasOriginal =
+        original.isNotEmpty && original != message.content.trim();
+
     return Container(
       constraints: BoxConstraints(
         maxWidth: MediaQuery.sizeOf(context).width * .62,
@@ -1694,7 +1710,38 @@ class _MessageBubble extends StatelessWidget {
                 color: isAI ? AppColors.successBorder : AppColors.border,
               ),
       ),
-      child: content,
+      child: hasOriginal
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                content,
+                const SizedBox(height: 6),
+                GestureDetector(
+                  onTap: () =>
+                      setState(() => _showOriginal = !_showOriginal),
+                  child: Text(
+                    _showOriginal ? '收起原文' : '查看原文',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
+                if (_showOriginal) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    original,
+                    style: TextStyle(
+                      color: textColor.withValues(alpha: .55),
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ],
+            )
+          : content,
     );
   }
 }

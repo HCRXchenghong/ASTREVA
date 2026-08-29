@@ -199,8 +199,22 @@ async function selectWorkspaceConversation(id, updateList = true) {
   list.innerHTML = messages.length ? messages.map((message) => {
     const sender = ['agent', 'ai', 'system'].includes(message.sender_type) ? message.sender_type : 'visitor';
     const senderName = ({ visitor: '访客', agent: '人工客服', ai: 'AI', system: '系统' })[sender];
-    return `<article class="workspace-message ${sender}"><div class="bubble">${esc(message.content || '')}</div><small>${senderName} · ${localTime(message.created_at)}</small></article>`;
+    // 默认展示中文译文，原文可通过「查看原文」展开。
+    const original = String(message.original_content || '').trim();
+    const hasOriginal = original && original !== String(message.content || '').trim();
+    const originalBlock = hasOriginal
+      ? `<div class="message-original"><button type="button" class="view-original-btn">查看原文</button><div class="original-text" hidden>${esc(original)}</div></div>`
+      : '';
+    return `<article class="workspace-message ${sender}"><div class="bubble">${esc(message.content || '')}${originalBlock}</div><small>${senderName} · ${localTime(message.created_at)}</small></article>`;
   }).join('') : '<div class="empty">暂无消息</div>';
+  list.querySelectorAll('.view-original-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      const box = button.nextElementSibling;
+      if (!box) return;
+      box.hidden = !box.hidden;
+      button.textContent = box.hidden ? '查看原文' : '收起原文';
+    });
+  });
   list.scrollTop = list.scrollHeight;
 }
 

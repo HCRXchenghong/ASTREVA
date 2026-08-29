@@ -88,8 +88,12 @@ func TestEndToEndVisitorToAgentLoop(t *testing.T) {
 	}
 
 	transfer := doJSON(t, router, http.MethodPost, fmt.Sprintf("/api/admin/conversations/%s/transfer", conversationID), adminToken, map[string]any{"agent_id": agentID}, http.StatusOK)
-	if status := transfer["conversation"].(map[string]any)["status"]; status != "assigned" {
-		t.Fatalf("expected assigned after transfer, got %v", status)
+	// 无痕转人工：转接只静默更换客服，不改变会话状态；客服真实回复后状态才变为 assigned。
+	if assigned := transfer["conversation"].(map[string]any)["assigned_agent_id"]; assigned != agentID {
+		t.Fatalf("expected transfer to assign agent %s, got %v", agentID, assigned)
+	}
+	if status := transfer["conversation"].(map[string]any)["status"]; status == "assigned" {
+		t.Fatalf("transfer must not flip status to assigned before the agent replies, got %v", status)
 	}
 
 	agentList := doJSON(t, router, http.MethodGet, "/api/agent/conversations", agentToken, nil, http.StatusOK)

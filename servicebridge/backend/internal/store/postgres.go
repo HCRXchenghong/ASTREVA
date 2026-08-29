@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"customer-service/backend/internal/ai"
 	"customer-service/backend/internal/domain"
 )
 
@@ -24,8 +26,8 @@ const (
 
 	adminColumns        = `id, account, name, password_hash, created_at`
 	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate`
-	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
-	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, created_at, revoked_at, revoked_by_kind, revoked_by_id`
+	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
+	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id`
 	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
 	auditColumns        = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
 )
@@ -242,7 +244,7 @@ func (s *PostgresStore) AuthVisitor(token string) (domain.AuthSession, bool) {
 	return session, ok
 }
 
-func (s *PostgresStore) CreateVisitorConversation(ip, source string) (domain.VisitorSession, error) {
+func (s *PostgresStore) CreateVisitorConversation(ip, source, lang string) (domain.VisitorSession, error) {
 	ctx, cancel := dbContext()
 	defer cancel()
 
@@ -281,6 +283,7 @@ func (s *PostgresStore) CreateVisitorConversation(ip, source string) (domain.Vis
 			VisitorRemark:  ip,
 			Status:         domain.ConversationWaiting,
 			Source:         source,
+			VisitorLang:    ai.NormalizeLang(lang, ai.LangZh),
 			LastMessage:    "新会话",
 			LastMessageAt:  &now,
 			UnreadForAgent: 0,
@@ -289,32 +292,16 @@ func (s *PostgresStore) CreateVisitorConversation(ip, source string) (domain.Vis
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO conversations (
-				id, visitor_id, visitor_ip, visitor_remark, status, source,
+				id, visitor_id, visitor_ip, visitor_remark, status, source, visitor_lang,
 				last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at
 			)
-			VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, 0, 0, $9, $10)
-		`, conversation.ID, conversation.VisitorID, conversation.VisitorIP, conversation.VisitorRemark, conversation.Status, conversation.Source, conversation.LastMessage, conversation.LastMessageAt, conversation.CreatedAt, conversation.UpdatedAt); err != nil {
+			VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, $9, 0, 0, $10, $11)
+		`, conversation.ID, conversation.VisitorID, conversation.VisitorIP, conversation.VisitorRemark, conversation.Status, conversation.Source, conversation.VisitorLang, conversation.LastMessage, conversation.LastMessageAt, conversation.CreatedAt, conversation.UpdatedAt); err != nil {
 			return err
 		}
 
 		if err := s.assignConversationTx(ctx, tx, &conversation); err != nil {
 			return err
-		}
-		if conversation.AssignedAgentID == "" {
-			ai, err := s.aiSettingsTx(ctx, tx)
-			if err != nil {
-				return err
-			}
-			business, err := s.businessHoursTx(ctx, tx)
-			if err != nil {
-				return err
-			}
-			if ai.Enabled && ai.Mode != domain.AIModeManualOnly && (!business.Enabled || !isBusinessTime(business, now) || ai.Mode == domain.AIModeAlwaysAI) {
-				conversation.Status = domain.ConversationAIServing
-				if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": now}); err != nil {
-					return err
-				}
-			}
 		}
 
 		initialMessages := []domain.Message{}
@@ -323,7 +310,7 @@ func (s *PostgresStore) CreateVisitorConversation(ip, source string) (domain.Vis
 			return err
 		}
 		if entryReply := strings.TrimSpace(contacts.EntryReply); entryReply != "" {
-			msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderAI, "ai", domain.MessageAIText, entryReply)
+			msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderAI, "ai", domain.MessageAIText, entryReply, nil)
 			if err != nil {
 				return err
 			}
@@ -391,7 +378,10 @@ func (s *PostgresStore) SetAgentStatus(agentID string, status domain.AgentStatus
 			}
 			for _, conversation := range conversations {
 				conversation.AssignedAgentID = ""
-				conversation.Status = domain.ConversationHumanRequested
+				// 人工已实际接待过的会话才需要重新排队；AI 接待中的会话保持原状态。
+				if conversation.Status == domain.ConversationAssigned {
+					conversation.Status = domain.ConversationHumanRequested
+				}
 				conversation.UpdatedAt = now
 				if _, err := tx.Exec(ctx, `
 					UPDATE conversations SET assigned_agent_id=NULL, status=$2, updated_at=$3 WHERE id=$1
@@ -416,11 +406,11 @@ func (s *PostgresStore) SetAgentStatus(agentID string, status domain.AgentStatus
 				}
 				agent.CurrentConversations++
 				conversation.AssignedAgentID = agent.ID
-				conversation.Status = domain.ConversationAssigned
 				conversation.UpdatedAt = now
+				// 静默分配：不改变会话状态，客服实际回复后才对外显示人工服务（无痕转人工）。
 				if _, err := tx.Exec(ctx, `
-					UPDATE conversations SET assigned_agent_id=$2, status=$3, updated_at=$4 WHERE id=$1
-				`, conversation.ID, conversation.AssignedAgentID, conversation.Status, conversation.UpdatedAt); err != nil {
+					UPDATE conversations SET assigned_agent_id=$2, updated_at=$3 WHERE id=$1
+				`, conversation.ID, conversation.AssignedAgentID, conversation.UpdatedAt); err != nil {
 					return err
 				}
 				assigned = append(assigned, conversation)
@@ -615,7 +605,7 @@ func (s *PostgresStore) UpdateRemark(actor domain.AuthSession, conversationID, r
 	return out, err
 }
 
-func (s *PostgresStore) AddVisitorMessage(conversationID, clientMsgID, content string, messageType domain.MessageType) (MessageResult, error) {
+func (s *PostgresStore) AddVisitorMessage(conversationID, clientMsgID, content string, messageType domain.MessageType, translations map[string]string) (MessageResult, error) {
 	ctx, cancel := dbContext()
 	defer cancel()
 
@@ -641,14 +631,14 @@ func (s *PostgresStore) AddVisitorMessage(conversationID, clientMsgID, content s
 			return err
 		}
 
-		input, err := s.createMessageTx(ctx, tx, conversationID, clientMsgID, domain.SenderVisitor, conversation.VisitorID, messageType, content)
+		input, err := s.createMessageTx(ctx, tx, conversationID, clientMsgID, domain.SenderVisitor, conversation.VisitorID, messageType, content, translations)
 		if err != nil {
 			return err
 		}
-		if err := s.touchConversationTx(ctx, tx, &conversation, conversationPreviewText(messageType, content), true, input.CreatedAt); err != nil {
+		if err := s.touchConversationTx(ctx, tx, &conversation, agentPreviewText(messageType, content, translations), true, input.CreatedAt); err != nil {
 			return err
 		}
-		generated, needAI, err := s.generateAutoRepliesTx(ctx, tx, &conversation, content)
+		generated, needAI, err := s.generateAutoRepliesTx(ctx, tx, &conversation, messageType, content)
 		if err != nil {
 			return err
 		}
@@ -669,7 +659,7 @@ func (s *PostgresStore) AddVisitorMessage(conversationID, clientMsgID, content s
 	return out, err
 }
 
-func (s *PostgresStore) AddAIMessage(conversationID, content string) (domain.Message, domain.Conversation, error) {
+func (s *PostgresStore) AddAIMessage(conversationID, content string, translations map[string]string) (domain.Message, domain.Conversation, error) {
 	ctx, cancel := dbContext()
 	defer cancel()
 
@@ -683,18 +673,21 @@ func (s *PostgresStore) AddAIMessage(conversationID, content string) (domain.Mes
 		if conversation.Status == domain.ConversationClosed {
 			return ErrForbidden
 		}
-		if conversation.AssignedAgentID != "" || conversation.Status != domain.ConversationAIServing {
+		// 人工客服实际回复后（状态 assigned）AI 静默撤出；排队等待人工期间 AI 继续服务。
+		if conversation.Status != domain.ConversationAIServing && conversation.Status != domain.ConversationHumanRequested {
 			return ErrConflict
 		}
-		conversation.Status = domain.ConversationAIServing
-		if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": dbNow()}); err != nil {
-			return err
+		if conversation.Status == domain.ConversationWaiting {
+			conversation.Status = domain.ConversationAIServing
+			if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": dbNow()}); err != nil {
+				return err
+			}
 		}
-		msg, err = s.createMessageTx(ctx, tx, conversationID, "", domain.SenderAI, "ai", domain.MessageAIText, content)
+		msg, err = s.createMessageTx(ctx, tx, conversationID, "", domain.SenderAI, "ai", domain.MessageAIText, content, translations)
 		if err != nil {
 			return err
 		}
-		if err := s.touchConversationTx(ctx, tx, &conversation, conversationPreviewText(domain.MessageAIText, content), false, msg.CreatedAt); err != nil {
+		if err := s.touchConversationTx(ctx, tx, &conversation, agentPreviewText(domain.MessageAIText, content, translations), false, msg.CreatedAt); err != nil {
 			return err
 		}
 		out, err = s.conversationByIDForUpdateTx(ctx, tx, conversationID)
@@ -703,7 +696,7 @@ func (s *PostgresStore) AddAIMessage(conversationID, content string) (domain.Mes
 	return msg, out, err
 }
 
-func (s *PostgresStore) AddAgentMessage(agentID, conversationID, clientMsgID, content string, messageType domain.MessageType) (MessageResult, error) {
+func (s *PostgresStore) AddAgentMessage(agentID, conversationID, clientMsgID, content string, messageType domain.MessageType, translations map[string]string) (MessageResult, error) {
 	ctx, cancel := dbContext()
 	defer cancel()
 
@@ -731,13 +724,14 @@ func (s *PostgresStore) AddAgentMessage(agentID, conversationID, clientMsgID, co
 		if err := validateUserMessage(messageType, content); err != nil {
 			return err
 		}
-		if conversation.Status == domain.ConversationAIServing || conversation.Status == domain.ConversationHumanRequested {
+		// 客服首次真实回复即视为接管：状态变为 assigned，AI 随后静默撤出（无痕转人工）。
+		if conversation.Status == domain.ConversationAIServing || conversation.Status == domain.ConversationHumanRequested || conversation.Status == domain.ConversationWaiting {
 			conversation.Status = domain.ConversationAssigned
 			if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": dbNow()}); err != nil {
 				return err
 			}
 		}
-		input, err := s.createMessageTx(ctx, tx, conversationID, clientMsgID, domain.SenderAgent, agentID, messageType, content)
+		input, err := s.createMessageTx(ctx, tx, conversationID, clientMsgID, domain.SenderAgent, agentID, messageType, content, translations)
 		if err != nil {
 			return err
 		}
@@ -749,6 +743,42 @@ func (s *PostgresStore) AddAgentMessage(agentID, conversationID, clientMsgID, co
 			return err
 		}
 		out = MessageResult{Input: input, Conversation: latest}
+		return nil
+	})
+	return out, err
+}
+
+func (s *PostgresStore) UpdateMessageTranslations(conversationID, serverMsgID string, translations map[string]string) (domain.Message, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	merged := cleanTranslations(translations)
+	var out domain.Message
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		row := tx.QueryRow(ctx, `
+			SELECT `+messageColumns+`
+			FROM messages
+			WHERE conversation_id=$1 AND server_msg_id=$2
+			FOR UPDATE
+		`, conversationID, strings.TrimSpace(serverMsgID))
+		msg, err := scanMessage(row)
+		if err != nil {
+			return mapNoRows(err)
+		}
+		if len(merged) > 0 {
+			current := map[string]string{}
+			for lang, text := range msg.Translations {
+				current[lang] = text
+			}
+			for lang, text := range merged {
+				current[lang] = text
+			}
+			msg.Translations = current
+		}
+		if _, err := tx.Exec(ctx, `UPDATE messages SET translations=$3::jsonb WHERE server_msg_id=$1 AND conversation_id=$2`, serverMsgID, conversationID, marshalTranslationsJSON(msg.Translations)); err != nil {
+			return err
+		}
+		out = msg
 		return nil
 	})
 	return out, err
@@ -843,7 +873,7 @@ func (s *PostgresStore) CloseConversation(actor domain.AuthSession, conversation
 		if err != nil {
 			return err
 		}
-		msg, err = s.createMessageTx(ctx, tx, conversationID, "", domain.SenderSystem, "system", domain.MessageSystem, "会话已结束")
+		msg, err = s.createMessageTx(ctx, tx, conversationID, "", domain.SenderSystem, "system", domain.MessageSystem, "会话已结束", nil)
 		return err
 	})
 	return out, msg, err
@@ -894,7 +924,7 @@ func (s *PostgresStore) TransferConversation(actor domain.AuthSession, conversat
 			return mapNoRows(err)
 		}
 		if conversation.AssignedAgentID == target.ID {
-			msg, err = s.createMessageTx(ctx, tx, conversationID, "", domain.SenderSystem, "system", domain.MessageSystem, "会话已在目标客服名下。")
+			msg, err = s.createMessageTx(ctx, tx, conversationID, "", domain.SenderSystem, "system", domain.MessageHandoff, "会话已在目标客服名下。", nil)
 			out = conversation
 			return err
 		}
@@ -909,14 +939,15 @@ func (s *PostgresStore) TransferConversation(actor domain.AuthSession, conversat
 		}
 		row := tx.QueryRow(ctx, `
 			UPDATE conversations
-			SET assigned_agent_id=$2, status=$3, updated_at=$4
+			SET assigned_agent_id=$2, updated_at=$3
 			WHERE id=$1
-			RETURNING `+conversationColumns, conversationID, target.ID, domain.ConversationAssigned, now)
+			RETURNING `+conversationColumns, conversationID, target.ID, now)
 		out, err = scanConversation(row)
 		if err != nil {
 			return err
 		}
-		msg, err = s.createMessageTx(ctx, tx, conversationID, "", domain.SenderSystem, "system", domain.MessageSystem, "会话已转接至 "+target.Name+"。")
+		// 转接只更换客服，不改变会话状态：客服实际回复后才对外显示人工服务（无痕转人工）。
+		msg, err = s.createMessageTx(ctx, tx, conversationID, "", domain.SenderSystem, "system", domain.MessageHandoff, "会话已转接至 "+target.Name+"（仅客服端可见）。", nil)
 		return err
 	})
 	return out, msg, err
@@ -1687,7 +1718,10 @@ func (s *PostgresStore) DisableAgent(id string) (domain.Agent, error) {
 		}
 		for _, conversation := range conversations {
 			conversation.AssignedAgentID = ""
-			conversation.Status = domain.ConversationHumanRequested
+			// 人工已实际接待过的会话才需要重新排队；AI 接待中的会话保持原状态。
+			if conversation.Status == domain.ConversationAssigned {
+				conversation.Status = domain.ConversationHumanRequested
+			}
 			conversation.UpdatedAt = now
 			if _, err := tx.Exec(ctx, `
 				UPDATE conversations SET assigned_agent_id=NULL, status=$2, updated_at=$3 WHERE id=$1
@@ -1804,11 +1838,11 @@ func (s *PostgresStore) nextWaitingConversationForUpdateTx(ctx context.Context, 
 	row := tx.QueryRow(ctx, `
 		SELECT `+conversationColumns+`
 		FROM conversations
-		WHERE status IN ($1, $2)
+		WHERE assigned_agent_id IS NULL AND status IN ($1, $2, $3)
 		ORDER BY created_at
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
-	`, domain.ConversationWaiting, domain.ConversationHumanRequested)
+	`, domain.ConversationWaiting, domain.ConversationHumanRequested, domain.ConversationAIServing)
 	return scanConversation(row)
 }
 
@@ -1875,6 +1909,9 @@ func (s *PostgresStore) assignConversationTx(ctx context.Context, tx pgx.Tx, con
 }
 
 func (s *PostgresStore) assignHumanConversationTx(ctx context.Context, tx pgx.Tx, conversation *domain.Conversation) error {
+	if conversation.AssignedAgentID != "" {
+		return nil
+	}
 	now := dbNow()
 	row := tx.QueryRow(ctx, `
 		SELECT `+agentColumns+`
@@ -1897,11 +1934,10 @@ func (s *PostgresStore) assignHumanConversationTx(ctx context.Context, tx pgx.Tx
 		return err
 	}
 	conversation.AssignedAgentID = agent.ID
-	conversation.Status = domain.ConversationAssigned
 	conversation.UpdatedAt = now
+	// 静默分配：只记录客服，不改会话状态。客服实际回复后状态才变为 assigned（无痕转人工）。
 	return s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{
 		"assigned_agent_id": conversation.AssignedAgentID,
-		"status":            conversation.Status,
 		"updated_at":        now,
 	})
 }
@@ -1927,7 +1963,7 @@ func (s *PostgresStore) selectTransferTargetTx(ctx context.Context, tx pgx.Tx, a
 	return scanAgent(row)
 }
 
-func (s *PostgresStore) createMessageTx(ctx context.Context, tx pgx.Tx, conversationID, clientMsgID string, senderType domain.SenderType, senderID string, messageType domain.MessageType, content string) (domain.Message, error) {
+func (s *PostgresStore) createMessageTx(ctx context.Context, tx pgx.Tx, conversationID, clientMsgID string, senderType domain.SenderType, senderID string, messageType domain.MessageType, content string, translations map[string]string) (domain.Message, error) {
 	msg := domain.Message{
 		ServerMsgID:    "msg_" + randomID(12),
 		ClientMsgID:    strings.TrimSpace(clientMsgID),
@@ -1936,12 +1972,13 @@ func (s *PostgresStore) createMessageTx(ctx context.Context, tx pgx.Tx, conversa
 		SenderID:       senderID,
 		MessageType:    messageType,
 		Content:        strings.TrimSpace(content),
+		Translations:   cleanTranslations(translations),
 		CreatedAt:      dbNow(),
 	}
 	row := tx.QueryRow(ctx, `
-		INSERT INTO messages (server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, created_at, revoked_at, revoked_by_kind, revoked_by_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, '', '')
-		RETURNING `+messageColumns, msg.ServerMsgID, msg.ClientMsgID, msg.ConversationID, msg.SenderType, msg.SenderID, msg.MessageType, msg.Content, msg.CreatedAt)
+		INSERT INTO messages (server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, translations, created_at, revoked_at, revoked_by_kind, revoked_by_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, NULL, '', '')
+		RETURNING `+messageColumns, msg.ServerMsgID, msg.ClientMsgID, msg.ConversationID, msg.SenderType, msg.SenderID, msg.MessageType, msg.Content, marshalTranslationsJSON(msg.Translations), msg.CreatedAt)
 	return scanMessage(row)
 }
 
@@ -2025,19 +2062,29 @@ func (s *PostgresStore) touchConversationRevokeTx(ctx context.Context, tx pgx.Tx
 	return nil
 }
 
-func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, conversation *domain.Conversation, content string) ([]domain.Message, bool, error) {
+func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, conversation *domain.Conversation, messageType domain.MessageType, content string) ([]domain.Message, bool, error) {
 	normalized := strings.TrimSpace(content)
-	if normalized == "" {
-		return nil, false, nil
-	}
-	// 人工已接管或已进入人工队列时，任何关键词和 AI 都不再自动回复。
-	if conversation.AssignedAgentID != "" || conversation.Status == domain.ConversationAssigned || conversation.Status == domain.ConversationHumanRequested {
+	// 人工客服已实际回复（assigned）或会话已结束时，任何关键词和 AI 都不再自动回复。
+	// 排队等待人工期间（human_requested）AI 继续接待，实现无痕转人工。
+	if conversation.Status == domain.ConversationAssigned || conversation.Status == domain.ConversationClosed {
 		return nil, false, nil
 	}
 	generated := []domain.Message{}
-	if isHumanKeyword(normalized) {
-		messages, err := s.requestHumanTx(ctx, tx, conversation)
-		return messages, false, err
+	requestHuman := func() ([]domain.Message, bool, error) {
+		if err := s.requestHumanTx(ctx, tx, conversation); err != nil {
+			return nil, false, err
+		}
+		aiSettings, err := s.aiSettingsTx(ctx, tx)
+		if err != nil {
+			return nil, false, err
+		}
+		return generated, aiSettings.Enabled && aiSettings.Mode != domain.AIModeManualOnly, nil
+	}
+	if messageType == domain.MessageHandoff || isHumanKeyword(normalized) {
+		return requestHuman()
+	}
+	if normalized == "" {
+		return nil, false, nil
 	}
 
 	rules, err := s.keywordRules(ctx, tx)
@@ -2049,8 +2096,7 @@ func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, co
 			continue
 		}
 		if rule.Action == "handoff" {
-			messages, err := s.requestHumanTx(ctx, tx, conversation)
-			return messages, false, err
+			return requestHuman()
 		}
 		messageType := domain.MessageText
 		if rule.Action == "telephone" {
@@ -2062,51 +2108,41 @@ func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, co
 		if rule.Action == "telegram" {
 			messageType = domain.MessageContactTelegram
 		}
-		msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", messageType, rule.Reply)
+		msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", messageType, rule.Reply, nil)
 		if err != nil {
 			return nil, false, err
 		}
 		return append(generated, msg), false, nil
 	}
 
-	ai, err := s.aiSettingsTx(ctx, tx)
+	aiSettings, err := s.aiSettingsTx(ctx, tx)
 	if err != nil {
 		return nil, false, err
 	}
-	if !ai.Enabled || ai.Mode == domain.AIModeManualOnly {
+	if !aiSettings.Enabled || aiSettings.Mode == domain.AIModeManualOnly {
 		return generated, false, nil
 	}
-	business, err := s.businessHoursTx(ctx, tx)
-	if err != nil {
-		return nil, false, err
+	// AI 优先介入：无论是否在营业时间，人工实际回复前都由 AI 接待。
+	if conversation.Status == domain.ConversationWaiting {
+		conversation.Status = domain.ConversationAIServing
 	}
-	if conversation.Status == domain.ConversationWaiting && business.Enabled && isBusinessTime(business, time.Now().UTC()) {
-		return generated, false, nil
-	}
-	conversation.Status = domain.ConversationAIServing
 	if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": dbNow()}); err != nil {
 		return nil, false, err
 	}
 	return generated, true, nil
 }
 
-func (s *PostgresStore) requestHumanTx(ctx context.Context, tx pgx.Tx, conversation *domain.Conversation) ([]domain.Message, error) {
+// requestHumanTx 静默转人工：只改状态并分配客服，不再向访客展示任何“转接中”系统消息。
+// 访客侧在客服真实回复前由 AI 继续接待，客服回复后对外显示为人工服务（无痕转人工）。
+func (s *PostgresStore) requestHumanTx(ctx context.Context, tx pgx.Tx, conversation *domain.Conversation) error {
 	conversation.Status = domain.ConversationHumanRequested
 	if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": dbNow()}); err != nil {
-		return nil, err
+		return err
 	}
 	if err := s.assignHumanConversationTx(ctx, tx, conversation); err != nil {
-		return nil, err
+		return err
 	}
-	content := "已进入人工客服队列，请稍候。排队期间不会再触发 AI 或关键词自动回复。"
-	if conversation.AssignedAgentID != "" {
-		content = "已为您通知人工客服，请稍候。"
-	}
-	msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", domain.MessageHandoff, content)
-	if err != nil {
-		return nil, err
-	}
-	return []domain.Message{msg}, nil
+	return nil
 }
 
 func (s *PostgresStore) updateConversationFieldsTx(ctx context.Context, tx pgx.Tx, conversationID string, fields map[string]any) error {
@@ -2320,6 +2356,14 @@ func (s *PostgresStore) seedDefaults(ctx context.Context) error {
 				ON CONFLICT (id) DO NOTHING
 			`,
 		},
+		{
+			// 历史版本内置的中文默认提示词升级为多语言版本，保证 AI 可按访客语言回复。
+			sql: `
+				UPDATE ai_settings SET system_prompt=$1
+				WHERE id=1 AND system_prompt=$2
+			`,
+			args: []any{defaultPrompt(), legacyDefaultPrompt()},
+		},
 	}
 	for _, statement := range statements {
 		if _, err := s.pool.Exec(ctx, statement.sql, statement.args...); err != nil {
@@ -2332,6 +2376,8 @@ func (s *PostgresStore) seedDefaults(ctx context.Context) error {
 func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 	statements := []string{
 		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS device_token TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS visitor_lang TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS translations JSONB NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS manual_satisfaction_rate DOUBLE PRECISION`,
 		`ALTER TABLE contact_settings ADD COLUMN IF NOT EXISTS wechat_reply_type TEXT NOT NULL DEFAULT 'image'`,
@@ -2478,6 +2524,7 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 		&out.Status,
 		&out.AssignedAgentID,
 		&out.Source,
+		&out.VisitorLang,
 		&out.LastMessage,
 		&lastMessageAt,
 		&out.UnreadForAgent,
@@ -2511,7 +2558,9 @@ func scanMessage(row scanTarget) (domain.Message, error) {
 	var revokedAt sql.NullTime
 	var revokedByKind sql.NullString
 	var revokedByID sql.NullString
-	err := row.Scan(&out.ServerMsgID, &out.ClientMsgID, &out.ConversationID, &out.SenderType, &out.SenderID, &out.MessageType, &out.Content, &out.CreatedAt, &revokedAt, &revokedByKind, &revokedByID)
+	var translationsJSON string
+	err := row.Scan(&out.ServerMsgID, &out.ClientMsgID, &out.ConversationID, &out.SenderType, &out.SenderID, &out.MessageType, &out.Content, &translationsJSON, &out.CreatedAt, &revokedAt, &revokedByKind, &revokedByID)
+	out.Translations = parseTranslationsJSON(translationsJSON)
 	if revokedAt.Valid {
 		out.RevokedAt = &revokedAt.Time
 	}
@@ -2534,6 +2583,32 @@ func scanMessages(rows pgx.Rows) ([]domain.Message, error) {
 		result = append(result, msg)
 	}
 	return result, rows.Err()
+}
+
+// parseTranslationsJSON 解析 messages.translations JSONB 列。
+func parseTranslationsJSON(raw string) map[string]string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" || raw == "null" {
+		return nil
+	}
+	out := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return cleanTranslations(out)
+}
+
+// marshalTranslationsJSON 把译文 map 序列化为 JSONB 参数。
+func marshalTranslationsJSON(translations map[string]string) string {
+	translations = cleanTranslations(translations)
+	if len(translations) == 0 {
+		return "{}"
+	}
+	payload, err := json.Marshal(translations)
+	if err != nil {
+		return "{}"
+	}
+	return string(payload)
 }
 
 func scanRating(row scanTarget) (domain.ServiceRating, error) {

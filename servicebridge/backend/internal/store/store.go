@@ -13,7 +13,7 @@ type Store interface {
 	Auth(token string) (domain.AuthSession, bool)
 	AuthVisitor(token string) (domain.AuthSession, bool)
 
-	CreateVisitorConversation(ip, source string) (domain.VisitorSession, error)
+	CreateVisitorConversation(ip, source, lang string) (domain.VisitorSession, error)
 	SetAgentStatus(agentID string, status domain.AgentStatus) (domain.Agent, []domain.Conversation, error)
 	ConversationsForAgent(agentID string) ([]domain.Conversation, error)
 	AllConversations() []domain.Conversation
@@ -24,9 +24,10 @@ type Store interface {
 	MarkConversationRead(actor domain.AuthSession, conversationID string) (domain.Conversation, error)
 
 	UpdateRemark(actor domain.AuthSession, conversationID, remark string) (domain.Conversation, error)
-	AddVisitorMessage(conversationID, clientMsgID, content string, messageType domain.MessageType) (MessageResult, error)
-	AddAIMessage(conversationID, content string) (domain.Message, domain.Conversation, error)
-	AddAgentMessage(agentID, conversationID, clientMsgID, content string, messageType domain.MessageType) (MessageResult, error)
+	AddVisitorMessage(conversationID, clientMsgID, content string, messageType domain.MessageType, translations map[string]string) (MessageResult, error)
+	AddAIMessage(conversationID, content string, translations map[string]string) (domain.Message, domain.Conversation, error)
+	AddAgentMessage(agentID, conversationID, clientMsgID, content string, messageType domain.MessageType, translations map[string]string) (MessageResult, error)
+	UpdateMessageTranslations(conversationID, serverMsgID string, translations map[string]string) (domain.Message, error)
 	RevokeMessage(actor domain.AuthSession, conversationID, serverMsgID string) (domain.Message, domain.Conversation, error)
 	CloseConversation(actor domain.AuthSession, conversationID string) (domain.Conversation, domain.Message, error)
 	DeleteConversation(actor domain.AuthSession, conversationID string) error

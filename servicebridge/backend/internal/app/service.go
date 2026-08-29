@@ -97,7 +97,7 @@ func (s *Service) TestAIReply(ctx context.Context, userText string) (string, err
 	if userText == "" {
 		userText = "你好，请简单介绍一下你能提供什么帮助。"
 	}
-	return s.ai.Reply(ctx, s.store.AISettings(), s.store.ContactSettings(), userText)
+	return s.ai.Reply(ctx, s.store.AISettings(), s.store.ContactSettings(), userText, ai.LangZh)
 }
 
 func (s *Service) AIModels(ctx context.Context, preview domain.AISettings) ([]string, error) {
@@ -129,10 +129,14 @@ func (s *Service) SubmitRating(conversationID string, score int, tags []string, 
 	return rating, nil
 }
 
-func (s *Service) CreateVisitorConversation(ip, source string) (domain.VisitorSession, error) {
-	session, err := s.store.CreateVisitorConversation(ip, source)
+func (s *Service) CreateVisitorConversation(ip, source, lang string) (domain.VisitorSession, error) {
+	session, err := s.store.CreateVisitorConversation(ip, source, lang)
 	if err != nil {
 		return domain.VisitorSession{}, err
+	}
+	visitorLang := ai.NormalizeLang(session.Conversation.VisitorLang, ai.LangZh)
+	for i := range session.InitialMessages {
+		s.translateInitialMessageForVisitor(session.Conversation.ID, visitorLang, &session.InitialMessages[i])
 	}
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.created", Data: session.Conversation})
 	if session.Conversation.AssignedAgentID != "" {
@@ -219,20 +223,31 @@ func (s *Service) ChangePassword(session domain.AuthSession, currentPassword, ne
 }
 
 func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string, messageType domain.MessageType) (store.MessageResult, error) {
-	result, err := s.store.AddVisitorMessage(conversationID, clientMsgID, content, messageType)
+	conversation, ok := s.store.Conversation(conversationID)
+	if !ok {
+		return store.MessageResult{}, store.ErrNotFound
+	}
+	visitorLang := ai.NormalizeLang(conversation.VisitorLang, ai.LangZh)
+	if messageType == domain.MessageHandoff && strings.TrimSpace(content) == "" {
+		content = humanRequestText(visitorLang)
+	}
+	translations := s.translateToChinese(visitorLang, messageType, content)
+	result, err := s.store.AddVisitorMessage(conversationID, clientMsgID, content, messageType, translations)
 	if err != nil {
 		return store.MessageResult{}, err
 	}
 
-	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.ack", Data: result.Input})
+	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.ack", Data: VisitorFacingMessageForLang(result.Input, visitorLang)})
 	if result.Conversation.AssignedAgentID != "" {
-		s.hub.SendToAgent(result.Conversation.AssignedAgentID, realtime.Event{Event: "message.receive", Data: result.Input})
+		// 客服/后台侧默认看到中文译文，并保留查看原文能力。
+		s.hub.SendToAgent(result.Conversation.AssignedAgentID, realtime.Event{Event: "message.receive", Data: AgentFacingMessage(result.Input)})
 		s.hub.SendToAgent(result.Conversation.AssignedAgentID, realtime.Event{Event: "conversation.status_changed", Data: result.Conversation})
 	}
 	for _, msg := range result.Generated {
-		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: msg})
+		s.translateGeneratedMessageForVisitor(conversationID, visitorLang, &msg)
+		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: VisitorFacingMessageForLang(msg, visitorLang)})
 		if result.Conversation.AssignedAgentID != "" {
-			s.hub.SendToAgent(result.Conversation.AssignedAgentID, realtime.Event{Event: "message.receive", Data: msg})
+			s.hub.SendToAgent(result.Conversation.AssignedAgentID, realtime.Event{Event: "message.receive", Data: AgentFacingMessage(msg)})
 		}
 	}
 	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.status_changed", Data: result.Conversation})
@@ -241,37 +256,58 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 		s.notifyAgent(result.Conversation)
 	}
 	if result.NeedAI {
-		go s.generateAIReply(conversationID, result.AIText)
+		go s.generateAIReply(conversationID, result.AIText, visitorLang)
 	}
 	return result, nil
 }
 
-func (s *Service) generateAIReply(conversationID, userText string) {
-	reply, err := s.ai.Reply(context.Background(), s.store.AISettings(), s.store.ContactSettings(), userText)
+func (s *Service) generateAIReply(conversationID, userText string, visitorLang string) {
+	ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
+	defer cancel()
+	visitorLang = ai.NormalizeLang(visitorLang, ai.LangZh)
+	reply, err := s.ai.Reply(ctx, s.store.AISettings(), s.store.ContactSettings(), userText, visitorLang)
 	if err != nil {
 		s.logger.Warn("AI reply failed", "conversation_id", conversationID, "error", err)
-		reply = "AI 客服暂时繁忙，已为您记录问题。如需人工处理，请输入“人工客服”。"
+		reply = aiBusyText(visitorLang)
 	}
-	msg, conversation, err := s.store.AddAIMessage(conversationID, reply)
+	translations := map[string]string{}
+	if visitorLang != ai.LangZh && ai.DetectLang(reply) != ai.LangZh {
+		zhText, translateErr := s.ai.Translate(ctx, s.store.AISettings(), reply, visitorLang, ai.LangZh)
+		if translateErr == nil && strings.TrimSpace(zhText) != "" {
+			translations[ai.LangZh] = zhText
+		}
+	}
+	msg, conversation, err := s.store.AddAIMessage(conversationID, reply, translations)
 	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			// 人工客服已经实际回复，AI 静默撤出，实现无痕转人工。
+			return
+		}
 		s.logger.Warn("save AI reply failed", "conversation_id", conversationID, "error", err)
 		return
 	}
-	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: msg})
+	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: VisitorFacingMessageForLang(msg, visitorLang)})
 	if conversation.AssignedAgentID != "" {
-		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "message.receive", Data: msg})
+		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "message.receive", Data: AgentFacingMessage(msg)})
 	}
 	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: conversation})
 }
 
 func (s *Service) AddAgentMessage(agentID, conversationID, clientMsgID, content string, messageType domain.MessageType) (store.MessageResult, error) {
-	result, err := s.store.AddAgentMessage(agentID, conversationID, clientMsgID, content, messageType)
+	conversation, ok := s.store.Conversation(conversationID)
+	if !ok {
+		return store.MessageResult{}, store.ErrNotFound
+	}
+	visitorLang := ai.NormalizeLang(conversation.VisitorLang, ai.LangZh)
+	translations := s.translateFromChineseForVisitor(visitorLang, messageType, content)
+	result, err := s.store.AddAgentMessage(agentID, conversationID, clientMsgID, content, messageType, translations)
 	if err != nil {
 		return store.MessageResult{}, err
 	}
 	s.hub.SendToAgent(agentID, realtime.Event{Event: "message.ack", Data: result.Input})
-	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: result.Input})
+	// 访客侧看到的是其语言译文；客服发送的中文原文不下发给访客。
+	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: VisitorFacingMessageForLang(result.Input, visitorLang)})
 	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.status_changed", Data: result.Conversation})
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: result.Conversation})
 	return result, nil
@@ -298,7 +334,9 @@ func (s *Service) CloseConversation(actor domain.AuthSession, conversationID str
 	if err != nil {
 		return domain.Conversation{}, err
 	}
-	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: msg})
+	visitorLang := ai.NormalizeLang(conversation.VisitorLang, ai.LangZh)
+	s.translateAndStoreSystemMessage(conversationID, visitorLang, &msg)
+	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: VisitorFacingMessageForLang(msg, visitorLang)})
 	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
 	if conversation.AssignedAgentID != "" {
 		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
@@ -324,11 +362,11 @@ func (s *Service) TransferConversation(actor domain.AuthSession, conversationID,
 	if err != nil {
 		return domain.Conversation{}, err
 	}
-	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: msg})
+	// 无痕转人工：转接提示只在客服/后台侧可见，不下发给访客。
 	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
 	if conversation.AssignedAgentID != "" {
 		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "conversation.assigned", Data: conversation})
-		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "message.receive", Data: msg})
+		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "message.receive", Data: AgentFacingMessage(msg)})
 	}
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: conversation})
 	return conversation, nil
@@ -546,4 +584,148 @@ func errorEvent(err error) realtime.Event {
 		status = "not_found"
 	}
 	return realtime.Event{Event: "error", Data: map[string]string{"code": status, "message": message}}
+}
+
+// translationWindow 是同步翻译路径的最长等待时间，超时后回退为原文下发，避免阻塞消息送达。
+const translationWindow = 25 * time.Second
+
+// translateInitialMessageForVisitor 把欢迎语等初始消息翻译成访客语言。
+// 能静态映射的直接映射；其余异步调用 AI 翻译，翻译完成后通过 WebSocket 推送更新（前端按消息 ID 替换气泡）。
+func (s *Service) translateInitialMessageForVisitor(conversationID, visitorLang string, msg *domain.Message) {
+	if visitorLang == ai.LangZh || !isTranslatableMessageType(msg.MessageType) {
+		return
+	}
+	if translated, ok := knownSystemText(msg.Content, visitorLang); ok {
+		if updated, err := s.store.UpdateMessageTranslations(conversationID, msg.ServerMsgID, map[string]string{visitorLang: translated}); err == nil {
+			msg.Translations = updated.Translations
+		}
+		return
+	}
+	serverMsgID := msg.ServerMsgID
+	original := msg.Content
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
+		defer cancel()
+		translated, err := s.ai.Translate(ctx, s.store.AISettings(), original, ai.LangZh, visitorLang)
+		if err != nil || strings.TrimSpace(translated) == "" {
+			s.logger.Warn("translate initial message failed", "conversation_id", conversationID, "error", err)
+			return
+		}
+		updated, err := s.store.UpdateMessageTranslations(conversationID, serverMsgID, map[string]string{visitorLang: translated})
+		if err != nil {
+			return
+		}
+		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: VisitorFacingMessageForLang(updated, visitorLang)})
+	}()
+}
+
+// isTranslatableMessageType 判断消息内容是否为可翻译的自然语言文本。
+func isTranslatableMessageType(messageType domain.MessageType) bool {
+	switch messageType {
+	case domain.MessageText, domain.MessageAIText, domain.MessageSystem, domain.MessageHandoff,
+		domain.MessageContactTelephone, domain.MessageContactWhatsApp, domain.MessageContactTelegram:
+		return true
+	default:
+		return false
+	}
+}
+
+// knownSystemTexts 对固定系统文案提供静态翻译，避免为固定短语额外调用 AI。
+var knownSystemTexts = map[string]map[string]string{
+	"会话已结束":     {"en": "The conversation has ended.", "ar": "انتهت المحادثة."},
+	"对方撤回了一条消息": {"en": "A message was recalled.", "ar": "تم سحب رسالة."},
+}
+
+func knownSystemText(content, lang string) (string, bool) {
+	translations, ok := knownSystemTexts[strings.TrimSpace(content)]
+	if !ok {
+		return "", false
+	}
+	translated, ok := translations[lang]
+	return translated, ok && translated != ""
+}
+
+func humanRequestText(lang string) string {
+	switch lang {
+	case ai.LangEn:
+		return "Please connect me to a human agent."
+	case ai.LangAr:
+		return "أريد التحدث مع موظف خدمة العملاء."
+	default:
+		return "人工客服"
+	}
+}
+
+func aiBusyText(lang string) string {
+	switch lang {
+	case ai.LangEn:
+		return "Our AI assistant is temporarily busy. Your question has been recorded and our support team will follow up shortly."
+	case ai.LangAr:
+		return "المساعد الذكي مشغول حاليًا، تم تسجيل سؤالك وسيتابع فريق الدعم معك قريبًا."
+	default:
+		return "AI 客服暂时繁忙，已为您记录问题，人工客服会尽快为您跟进。"
+	}
+}
+
+// translateToChinese 把访客消息翻译成中文供客服/后台查看。翻译失败或已是中文时返回 nil（下发原文）。
+func (s *Service) translateToChinese(visitorLang string, messageType domain.MessageType, content string) map[string]string {
+	if visitorLang == ai.LangZh || !isTranslatableMessageType(messageType) {
+		return nil
+	}
+	if ai.DetectLang(content) == ai.LangZh {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
+	defer cancel()
+	translated, err := s.ai.Translate(ctx, s.store.AISettings(), content, visitorLang, ai.LangZh)
+	if err != nil || strings.TrimSpace(translated) == "" {
+		s.logger.Warn("translate visitor message to Chinese failed", "error", err)
+		return nil
+	}
+	return map[string]string{ai.LangZh: translated}
+}
+
+// translateFromChineseForVisitor 把客服/后台的中文消息翻译成访客语言。失败或访客语言为中文时返回 nil。
+func (s *Service) translateFromChineseForVisitor(visitorLang string, messageType domain.MessageType, content string) map[string]string {
+	if visitorLang == ai.LangZh || !isTranslatableMessageType(messageType) {
+		return nil
+	}
+	if translated, ok := knownSystemText(content, visitorLang); ok {
+		return map[string]string{visitorLang: translated}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
+	defer cancel()
+	translated, err := s.ai.Translate(ctx, s.store.AISettings(), content, ai.LangZh, visitorLang)
+	if err != nil || strings.TrimSpace(translated) == "" {
+		s.logger.Warn("translate agent message for visitor failed", "error", err)
+		return nil
+	}
+	return map[string]string{visitorLang: translated}
+}
+
+// translateGeneratedMessageForVisitor 翻译关键词自动回复等系统生成消息，并落库译文。
+func (s *Service) translateGeneratedMessageForVisitor(conversationID, visitorLang string, msg *domain.Message) {
+	s.translateAndStoreSystemMessage(conversationID, visitorLang, msg)
+}
+
+// translateAndStoreSystemMessage 为访客翻译系统消息：优先静态映射，其次 AI 翻译，并把译文保存到消息记录。
+func (s *Service) translateAndStoreSystemMessage(conversationID, visitorLang string, msg *domain.Message) {
+	if visitorLang == ai.LangZh || !isTranslatableMessageType(msg.MessageType) {
+		return
+	}
+	if translated, ok := knownSystemText(msg.Content, visitorLang); ok {
+		msg.Translations = map[string]string{visitorLang: translated}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
+		defer cancel()
+		translated, err := s.ai.Translate(ctx, s.store.AISettings(), msg.Content, ai.LangZh, visitorLang)
+		if err != nil || strings.TrimSpace(translated) == "" {
+			s.logger.Warn("translate system message failed", "conversation_id", conversationID, "error", err)
+			return
+		}
+		msg.Translations = map[string]string{visitorLang: translated}
+	}
+	if updated, err := s.store.UpdateMessageTranslations(conversationID, msg.ServerMsgID, msg.Translations); err == nil {
+		msg.Translations = updated.Translations
+	}
 }

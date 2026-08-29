@@ -20,19 +20,51 @@ type Client struct {
 
 func NewClient() *Client {
 	return &Client{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 90 * time.Second},
 	}
 }
 
-func (c *Client) Reply(ctx context.Context, settings domain.AISettings, contacts domain.ContactSettings, userText string) (string, error) {
+// Reply 根据访客语言生成 AI 客服回复。replyLang 为访客端看到的语言（zh/en/ar）。
+func (c *Client) Reply(ctx context.Context, settings domain.AISettings, contacts domain.ContactSettings, userText, replyLang string) (string, error) {
 	userText = strings.TrimSpace(userText)
 	if userText == "" {
 		return "", errors.New("empty user text")
 	}
-	if settings.APIKey == "" {
-		return fallbackReply(userText, contacts), nil
+	replyLang = NormalizeLang(replyLang, LangZh)
+	if strings.TrimSpace(settings.APIKey) == "" {
+		return fallbackReply(userText, contacts, replyLang), nil
 	}
+	return c.complete(ctx, settings, replyPrompt(settings.SystemPrompt, contacts, replyLang), userText)
+}
 
+// Translate 翻译一条客服对话内容。会先理解口语表达、语气和语境，再输出自然、地道的译文，
+// 避免逐字直译。源语言与目标语言相同时直接返回原文。
+func (c *Client) Translate(ctx context.Context, settings domain.AISettings, text, sourceLang, targetLang string) (string, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", nil
+	}
+	sourceLang = NormalizeLang(sourceLang, LangZh)
+	targetLang = NormalizeLang(targetLang, LangZh)
+	if sourceLang == targetLang {
+		return text, nil
+	}
+	if strings.TrimSpace(settings.APIKey) == "" {
+		return "", errors.New("AI API key is required for translation")
+	}
+	out, err := c.complete(ctx, settings, translationPrompt(sourceLang, targetLang), text)
+	if err != nil {
+		return "", err
+	}
+	out = cleanTranslatedText(out)
+	if out == "" {
+		return "", errors.New("empty translation response")
+	}
+	return out, nil
+}
+
+// complete 调用配置的上游模型（chat_completions / responses / anthropic_messages），返回文本结果。
+func (c *Client) complete(ctx context.Context, settings domain.AISettings, systemPrompt, userText string) (string, error) {
 	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 20 * time.Second
@@ -44,14 +76,13 @@ func (c *Client) Reply(ctx context.Context, settings domain.AISettings, contacts
 	if apiType == "" {
 		apiType = "chat_completions"
 	}
-	if apiType == "responses" {
-		return c.responses(ctx, settings, contacts, userText)
-	}
-	if apiType == "anthropic_messages" {
-		return c.anthropicMessages(ctx, settings, contacts, userText)
-	}
-	if apiType == "chat_completions" {
-		return c.chatCompletions(ctx, settings, contacts, userText)
+	switch apiType {
+	case "responses":
+		return c.responses(ctx, settings, systemPrompt, userText)
+	case "anthropic_messages":
+		return c.anthropicMessages(ctx, settings, systemPrompt, userText)
+	case "chat_completions":
+		return c.chatCompletions(ctx, settings, systemPrompt, userText)
 	}
 	return "", fmt.Errorf("unsupported AI API type: %s", apiType)
 }
@@ -102,13 +133,13 @@ func (c *Client) Models(ctx context.Context, settings domain.AISettings) ([]stri
 	return models, nil
 }
 
-func (c *Client) chatCompletions(ctx context.Context, settings domain.AISettings, contacts domain.ContactSettings, userText string) (string, error) {
+func (c *Client) chatCompletions(ctx context.Context, settings domain.AISettings, systemPrompt, userText string) (string, error) {
 	baseURL := normalizeBaseURL(settings.BaseURL)
 	body := map[string]any{
 		"model":       nonEmpty(settings.Model, "gpt-4o-mini"),
 		"temperature": settings.Temperature,
 		"messages": []map[string]string{
-			{"role": "system", "content": enrichPrompt(settings.SystemPrompt, contacts)},
+			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userText},
 		},
 	}
@@ -149,11 +180,11 @@ func (c *Client) chatCompletions(ctx context.Context, settings domain.AISettings
 	return strings.TrimSpace(out.Choices[0].Message.Content), nil
 }
 
-func (c *Client) responses(ctx context.Context, settings domain.AISettings, contacts domain.ContactSettings, userText string) (string, error) {
+func (c *Client) responses(ctx context.Context, settings domain.AISettings, systemPrompt, userText string) (string, error) {
 	baseURL := normalizeBaseURL(settings.BaseURL)
 	body := map[string]any{
 		"model":        nonEmpty(settings.Model, "gpt-4o-mini"),
-		"instructions": enrichPrompt(settings.SystemPrompt, contacts),
+		"instructions": systemPrompt,
 		"input":        userText,
 		"temperature":  settings.Temperature,
 	}
@@ -202,12 +233,12 @@ func (c *Client) responses(ctx context.Context, settings domain.AISettings, cont
 	return "", errors.New("empty AI response")
 }
 
-func (c *Client) anthropicMessages(ctx context.Context, settings domain.AISettings, contacts domain.ContactSettings, userText string) (string, error) {
+func (c *Client) anthropicMessages(ctx context.Context, settings domain.AISettings, systemPrompt, userText string) (string, error) {
 	body := map[string]any{
 		"model":       nonEmpty(settings.Model, "claude-3-5-haiku-latest"),
 		"max_tokens":  maxInt(settings.MaxOutputTokens, 512),
 		"temperature": settings.Temperature,
-		"system":      enrichPrompt(settings.SystemPrompt, contacts),
+		"system":      systemPrompt,
 		"messages": []map[string]string{
 			{"role": "user", "content": userText},
 		},
@@ -277,12 +308,37 @@ func nonEmpty(value, fallback string) string {
 	return value
 }
 
-func enrichPrompt(prompt string, contacts domain.ContactSettings) string {
+// replyPrompt 在系统提示词基础上补充联系方式，并要求 AI 用访客语言回复。
+func replyPrompt(prompt string, contacts domain.ContactSettings, lang string) string {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
-		prompt = "你是公司的在线客服助手，请用简体中文礼貌、简洁地回答访客问题。"
+		prompt = "你是公司的在线客服助手，请礼貌、简洁地回答访客问题。"
 	}
-	return fmt.Sprintf("%s\n\n公司联系方式：电话 %s，WhatsApp %s，Telegram %s。", prompt, contacts.Telephone, contacts.WhatsApp, contacts.Telegram)
+	langName := LangName(lang)
+	return fmt.Sprintf("%s\n\n重要：无论访客使用什么语言，你必须始终使用%s回复访客。\n公司联系方式：电话 %s，WhatsApp %s，Telegram %s。", prompt, langName, contacts.Telephone, contacts.WhatsApp, contacts.Telegram)
+}
+
+// translationPrompt 生成口语化、地道的翻译指令。
+func translationPrompt(sourceLang, targetLang string) string {
+	sourceName := LangName(sourceLang)
+	targetName := LangName(targetLang)
+	return fmt.Sprintf("你是一名精通%s和%s的在线客服场景翻译专家。请把用户发来的一条在线客服对话消息翻译成%s。\n要求：\n1. 先完整理解原文的口语表达、语气、意图和语境，再组织译文，严禁逐字直译。\n2. 译文必须像母语者日常交流一样自然、地道、礼貌，符合%s地区客服场景的表达习惯。\n3. 保留数字、订单号、链接、联系方式、品牌名等关键信息，不要增加或删减内容。\n4. 只输出译文本身，不要输出任何解释、引号、前缀或多余内容。", sourceName, targetName, targetName, targetName)
+}
+
+// cleanTranslatedText 去掉模型译文外常见的引号、代码块或多余空白。
+func cleanTranslatedText(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.TrimPrefix(text, "```")
+	text = strings.TrimSuffix(text, "```")
+	text = strings.TrimSpace(text)
+	if len(text) >= 2 {
+		if (strings.HasPrefix(text, "\"") && strings.HasSuffix(text, "\"")) ||
+			(strings.HasPrefix(text, "“") && strings.HasSuffix(text, "”")) ||
+			(strings.HasPrefix(text, "«") && strings.HasSuffix(text, "»")) {
+			text = strings.TrimSpace(text[1 : len(text)-1])
+		}
+	}
+	return text
 }
 
 func responseError(resp *http.Response) error {
@@ -290,16 +346,42 @@ func responseError(resp *http.Response) error {
 	return fmt.Errorf("AI API status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 }
 
-func fallbackReply(text string, contacts domain.ContactSettings) string {
-	if strings.Contains(text, "电话") {
-		return "客服电话：" + contacts.Telephone + "，您可以点击下方电话联系按钮直接拨打。"
-	}
+// fallbackReply 在未配置 AI API Key 时按访客语言返回兜底回复。
+func fallbackReply(text string, contacts domain.ContactSettings, lang string) string {
 	lowerText := strings.ToLower(text)
-	if strings.Contains(lowerText, "whatsapp") {
-		return "官方 WhatsApp：" + contacts.WhatsApp + "，您可以长按复制添加。"
+	switch lang {
+	case LangEn:
+		switch {
+		case strings.Contains(lowerText, "phone") || strings.Contains(lowerText, "call"):
+			return "Support phone: " + contacts.Telephone + ". You can tap the call button to reach us directly."
+		case strings.Contains(lowerText, "whatsapp"):
+			return "Official WhatsApp: " + contacts.WhatsApp + ". You can copy the number and add us."
+		case strings.Contains(lowerText, "telegram"):
+			return "Official Telegram: " + contacts.Telegram + ". You can copy the ID and add us."
+		default:
+			return "I've received your question — feel free to add more details. Our support team will follow up with you shortly."
+		}
+	case LangAr:
+		switch {
+		case strings.Contains(lowerText, "هاتف") || strings.Contains(lowerText, "اتصال") || strings.Contains(lowerText, "phone"):
+			return "هاتف الدعم: " + contacts.Telephone + "، يمكنك الضغط على زر الاتصال للتواصل معنا مباشرة."
+		case strings.Contains(lowerText, "whatsapp") || strings.Contains(lowerText, "واتساب"):
+			return "واتساب الرسمي: " + contacts.WhatsApp + "، يمكنك نسخ الرقم وإضافته."
+		case strings.Contains(lowerText, "telegram") || strings.Contains(lowerText, "تيليجرام") || strings.Contains(lowerText, "تليجرام"):
+			return "تيليجرام الرسمي: " + contacts.Telegram + "، يمكنك نسخ المعرف وإضافته."
+		default:
+			return "استلمنا سؤالك، يمكنك إضافة المزيد من التفاصيل، وسيتابع فريق الدعم معك قريبًا."
+		}
+	default:
+		switch {
+		case strings.Contains(text, "电话"):
+			return "客服电话：" + contacts.Telephone + "，您可以点击下方电话联系按钮直接拨打。"
+		case strings.Contains(lowerText, "whatsapp"):
+			return "官方 WhatsApp：" + contacts.WhatsApp + "，您可以长按复制添加。"
+		case strings.Contains(lowerText, "telegram"):
+			return "官方 Telegram：" + contacts.Telegram + "，您可以长按复制添加。"
+		default:
+			return "我已收到您的问题。您可以继续补充细节，人工客服会尽快为您跟进。"
+		}
 	}
-	if strings.Contains(lowerText, "telegram") {
-		return "官方 Telegram：" + contacts.Telegram + "，您可以长按复制添加。"
-	}
-	return "我已收到您的问题。您可以继续补充细节；如需真人处理，请输入“人工客服”。"
 }

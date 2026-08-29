@@ -1,0 +1,75 @@
+# ASTREVA internal edge: host nginx terminates TLS and forwards to 127.0.0.1:8090.
+{
+  auto_https off
+  admin off
+}
+
+http://www.astreva.ltd {
+  encode zstd gzip
+  header {
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+
+  handle /site-admin-api/leads {
+    reverse_proxy admin-server:1337
+  }
+
+  handle {
+    reverse_proxy frontend:80
+  }
+}
+
+http://manage.astreva.ltd {
+  encode zstd gzip
+  header {
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+
+  reverse_proxy admin-server:1337
+}
+
+http://api.astreva.ltd {
+  encode zstd gzip
+  header {
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+
+  handle /api/* {
+    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+  }
+
+  handle /api {
+    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+  }
+
+  handle /ws* {
+    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+  }
+
+  handle /uploads/* {
+    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+  }
+
+  handle /readyz {
+    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+  }
+
+  handle /healthz {
+    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+  }
+
+  handle /metrics {
+    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+  }
+
+  handle {
+    reverse_proxy servicebridge-user-web:80
+  }
+}
+

@@ -9,7 +9,7 @@ import (
 
 func TestRemarkUpdateKeepsOriginalIP(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	visitor, err := s.CreateVisitorConversation("203.0.113.7:53100", "web_pc")
+	visitor, err := s.CreateVisitorConversation("203.0.113.7:53100", "web_pc", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestRemarkUpdateKeepsOriginalIP(t *testing.T) {
 
 func TestAgentCannotEditUnassignedConversation(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	visitor, err := s.CreateVisitorConversation("198.51.100.9", "web")
+	visitor, err := s.CreateVisitorConversation("198.51.100.9", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestAgentCannotEditUnassignedConversation(t *testing.T) {
 	}
 }
 
-func TestHumanKeywordDoesNotAutoReplyOrDoubleCountAfterAssignment(t *testing.T) {
+func TestHumanKeywordSilentlyAssignsAndKeepsAIUntilAgentReplies(t *testing.T) {
 	s := NewMemoryStore(Options{})
 	agentSession, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
@@ -57,7 +57,7 @@ func TestHumanKeywordDoesNotAutoReplyOrDoubleCountAfterAssignment(t *testing.T) 
 	if _, _, err := s.SetAgentStatus(agent.ID, domain.AgentOnline); err != nil {
 		t.Fatalf("set agent online: %v", err)
 	}
-	visitor, err := s.CreateVisitorConversation("192.0.2.18", "web")
+	visitor, err := s.CreateVisitorConversation("192.0.2.18", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestHumanKeywordDoesNotAutoReplyOrDoubleCountAfterAssignment(t *testing.T) 
 		t.Fatalf("expected one active conversation before handoff, got %d", s.agentsByID[agent.ID].CurrentConversations)
 	}
 
-	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "c1", "我要转人工客服", domain.MessageText)
+	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "c1", "我要转人工客服", domain.MessageText, nil)
 	if err != nil {
 		t.Fatalf("add visitor message: %v", err)
 	}
@@ -79,26 +79,37 @@ func TestHumanKeywordDoesNotAutoReplyOrDoubleCountAfterAssignment(t *testing.T) 
 	if s.agentsByID[agent.ID].CurrentConversations != 1 {
 		t.Fatalf("handoff double-counted current conversations: %d", s.agentsByID[agent.ID].CurrentConversations)
 	}
-	if len(result.Generated) != 0 || result.NeedAI {
-		t.Fatalf("assigned conversation must stay human-only, got %#v", result)
+	// 静默转人工：不产生任何对访客可见的转接系统消息，AI 继续接待直到客服真实回复。
+	if len(result.Generated) != 0 {
+		t.Fatalf("silent handoff must not emit visible system messages, got %#v", result.Generated)
+	}
+	if !result.NeedAI {
+		t.Fatalf("AI must keep replying until the agent actually replies: %#v", result)
+	}
+	if result.Conversation.Status != domain.ConversationHumanRequested {
+		t.Fatalf("expected human_requested status during silent handoff, got %s", result.Conversation.Status)
 	}
 }
 
 func TestAgentOfflineKeepsTakenOverConversationInHumanQueue(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	_, agent, err := s.LoginAgent("admin", "123456")
+	agentSession, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
 		t.Fatalf("login agent: %v", err)
 	}
 	if _, _, err := s.SetAgentStatus(agent.ID, domain.AgentOnline); err != nil {
 		t.Fatalf("set agent online: %v", err)
 	}
-	visitor, err := s.CreateVisitorConversation("192.0.2.188", "web")
+	visitor, err := s.CreateVisitorConversation("192.0.2.188", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
 	if visitor.Conversation.AssignedAgentID != agent.ID {
 		t.Fatalf("expected conversation assigned to agent, got %q", visitor.Conversation.AssignedAgentID)
+	}
+	// 客服真实回复后，会话才进入人工接待（assigned）。
+	if _, err := s.AddAgentMessage(agentSession.AccountID, visitor.Conversation.ID, "takeover-1", "您好，人工客服为您服务。", domain.MessageText, nil); err != nil {
+		t.Fatalf("add agent message: %v", err)
 	}
 
 	updatedAgent, changed, err := s.SetAgentStatus(agent.ID, domain.AgentOffline)
@@ -125,34 +136,36 @@ func TestAlwaysAIModeStillHonorsExplicitHumanHandoff(t *testing.T) {
 	if _, err := s.UpdateAISettings(domain.AISettings{Enabled: true, Mode: domain.AIModeAlwaysAI, APIKey: "sk-test-123456", Model: "gpt-4o-mini", APIType: "chat_completions", TimeoutSeconds: 5}); err != nil {
 		t.Fatalf("update AI settings: %v", err)
 	}
-	visitor, err := s.CreateVisitorConversation("192.0.2.210", "web")
+	visitor, err := s.CreateVisitorConversation("192.0.2.210", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
-	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "handoff-1", "转人工", domain.MessageText)
+	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "handoff-1", "转人工", domain.MessageText, nil)
 	if err != nil {
 		t.Fatalf("request human: %v", err)
 	}
-	if result.Conversation.Status != domain.ConversationHumanRequested || result.NeedAI {
-		t.Fatalf("explicit handoff must override always-AI mode: %#v", result)
+	// 显式转人工进入静默排队；客服真实回复前 AI 继续接待（无痕转人工）。
+	if result.Conversation.Status != domain.ConversationHumanRequested || !result.NeedAI || len(result.Generated) != 0 {
+		t.Fatalf("silent handoff must keep AI serving without visible messages: %#v", result)
 	}
-	blocked, err := s.AddVisitorMessage(visitor.Conversation.ID, "handoff-2", "电话是多少", domain.MessageText)
+	blocked, err := s.AddVisitorMessage(visitor.Conversation.ID, "handoff-2", "电话是多少", domain.MessageText, nil)
 	if err != nil {
 		t.Fatalf("add queued visitor message: %v", err)
 	}
-	if blocked.NeedAI || len(blocked.Generated) != 0 {
-		t.Fatalf("human queue must block keyword and AI replies: %#v", blocked)
+	// 排队期间关键词自动回复仍然可用，保证访客问题不被晾着。
+	if blocked.NeedAI || len(blocked.Generated) != 1 {
+		t.Fatalf("queued conversation should still answer keywords: %#v", blocked)
 	}
 }
 
 func TestPhoneKeywordGeneratesStructuredContactReply(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	visitor, err := s.CreateVisitorConversation("192.0.2.19", "web")
+	visitor, err := s.CreateVisitorConversation("192.0.2.19", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
 
-	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "c1", "客服电话是多少？", domain.MessageText)
+	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "c1", "客服电话是多少？", domain.MessageText, nil)
 	if err != nil {
 		t.Fatalf("add visitor message: %v", err)
 	}
@@ -173,16 +186,16 @@ func TestPhoneKeywordGeneratesStructuredContactReply(t *testing.T) {
 
 func TestClientMessageIDIsIdempotent(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	visitor, err := s.CreateVisitorConversation("192.0.2.21", "web")
+	visitor, err := s.CreateVisitorConversation("192.0.2.21", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
 
-	first, err := s.AddVisitorMessage(visitor.Conversation.ID, "client-1", "重复发送测试", domain.MessageText)
+	first, err := s.AddVisitorMessage(visitor.Conversation.ID, "client-1", "重复发送测试", domain.MessageText, nil)
 	if err != nil {
 		t.Fatalf("add visitor message: %v", err)
 	}
-	second, err := s.AddVisitorMessage(visitor.Conversation.ID, "client-1", "重复发送测试", domain.MessageText)
+	second, err := s.AddVisitorMessage(visitor.Conversation.ID, "client-1", "重复发送测试", domain.MessageText, nil)
 	if err != nil {
 		t.Fatalf("add duplicate visitor message: %v", err)
 	}
@@ -204,12 +217,12 @@ func TestClientMessageIDIsIdempotent(t *testing.T) {
 
 func TestPagedMessagesReturnsNewestPageAndCursor(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	visitor, err := s.CreateVisitorConversation("192.0.2.22", "web")
+	visitor, err := s.CreateVisitorConversation("192.0.2.22", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
 	for idx := 0; idx < 5; idx++ {
-		if _, err := s.AddVisitorMessage(visitor.Conversation.ID, "client-page-"+string(rune('a'+idx)), "消息", domain.MessageText); err != nil {
+		if _, err := s.AddVisitorMessage(visitor.Conversation.ID, "client-page-"+string(rune('a'+idx)), "消息", domain.MessageText, nil); err != nil {
 			t.Fatalf("add visitor message %d: %v", idx, err)
 		}
 	}
@@ -229,30 +242,34 @@ func TestPagedMessagesReturnsNewestPageAndCursor(t *testing.T) {
 
 func TestHumanTakeoverBlocksKeywordAndAIReplies(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	_, agent, err := s.LoginAgent("admin", "123456")
+	agentSession, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
 		t.Fatalf("login agent: %v", err)
 	}
 	if _, _, err := s.SetAgentStatus(agent.ID, domain.AgentOnline); err != nil {
 		t.Fatalf("set agent online: %v", err)
 	}
-	visitor, err := s.CreateVisitorConversation("192.0.2.20", "web")
+	visitor, err := s.CreateVisitorConversation("192.0.2.20", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
-	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "c1", "电话是多少", domain.MessageText)
+	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "c1", "电话是多少", domain.MessageText, nil)
 	if err != nil {
 		t.Fatalf("add visitor message: %v", err)
 	}
 
-	if result.NeedAI || len(result.Generated) != 0 {
-		t.Fatalf("assigned conversation must not trigger keyword or AI replies: %#v", result)
+	// 客服尚未真实回复时，静默分配的会话仍由 AI/关键词接待。
+	if result.NeedAI || len(result.Generated) != 1 {
+		t.Fatalf("silently assigned conversation must still auto-reply: %#v", result)
 	}
-	if _, _, err := s.AddAIMessage(visitor.Conversation.ID, "这是一条迟到的 AI 回复"); err != ErrConflict {
+	if _, err := s.AddAgentMessage(agentSession.AccountID, visitor.Conversation.ID, "takeover", "您好，人工客服为您服务。", domain.MessageText, nil); err != nil {
+		t.Fatalf("agent takeover: %v", err)
+	}
+	if _, _, err := s.AddAIMessage(visitor.Conversation.ID, "这是一条迟到的 AI 回复", nil); err != ErrConflict {
 		t.Fatalf("late AI reply must be rejected after human takeover, got %v", err)
 	}
 
-	result, err = s.AddVisitorMessage(visitor.Conversation.ID, "c2", "转人工", domain.MessageText)
+	result, err = s.AddVisitorMessage(visitor.Conversation.ID, "c2", "转人工", domain.MessageText, nil)
 	if err != nil {
 		t.Fatalf("add second visitor message: %v", err)
 	}
@@ -305,7 +322,7 @@ func TestRevokeAgentMessageUpdatesConversationAndPreservesOriginalContent(t *tes
 		t.Fatalf("set agent online: %v", err)
 	}
 
-	visitor, err := s.CreateVisitorConversation("192.0.2.30", "web")
+	visitor, err := s.CreateVisitorConversation("192.0.2.30", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -313,7 +330,7 @@ func TestRevokeAgentMessageUpdatesConversationAndPreservesOriginalContent(t *tes
 		t.Fatalf("expected assigned agent %q, got %q", agent.ID, visitor.Conversation.AssignedAgentID)
 	}
 
-	result, err := s.AddAgentMessage(agent.ID, visitor.Conversation.ID, "agent-msg-1", "这是一条可撤回消息", domain.MessageText)
+	result, err := s.AddAgentMessage(agent.ID, visitor.Conversation.ID, "agent-msg-1", "这是一条可撤回消息", domain.MessageText, nil)
 	if err != nil {
 		t.Fatalf("add agent message: %v", err)
 	}
@@ -424,7 +441,7 @@ func TestCreateVisitorConversationUsesConfiguredEntryReply(t *testing.T) {
 		t.Fatalf("update contact settings: %v", err)
 	}
 
-	visitor, err := s.CreateVisitorConversation("192.0.2.88", "web")
+	visitor, err := s.CreateVisitorConversation("192.0.2.88", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
@@ -485,7 +502,7 @@ func TestAdminTransferConversationReleasesOldAgent(t *testing.T) {
 	if _, _, err := s.SetAgentStatus(oldAgent.ID, domain.AgentOnline); err != nil {
 		t.Fatalf("set old agent online: %v", err)
 	}
-	visitor, err := s.CreateVisitorConversation("192.0.2.30", "web")
+	visitor, err := s.CreateVisitorConversation("192.0.2.30", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor: %v", err)
 	}
@@ -512,8 +529,12 @@ func TestAdminTransferConversationReleasesOldAgent(t *testing.T) {
 	if conversation.AssignedAgentID != newAgent.ID {
 		t.Fatalf("expected transfer to new agent, got %q", conversation.AssignedAgentID)
 	}
-	if msg.MessageType != domain.MessageSystem {
-		t.Fatalf("expected system transfer message, got %s", msg.MessageType)
+	// 无痕转人工：转接提示为仅客服端可见的 handoff 消息，且会话状态不因转接而改变。
+	if msg.MessageType != domain.MessageHandoff {
+		t.Fatalf("expected agent-side handoff message, got %s", msg.MessageType)
+	}
+	if conversation.Status != visitor.Conversation.Status {
+		t.Fatalf("transfer must not change conversation status: %s -> %s", visitor.Conversation.Status, conversation.Status)
 	}
 	if s.agentsByID[oldAgent.ID].CurrentConversations != 0 {
 		t.Fatalf("old agent load not released: %d", s.agentsByID[oldAgent.ID].CurrentConversations)

@@ -768,7 +768,9 @@
                 const parsed = JSON.parse(raw);
                 const visitorToken = String(parsed?.visitorToken || '').trim();
                 const conversationId = String(parsed?.conversationId || '').trim();
-                const sessionType = ACTIVE_SESSION_TYPES.has(parsed?.sessionType) ? parsed.sessionType : 'AI';
+                // 历史版本可能保存过 QUEUING，现在排队期间一律按 AI 接待展示（无痕转人工）。
+                const rawSessionType = ACTIVE_SESSION_TYPES.has(parsed?.sessionType) ? parsed.sessionType : 'AI';
+                const sessionType = rawSessionType === 'QUEUING' ? 'AI' : rawSessionType;
                 if (!visitorToken || !conversationId) {
                     clearVisitorSession();
                     return null;
@@ -1302,7 +1304,7 @@
         // === 消息构建与收发逻辑 ===
 
         // 构建普通文本消息
-        function createMessageHTML(text, isUser = false, isFailed = false, meta = {}, extraBubbleClass = '') {
+        function createMessageHTML(text, isUser = false, isFailed = false, meta = {}, extraBubbleClass = '', aiTag = false) {
             const safeText = escapeHTML(text).replace(/\n/g, '<br>');
             const safeRetryText = escapeHTML(text).replace(/\n/g, '&#10;');
             const avatar = isUser ? './assets/img/avatar-visitor.svg' : State.agentAvatar;
@@ -1316,6 +1318,8 @@
 
             // AI 头像旁显示名字
             const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
+            // AI 生成消息气泡下方的小标识
+            const aiTagLabel = (!isUser && aiTag) ? `<span class="ai-tag text-[10px] text-gray-400 mt-1 ml-1 block select-none" dir="auto">${t('aiGenerated')}</span>` : '';
 
             return `
                 <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(meta)}>
@@ -1328,16 +1332,18 @@
                             </div>
                             ${failIcon}
                         </div>
+                        ${aiTagLabel}
                     </div>
                 </div>
             `;
         }
 
         // 构建图片消息 (微信中的图片没有气泡尖角和背景)
-        function createImageMessageHTML(imgSrc, isUser = false, meta = {}) {
+        function createImageMessageHTML(imgSrc, isUser = false, meta = {}, aiTag = false) {
             const avatar = isUser ? './assets/img/avatar-visitor.svg' : State.agentAvatar;
             const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
             const safeSrc = escapeHTML(safeImageSrc(imgSrc));
+            const aiTagLabel = (!isUser && aiTag) ? `<span class="ai-tag text-[10px] text-gray-400 mt-1 ml-1 block select-none" dir="auto">${t('aiGenerated')}</span>` : '';
 
             return `
                 <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(meta)}>
@@ -1347,17 +1353,19 @@
                         <div class="bubble-image mt-0.5">
                             <img src="${safeSrc}" alt="${t('image')}" class="border border-gray-200/50 shadow-sm">
                         </div>
+                        ${aiTagLabel}
                     </div>
                 </div>
             `;
         }
 
-        function createAudioMessageHTML(audioSrc, isUser = false, meta = {}) {
+        function createAudioMessageHTML(audioSrc, isUser = false, meta = {}, aiTag = false) {
             const avatar = isUser ? './assets/img/avatar-visitor.svg' : State.agentAvatar;
             const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
             const safeSrc = escapeHTML(resolveAssetURL(audioSrc));
             const bubbleBg = isUser ? 'bg-wc-user' : 'bg-wc-ai border border-gray-200/50';
             const bubbleDir = isUser ? 'bubble-right' : 'bubble-left';
+            const aiTagLabel = (!isUser && aiTag) ? `<span class="ai-tag text-[10px] text-gray-400 mt-1 ml-1 block select-none" dir="auto">${t('aiGenerated')}</span>` : '';
 
             return `
                 <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(meta)}>
@@ -1372,6 +1380,7 @@
                             </button>
                             <audio class="voice-audio-element" preload="metadata" src="${safeSrc}"></audio>
                         </div>
+                        ${aiTagLabel}
                     </div>
                 </div>
             `;
@@ -1386,16 +1395,23 @@
                 serverMsgId: msg.server_msg_id || '',
                 clientMsgId: msg.client_msg_id || ''
             };
+            const aiTag = !isUser && (msg.sender_type === 'ai' || msg.message_type === 'ai_text');
+            // 初始消息（如欢迎语）服务端可能还带着译文，优先使用当前语言的译文展示。
+            const translations = msg.translations || {};
+            const lang = window.__CHAT_LANG__ || 'zh';
+            if (!isUser && translations[lang] && String(translations[lang]).trim()) {
+                msg = { ...msg, content: translations[lang] };
+            }
             if (msg.message_type === 'image') {
-                return createImageMessageHTML(resolveAssetURL(msg.content), isUser, meta);
+                return createImageMessageHTML(resolveAssetURL(msg.content), isUser, meta, aiTag);
             }
             if (msg.message_type === 'audio') {
-                return createAudioMessageHTML(resolveAssetURL(msg.content), isUser, meta);
+                return createAudioMessageHTML(resolveAssetURL(msg.content), isUser, meta, aiTag);
             }
             if (msg.message_type === 'revoked' || msg.revoked_at) {
                 return createRevokedMessageHTML(msg.content || t('messageRecalled'), isUser, meta);
             }
-            return createMessageHTML(msg.content || '', isUser, false, meta);
+            return createMessageHTML(msg.content || '', isUser, false, meta, '', aiTag);
         }
 
         function removeQuickReplyCards() {
@@ -1544,6 +1560,8 @@
         // === 状态机与业务动作 ===
 
         function updateSessionState(newState) {
+            // 无痕转人工：排队等待人工期间不存在"转接中"状态，访客侧保持 AI 接待。
+            if (newState === 'QUEUING') newState = 'AI';
             State.sessionType = newState;
             
             // 基础重置
@@ -1557,10 +1575,6 @@
                     State.agentName = t('agentNameDefault');
                     State.agentAvatar = './assets/img/avatar-service.svg';
                     DOM.headerAiBadge.classList.remove('hidden');
-                    break;
-                case 'QUEUING':
-                    DOM.sysBanner.classList.remove('hidden');
-                    DOM.sysBannerText.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>' + t('transferringHuman');
                     break;
                 case 'HUMAN':
                     State.agentName = t('agentNameHumanPrefix') + '李雪';
@@ -1590,13 +1604,15 @@
                 DOM.uploadImageInput.click();
             }
             else if (action === 'human') {
-                if (State.sessionType === 'HUMAN' || State.sessionType === 'QUEUING') {
+                if (State.sessionType === 'HUMAN') {
                     showToast(t("alreadyHumanState"));
                     return;
                 }
-                updateSessionState('QUEUING');
-                appendSystemMessage(t("transferringSystem"));
-                sendSocketMessage("人工客服");
+                // 无痕转人工：后台静默排队分配客服，前端不展示任何"转接中"提示；
+                // AI 继续接待，直到人工客服真实回复后会话才无感切换到人工。
+                const handoffId = sendSocketMessage('', 'handoff_request');
+                // 让服务端回执的本地化请求文案作为访客自己的气泡渲染出来。
+                if (handoffId) State.renderedClientMsgIds.delete(handoffId);
             } 
             else if (action === 'phone') {
 				const telephone = State.contacts.telephone;
@@ -1639,7 +1655,10 @@
                 const resp = await fetch(`${State.apiBase}/api/visitor/conversations`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ source: window.innerWidth >= 768 ? 'web_pc' : 'web_mobile' })
+                    body: JSON.stringify({
+                        source: window.innerWidth >= 768 ? 'web_pc' : 'web_mobile',
+                        lang: window.__CHAT_LANG__ || 'zh'
+                    })
                 });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = await resp.json();
@@ -1734,6 +1753,12 @@
         }
 
         function handleSocketEvent(payload) {
+            if (payload.event === 'message.ack') {
+                // 回执按 client_msg_id 去重：本地已渲染的不会重复出现；
+                // 人工客服请求等由服务端补齐文案的消息会在此渲染为访客气泡。
+                renderServerMessage(payload.data, 'append');
+                return;
+            }
             if (payload.event === 'message.receive') {
                 const msg = payload.data;
                 renderServerMessage(msg, 'append');
@@ -1763,6 +1788,9 @@
 
         function renderServerMessage(msg, mode = 'append', options = {}) {
             if (!msg) return;
+            // 过滤仅客服端可见的隐藏消息（如转接提示）与空消息。
+            if (msg.hidden_from_visitor) return;
+            if (!msg.sender_type && !String(msg.content || '').trim()) return;
             const target = findMessageElement({
                 serverMsgId: msg.server_msg_id || '',
                 clientMsgId: msg.client_msg_id || ''
@@ -1827,7 +1855,8 @@
             } else if (conversation.status === 'ai_serving') {
                 updateSessionState('AI');
             } else if (conversation.status === 'waiting' || conversation.status === 'human_requested') {
-                updateSessionState('QUEUING');
+                // 无痕转人工：排队等待人工期间访客侧仍显示 AI 接待，不展示转接提示。
+                updateSessionState('AI');
             } else if (conversation.status === 'closed') {
                 promptForRatingOrReturn(t("sessionEnded"));
                 return;

@@ -256,12 +256,12 @@ func TestVisitorMessagePageMasksRevokedAgentMessage(t *testing.T) {
 	if _, _, err := st.SetAgentStatus(agent.ID, domain.AgentOnline); err != nil {
 		t.Fatalf("set agent online: %v", err)
 	}
-	visitor, err := st.CreateVisitorConversation("198.51.100.23", "web")
+	visitor, err := st.CreateVisitorConversation("198.51.100.23", "web", "zh")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
 
-	result, err := st.AddAgentMessage(agent.ID, visitor.Conversation.ID, "agent-msg-1", "后台仍可见的原始内容", domain.MessageText)
+	result, err := st.AddAgentMessage(agent.ID, visitor.Conversation.ID, "agent-msg-1", "后台仍可见的原始内容", domain.MessageText, nil)
 	if err != nil {
 		t.Fatalf("add agent message: %v", err)
 	}

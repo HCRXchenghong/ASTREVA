@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"customer-service/backend/internal/ai"
 	"customer-service/backend/internal/app"
 	"customer-service/backend/internal/config"
 	"customer-service/backend/internal/domain"
@@ -128,7 +129,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		if !decodeOptionalJSON(w, r, &req) {
 			return
 		}
-		session, err := service.CreateVisitorConversation(clientIP(r, trustedProxies), req.Source)
+		session, err := service.CreateVisitorConversation(clientIP(r, trustedProxies), req.Source, req.Lang)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -864,7 +865,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		before := r.URL.Query().Get("before")
 		page := service.Store().PagedMessages(r.PathValue("id"), limit, before)
-		writeJSON(w, http.StatusOK, sanitizeMessagePageForRequest(service, r, page))
+		writeJSON(w, http.StatusOK, localizeMessagePageForRequest(service, r, page))
 	})
 
 	mux.HandleFunc("POST /api/conversations/{id}/messages/{message_id}/revoke", func(w http.ResponseWriter, r *http.Request) {
@@ -1158,6 +1159,7 @@ type appReleaseUpdateRequest struct {
 
 type createConversationRequest struct {
 	Source string `json:"source"`
+	Lang   string `json:"lang"`
 }
 
 type setStatusRequest struct {
@@ -1394,10 +1396,18 @@ func canAccessConversation(service *app.Service, r *http.Request, conversationID
 	return false
 }
 
-func sanitizeMessagePageForRequest(service *app.Service, r *http.Request, page store.MessagePage) store.MessagePage {
-	if _, err := service.AuthVisitorFromRequest(r); err == nil {
-		page.Messages = app.VisitorFacingMessages(page.Messages)
+// localizeMessagePageForRequest 按调用方身份本地化历史消息：
+// 访客看到自己语言的译文；客服/后台默认看到中文译文并可通过 original_content 查看原文。
+func localizeMessagePageForRequest(service *app.Service, r *http.Request, page store.MessagePage) store.MessagePage {
+	if session, err := service.AuthVisitorFromRequest(r); err == nil {
+		lang := ai.LangZh
+		if conversation, ok := service.Store().Conversation(session.AccountID); ok {
+			lang = ai.NormalizeLang(conversation.VisitorLang, ai.LangZh)
+		}
+		page.Messages = app.VisitorFacingMessagesForLang(page.Messages, lang)
+		return page
 	}
+	page.Messages = app.AgentFacingMessages(page.Messages)
 	return page
 }
 
