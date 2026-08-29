@@ -4,11 +4,19 @@ const API_TYPES = new Set(['chat_completions', 'responses', 'anthropic_messages'
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 // 批次内快速失败：上游网关偶发 502/504 时只做短重试，长不可用窗口交给任务级自动重排。
-const RETRY_DELAYS_MS = [1500, 5000, 15000];
+const RETRY_DELAYS_MS = [1500, 5000, 15000, 30000, 60000];
 // 任务级重排退避：扛过上游账号池数分钟的临时排除窗口（实测网关 "no available accounts" 返回 502）。
 const JOB_REQUEUE_DELAYS_MS = [60000, 120000, 240000];
 // 连续批次之间短暂停顿，降低上游网关在高频请求下返回 502 的概率。
-const BATCH_GAP_MS = 1500;
+const BATCH_GAP_MS = 2500;
+
+// 上游账号池容易被并发打限流：同一时刻最多一个批量翻译请求在途，多语言按批次交替进行。
+let batchChain = Promise.resolve();
+function runSerializedBatch(task) {
+  const run = batchChain.then(() => task());
+  batchChain = run.then(() => undefined, () => undefined);
+  return run;
+}
 
 const DEFAULT_CONFIG = Object.freeze({
   enabled: true,
@@ -145,6 +153,16 @@ function setAtPath(target, path, value) {
   cursor[keys.at(-1)] = value;
 }
 
+function getAtPath(source, path) {
+  const keys = path.split('.');
+  let cursor = source;
+  for (const key of keys) {
+    if (cursor == null || typeof cursor !== 'object') return undefined;
+    cursor = cursor[key];
+  }
+  return cursor;
+}
+
 function localeLabel(locale) {
   return locale === 'ar' ? '阿拉伯语' : '英语';
 }
@@ -224,7 +242,7 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
       body = { model: config.model, temperature: 0.2, messages: [{ role: 'system', content: '你是严格的商业网站本地化引擎。' }, { role: 'user', content: prompt }] };
     } else if (config.apiType === 'responses') {
       suffix = 'responses';
-      body = { model: config.model, temperature: 0.2, input: prompt };
+      body = { model: config.model, temperature: 0.2, reasoning: { effort: 'low' }, input: prompt };
     } else {
       suffix = 'messages';
       body = { model: config.model, temperature: 0.2, max_tokens: 16000, system: '你是严格的商业网站本地化引擎。', messages: [{ role: 'user', content: prompt }] };
@@ -254,20 +272,43 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
     const apiKey = String(current.secrets?.apiKey || '');
     if (!config.enabled) throw Object.assign(new Error('自动翻译已停用。'), { code: 'TRANSLATION_UNCONFIGURED' });
     if (!apiKey || !config.model) throw Object.assign(new Error('翻译上游未完整配置：需要 API Key 和模型。'), { code: 'TRANSLATION_UNCONFIGURED' });
-    const startedAt = new Date().toISOString();
     const entries = collectTranslatableEntries(content);
     const total = entries.length;
-    progressByLocale.set(locale, { done: 0, total, updatedAt: Date.now() });
     const previous = await platformStore.readContentTranslation(locale);
-    await platformStore.saveContentTranslation(locale, { ...previous, sourceRevision, status: 'running', lastError: '', startedAt, finishedAt: null });
     const translatedContent = structuredClone(content);
     translatedContent.site.locale = locale;
-    for (let index = 0; index < entries.length; index += config.batchSize) {
+    const checkpointable = Boolean(
+      previous &&
+      previous.sourceRevision === sourceRevision &&
+      previous.content && typeof previous.content === 'object'
+    );
+    let resumed = 0;
+    const needsTranslation = (entry) => {
+      if (!checkpointable) return true;
+      const prevValue = getAtPath(previous.content, entry.id);
+      return !(typeof prevValue === 'string' && prevValue.trim() && prevValue !== entry.text);
+    };
+    if (checkpointable) {
+      for (const entry of entries) {
+        if (!needsTranslation(entry)) {
+          setAtPath(translatedContent, entry.id, getAtPath(previous.content, entry.id));
+          resumed += 1;
+        }
+      }
+      logger.info('[网站翻译] ' + locale + ' 断点续译：已完成 ' + resumed + '/' + total + ' 条。');
+    }
+    const remaining = checkpointable ? entries.filter(needsTranslation) : entries;
+    const startedAt = (checkpointable && previous.startedAt) || new Date().toISOString();
+    progressByLocale.set(locale, { done: resumed, total, updatedAt: Date.now() });
+    await platformStore.saveContentTranslation(locale, { content: translatedContent, sourceRevision, status: 'running', lastError: '', startedAt, finishedAt: null });
+    for (let index = 0; index < remaining.length; index += config.batchSize) {
+      const batch = remaining.slice(index, index + config.batchSize);
       if (index > 0) await new Promise((resolve) => setTimeout(resolve, BATCH_GAP_MS));
       if (latestRevision.get(locale) !== sourceRevision) return;
-      const result = await requestBatch(config, apiKey, locale, entries.slice(index, index + config.batchSize));
+      const result = await runSerializedBatch(() => requestBatch(config, apiKey, locale, batch));
       for (const [path, value] of result) setAtPath(translatedContent, path, value);
-      progressByLocale.set(locale, { done: Math.min(index + config.batchSize, total), total, updatedAt: Date.now() });
+      progressByLocale.set(locale, { done: resumed + Math.min(index + config.batchSize, remaining.length), total, updatedAt: Date.now() });
+      await platformStore.saveContentTranslation(locale, { content: translatedContent, sourceRevision, status: 'running', lastError: '', startedAt, finishedAt: null }).catch(() => {});
     }
     if (latestRevision.get(locale) !== sourceRevision) return;
     progressByLocale.set(locale, { done: total, total, updatedAt: Date.now() });
@@ -299,13 +340,14 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
         const delay = JOB_REQUEUE_DELAYS_MS[attempts];
         logger.warn('[网站翻译] ' + job.locale + ' 上游暂不可用（' + error.message + '），' + delay + 'ms 后自动重排（第 ' + (attempts + 1) + ' 次）。');
         const existingProgress = progressByLocale.get(job.locale);
-        if (existingProgress) progressByLocale.set(job.locale, { ...existingProgress, done: 0, updatedAt: Date.now() });
+        if (existingProgress) progressByLocale.set(job.locale, { ...existingProgress, updatedAt: Date.now() });
+        const existingRecord = await platformStore.readContentTranslation(job.locale).catch(() => null);
         await platformStore.saveContentTranslation(job.locale, {
-          content: job.content,
+          content: existingRecord?.content || null,
           sourceRevision: job.sourceRevision,
           status: 'pending',
           lastError: '',
-          startedAt: null,
+          startedAt: existingRecord?.startedAt || null,
           finishedAt: null
         }).catch(() => {});
         setTimeout(() => {
@@ -332,11 +374,9 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
     if (draining) return;
     draining = true;
     try {
-      while (queued.size) {
-        const [locale, job] = queued.entries().next().value;
-        queued.delete(locale);
-        await runJob(job);
-      }
+      const jobs = [...queued.values()];
+      queued.clear();
+      await Promise.all(jobs.map((job) => runJob(job)));
     } finally {
       draining = false;
       if (queued.size) queueMicrotask(drain);
@@ -350,7 +390,7 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
       latestRevision.set(locale, sourceRevision);
       progressByLocale.set(locale, { done: 0, total: progressTotal, updatedAt: Date.now() });
       await platformStore.saveContentTranslation(locale, {
-        content: existing.get(locale)?.content || null,
+        content: null,
         sourceRevision,
         status: 'pending',
         lastError: '',
