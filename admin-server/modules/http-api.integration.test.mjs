@@ -79,6 +79,7 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
     ]);
     const protectedPublishResponse = await fetch(`${base}/site-admin-api/publish-jobs`);
     const protectedTranslationsResponse = await fetch(`${base}/site-admin-api/translations`);
+    const protectedSeoResponse = await fetch(`${base}/site-admin-api/seo/ai-generate`, { method: 'POST' });
     const localeRecommendation = await fetch(`${base}/site-admin-api/public-locale`, { headers: { 'CF-IPCountry': 'AE', 'Accept-Language': 'zh-CN' } });
     const unavailableEnglish = await fetch(`${base}/site-admin-api/public-content?locale=en`);
 
@@ -102,6 +103,7 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
     const protectedSettingsPage = await fetch(base + '/site-admin/settings', { redirect: 'manual' });
     const contentHubPage = await fetch(base + '/site-admin/content/?embed=1', { headers: { Cookie: cookie } });
     const allContentPage = await fetch(base + '/site-admin/content/editor?section=allContent', { headers: { Cookie: cookie } });
+    const seoEditorPage = await fetch(base + '/site-admin/content/editor?section=seo', { headers: { Cookie: cookie } });
     const unifiedPage = await fetch(base + '/site-admin/?view=media', { headers: { Cookie: cookie } });
     const translationPage = await fetch(base + '/site-admin/translations?embed=1', { headers: { Cookie: cookie } });
     const translationStatus = await fetch(base + '/site-admin-api/translations', { headers: { Cookie: cookie } });
@@ -132,6 +134,8 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
     assert.deepEqual(protectedMediaEndpoints.map((response) => response.status), Array(8).fill(401));
     assert.equal(protectedPublishResponse.status, 401);
     assert.equal(protectedTranslationsResponse.status, 401);
+    assert.equal(protectedSeoResponse.status, 401);
+    assert.ok(openapi.paths['/site-admin-api/seo/ai-generate']);
     assert.equal(localeRecommendation.status, 200);
     assert.equal((await localeRecommendation.json()).data.locale, 'ar');
     assert.equal(unavailableEnglish.status, 409);
@@ -154,6 +158,8 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
     assert.match(allContentHtml, /全部内容字段/);
     assert.match(allContentHtml, /productMenu/);
     assert.match(allContentHtml, /emptyCategoryMessage/);
+    assert.equal(seoEditorPage.status, 200);
+    assert.match(await seoEditorPage.text(), /一键 AI 生成三语 SEO/);
     assert.equal(unifiedPage.status, 200);
     const unifiedHtml = await unifiedPage.text();
     assert.match(unifiedHtml, /data-view="media"/);

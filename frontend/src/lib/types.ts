@@ -30,6 +30,30 @@ export type SiteSettings = {
   copyright: string;
   serviceBridgeUrl: string;
   defaultSeo: SEO;
+  searchVerification?: {
+    google?: string;
+    bing?: string;
+    baidu?: string;
+    so360?: string;
+    sogou?: string;
+    yandex?: string;
+  };
+  aiDiscovery: {
+    introduction: string;
+    corePagesTitle: string;
+    categoriesTitle: string;
+    productsTitle: string;
+    contactTitle: string;
+    homeLabel: string;
+    productsLabel: string;
+    solutionsLabel: string;
+    supportLabel: string;
+    aboutLabel: string;
+    faqLabel: string;
+    websiteLabel: string;
+    emailLabel: string;
+    citationNotice: string;
+  };
   socialLinks: {
     facebook?: string;
     instagram?: string;

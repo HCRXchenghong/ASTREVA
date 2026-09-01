@@ -1,5 +1,21 @@
 # 更新记录
 
+## v1.2.0 - 2026-09-01
+
+### 重点变更
+
+- 人工客服无缝接管：会话可在 AI 与人工坐席之间切换，访客与坐席消息三语互译；翻译上游失败支持断点续传，批次串行化避免限流（低推理强度 + 小批次提升代理可靠性）。
+- AI 回复携带当前会话历史上下文（30 条 / 6000 字上限），按会话严格隔离；访客切换网站语言后同步会话语言，AI 回复与翻译跟随新语言；欢迎语即时三语，无中文闪现。
+- 智能缓存：保存 AI 配置时自动逐个实测模型缓存支持，支持的按最高效方式启用（responses 加 prompt_cache_key / Anthropic 加 cache_control），不支持保持原样；后台显示探测结果并支持手动重测。
+- 聊天窗口新增「正在回复」typing 指示（AI 与人工坐席均支持），头部指示器不再截断；修复刷新丢会话（主站一级存储桥）；访客 IP 防伪造（CF-Connecting-IP / 右到左 XFF）、IPv6 归一化与来源标记。
+- 新增 AI 生成 SEO：后台一键按批次（12 条/批）为全站内容生成 title / description / keywords，生成结果可复核后保存。
+- 全站 head 补齐 SEO：爬虫 robots / googlebot / bingbot / baiduspider 指令，六大搜索引擎站点验证码（Google / Bing / 百度 / 360 / 搜狗 / Yandex），og:locale 与多语言 alternate、hreflang、theme-color，og:image 统一转为绝对地址。
+- robots.txt 逐一放行 20+ 搜索引擎与 AI 爬虫（GPTBot、OAI-SearchBot、ChatGPT-User、ClaudeBot、PerplexityBot、Google-Extended、CCBot 等），并输出 Host 与 sitemap。
+- 新增 llms.txt AI 发现页：按内容系统自动生成站点介绍、核心页面与产品分类索引，面向大模型爬虫。
+- 语言切换器增强：译文按行级 / HTML 片段级建立词典提升命中率，品牌名归一化，所选语言写入 localStorage；页头内联脚本恢复语言与排版方向，杜绝切换闪烁；导航语言按钮初始状态跟随文档语言，样式更柔和。
+- 访客聊天页头像升级为 PNG（客服 + 中/英/阿三语访客头像），全局隐藏滚动条但保留滚动能力；user-web 资源文件名带内容哈希，规避 1 年不可变 CDN 缓存导致更新不生效。
+- 生产数据库备份不再纳入仓库（backups/ 已忽略）。
+
 ## v1.1.5 - 2026-08-28
 
 ### 重点变更

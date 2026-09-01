@@ -5,7 +5,7 @@ import ChatWidget from '../components/ChatWidget';
 import CookieConsent from '../components/CookieConsent';
 import LanguageController from '../components/LanguageController.astro';
 import { PUBLIC_CONTENT_API_URL } from '../lib/content';
-import { absoluteUrl, organizationJsonLd, pageDescription, pageTitle, websiteJsonLd } from '../lib/seo';
+import { absoluteAssetUrl, absoluteUrl, organizationJsonLd, pageDescription, pageTitle, websiteJsonLd } from '../lib/seo';
 import type { SEO, SiteContent } from '../lib/types';
 
 type Props = {
@@ -19,7 +19,14 @@ const { content, seo, path, jsonLd = [] } = Astro.props;
 const title = pageTitle(seo, content.site);
 const description = pageDescription(seo, content.site);
 const canonical = absoluteUrl(path);
-const image = seo?.image || content.site.defaultSeo.image;
+const imageSource = seo?.image || content.site.defaultSeo.image || content.site.logoUrl;
+const image = absoluteAssetUrl(imageSource);
+const keywords = seo?.keywords || content.site.defaultSeo.keywords;
+const localeMap: Record<string, string> = { 'zh-CN': 'zh_CN', en: 'en_US', ar: 'ar_SA' };
+const ogLocale = localeMap[content.site.locale] || 'zh_CN';
+const alternateLocales = Object.values(localeMap).filter((locale) => locale !== ogLocale);
+const verification = content.site.searchVerification || {};
+const isLogoImage = Boolean(image && imageSource === content.site.logoUrl);
 const structuredData = [organizationJsonLd(content.site), websiteJsonLd(content.site), ...jsonLd];
 const footer = content.site.footer;
 ---
@@ -29,22 +36,60 @@ const footer = content.site.footer;
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script is:inline>
+      (() => {
+        const root = document.documentElement;
+        const supported = new Set(['zh-CN', 'en', 'ar']);
+        let savedLocale = null;
+
+        try {
+          savedLocale = localStorage.getItem('astreva-site-locale');
+        } catch {}
+
+        root.dataset.astrevaLocalePending = '';
+        if (supported.has(savedLocale)) {
+          root.lang = savedLocale;
+          root.dir = savedLocale === 'ar' ? 'rtl' : 'ltr';
+        }
+
+        window.setTimeout(() => root.removeAttribute('data-astreva-locale-pending'), 5000);
+      })();
+    </script>
     <title>{title}</title>
     <meta name="description" content={description} />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="bingbot" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="baiduspider" content="index, follow" />
+    <meta name="theme-color" content="#0a4d8c" />
+    {verification.google && <meta name="google-site-verification" content={verification.google} />}
+    {verification.bing && <meta name="msvalidate.01" content={verification.bing} />}
+    {verification.baidu && <meta name="baidu-site-verification" content={verification.baidu} />}
+    {verification.so360 && <meta name="360-site-verification" content={verification.so360} />}
+    {verification.sogou && <meta name="sogou_site_verification" content={verification.sogou} />}
+    {verification.yandex && <meta name="yandex-verification" content={verification.yandex} />}
     {content.site.logoUrl && <link rel="icon" href={content.site.logoUrl} />}
     {content.site.logoUrl && <link rel="apple-touch-icon" href={content.site.logoUrl} />}
-    {seo?.keywords && <meta name="keywords" content={seo.keywords} />}
+    {keywords && <meta name="keywords" content={keywords} />}
     <link rel="canonical" href={canonical} />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={content.site.brandName} />
+    <meta property="og:locale" content={ogLocale} data-astreva-og-locale />
+    {alternateLocales.map((locale) => <meta property="og:locale:alternate" content={locale} />)}
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
     {image && <meta property="og:image" content={image} />}
+    {image && new URL(image).protocol === 'https:' && <meta property="og:image:secure_url" content={image} />}
+    {image && <meta property="og:image:alt" content={`${title} - ${content.site.brandName}`} />}
+    {isLogoImage && <meta property="og:image:width" content="512" />}
+    {isLogoImage && <meta property="og:image:height" content="512" />}
+    {isLogoImage && <meta property="og:image:type" content="image/png" />}
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     {image && <meta name="twitter:image" content={image} />}
+    {image && <meta name="twitter:image:alt" content={`${title} - ${content.site.brandName}`} />}
     {structuredData.map((item) => (
       <script type="application/ld+json" set:html={JSON.stringify(item)} />
     ))}

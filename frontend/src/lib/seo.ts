@@ -13,7 +13,7 @@ export function absoluteUrl(path = '/') {
   return `${site}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
-function absoluteAssetUrl(url: string) {
+export function absoluteAssetUrl(url: string) {
   if (!url) return '';
   if (/^https?:\/\//i.test(url)) return url;
   return absoluteUrl(url);

@@ -98,9 +98,9 @@
             display: none;
         }
 
-        /* 隐藏滚动条 */
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        /* 隐藏滚动条但保留滚动能力 */
+        html, body, * { -ms-overflow-style: none; scrollbar-width: none; }
+        *::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
         /* 气泡小三角 (左侧 - 对方) */
         .bubble-left::before {
@@ -645,11 +645,24 @@
 
     <script src="./assets/i18n.js"></script>
     <script>
+        const AVATAR_ASSETS = Object.freeze({
+            service: './assets/img/avatar-service.png',
+            visitor: Object.freeze({
+                zh: './assets/img/avatar-visitor-zh.png',
+                en: './assets/img/avatar-visitor-en.png',
+                ar: './assets/img/avatar-visitor-ar.png'
+            })
+        });
+
+        function visitorAvatar() {
+            return AVATAR_ASSETS.visitor[window.__CHAT_LANG__] || AVATAR_ASSETS.visitor.zh;
+        }
+
         // === 状态管理 ===
         const State = {
             sessionType: 'AI', // 'AI', 'QUEUING', 'HUMAN', 'ENDED'
             agentName: t('agentNameDefault'),
-            agentAvatar: './assets/img/avatar-service.svg',
+            agentAvatar: AVATAR_ASSETS.service,
             soundEnabled: true,
             activePanel: null, // 'emoji', 'more', or null
             entryVisible: true,
@@ -1399,7 +1412,7 @@
         function createMessageHTML(text, isUser = false, isFailed = false, meta = {}, extraBubbleClass = '', aiTag = false) {
             const safeText = escapeHTML(text).replace(/\n/g, '<br>');
             const safeRetryText = escapeHTML(text).replace(/\n/g, '&#10;');
-            const avatar = isUser ? './assets/img/avatar-visitor.svg' : State.agentAvatar;
+            const avatar = isUser ? visitorAvatar() : State.agentAvatar;
             const bubbleBg = isUser ? 'bg-wc-user' : 'bg-wc-ai border border-gray-200/50';
             const bubbleDir = isUser ? 'bubble-right' : 'bubble-left';
             const textStyle = isUser ? 'text-wc-main' : 'text-wc-main';
@@ -1432,7 +1445,7 @@
 
         // 构建图片消息 (微信中的图片没有气泡尖角和背景)
         function createImageMessageHTML(imgSrc, isUser = false, meta = {}, aiTag = false) {
-            const avatar = isUser ? './assets/img/avatar-visitor.svg' : State.agentAvatar;
+            const avatar = isUser ? visitorAvatar() : State.agentAvatar;
             const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
             const safeSrc = escapeHTML(safeImageSrc(imgSrc));
             const aiTagLabel = (!isUser && aiTag) ? `<span class="ai-tag text-[10px] text-gray-400 mt-1 ml-1 block select-none" dir="auto">${t('aiGenerated')}</span>` : '';
@@ -1452,7 +1465,7 @@
         }
 
         function createAudioMessageHTML(audioSrc, isUser = false, meta = {}, aiTag = false) {
-            const avatar = isUser ? './assets/img/avatar-visitor.svg' : State.agentAvatar;
+            const avatar = isUser ? visitorAvatar() : State.agentAvatar;
             const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
             const safeSrc = escapeHTML(resolveAssetURL(audioSrc));
             const bubbleBg = isUser ? 'bg-wc-user' : 'bg-wc-ai border border-gray-200/50';
@@ -1659,7 +1672,7 @@
             if (DOM.headerTitle && DOM.headerTitle.parentElement) {
                 DOM.headerTitle.parentElement.style.visibility = 'hidden';
             }
-            const avatar = State.typingSender === 'agent' ? State.agentAvatar : './assets/img/avatar-service.svg';
+            const avatar = State.typingSender === 'agent' ? State.agentAvatar : AVATAR_ASSETS.service;
             const html = `
                 <div class="flex gap-3 msg-wrapper typing-indicator">
                     <img src="${avatar}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
@@ -1705,12 +1718,12 @@
             switch (newState) {
                 case 'AI':
                     State.agentName = t('agentNameDefault');
-                    State.agentAvatar = './assets/img/avatar-service.svg';
+                    State.agentAvatar = AVATAR_ASSETS.service;
                     DOM.headerAiBadge.classList.remove('hidden');
                     break;
                 case 'HUMAN':
                     State.agentName = t('agentNameHumanPrefix') + '李雪';
-                    State.agentAvatar = './assets/img/avatar-agent-xue.svg';
+                    State.agentAvatar = AVATAR_ASSETS.service;
                     DOM.sysBanner.classList.remove('hidden');
                     DOM.sysBanner.className = 'bg-[#f0f9eb] text-[#67c23a] text-xs px-3 py-2 flex items-center justify-center border-b border-[#e1f3d8] shrink-0 z-10 shadow-sm relative';
                     DOM.sysBannerText.innerHTML = '<i class="fas fa-check-circle mr-1"></i>' + t('humanConnected');

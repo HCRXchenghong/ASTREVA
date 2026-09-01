@@ -16,7 +16,11 @@ const LANGUAGE_ORDER = [
 ];
 
 function LanguageSwitcher({ site }: { site: SiteSettings }) {
-  const [locale, setLocale] = useState('zh-CN');
+  const [locale, setLocale] = useState(() => {
+    if (typeof document === 'undefined') return 'zh-CN';
+    const documentLocale = document.documentElement.lang;
+    return LANGUAGE_ORDER.some((item) => item.locale === documentLocale) ? documentLocale : 'zh-CN';
+  });
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const labels: Record<string, string> = {
@@ -60,13 +64,13 @@ function LanguageSwitcher({ site }: { site: SiteSettings }) {
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={labels[current.locale]}
-        className="flex h-11 items-center gap-1.5 rounded-xl border-2 border-[#0a66c2] bg-white px-2.5 shadow-[0_4px_14px_rgba(10,102,194,0.35)] transition-transform hover:scale-105"
+        className="flex h-11 items-center gap-1.5 rounded-xl bg-white px-2.5 shadow-[0_4px_14px_rgba(15,23,42,0.14)] transition-transform hover:scale-105"
       >
-        <img src={current.flag} alt="" className="h-6 w-8 rounded-[4px] shadow-[0_0_0_1px_rgba(15,23,42,0.2)]" />
+        <img src={current.flag} alt="" className="h-6 w-8 rounded-[3px]" />
         <ChevronDown size={15} className={'text-[#0a66c2] transition-transform ' + (open ? 'rotate-180' : '')} />
       </button>
       {open && (
-        <div className="absolute right-0 top-[52px] z-50 flex flex-col gap-1.5 rounded-xl border-2 border-[#0a66c2] bg-white p-2 shadow-[0_12px_32px_rgba(10,77,140,0.28)]">
+        <div className="absolute right-0 top-[52px] z-50 flex flex-col gap-1.5 rounded-xl border border-gray-200 bg-white p-2 shadow-[0_12px_32px_rgba(15,23,42,0.16)]">
           {others.map((item) => (
             <button
               key={item.locale}
@@ -78,9 +82,9 @@ function LanguageSwitcher({ site }: { site: SiteSettings }) {
                 const api = (window as unknown as { AstrevaLanguage?: { switch?: (locale: string) => void } }).AstrevaLanguage;
                 if (api && api.switch) api.switch(item.locale);
               }}
-              className="grid h-10 w-12 place-items-center rounded-lg border-2 border-transparent transition-colors hover:border-[#0a66c2] hover:bg-[#eaf3fd]"
+              className="grid h-10 w-12 place-items-center rounded-lg transition-colors hover:bg-gray-100"
             >
-              <img src={item.flag} alt="" className="h-5 w-7 rounded-[3px] shadow-[0_0_0_1px_rgba(15,23,42,0.2)]" />
+              <img src={item.flag} alt="" className="h-5 w-7 rounded-[2px]" />
             </button>
           ))}
         </div>

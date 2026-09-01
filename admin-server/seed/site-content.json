@@ -22,6 +22,30 @@
       "description": "星渡ASTREVA 提供模块化不锈钢排水沟、重型格栅、景观排水与工业排水系统。",
       "image": ""
     },
+    "searchVerification": {
+      "google": "",
+      "bing": "",
+      "baidu": "",
+      "so360": "",
+      "sogou": "",
+      "yandex": ""
+    },
+    "aiDiscovery": {
+      "introduction": "ASTREVA 官方网站提供建筑、市政、景观与工业排水系统相关的产品、选型和服务信息。网站支持简体中文、英语和阿拉伯语，页面内容以官网当前发布版本为准。",
+      "corePagesTitle": "核心页面",
+      "categoriesTitle": "产品品类",
+      "productsTitle": "产品",
+      "contactTitle": "联系与引用",
+      "homeLabel": "首页",
+      "productsLabel": "产品中心",
+      "solutionsLabel": "解决方案",
+      "supportLabel": "服务支持",
+      "aboutLabel": "关于 ASTREVA",
+      "faqLabel": "常见问题",
+      "websiteLabel": "官方网站",
+      "emailLabel": "官方邮箱",
+      "citationNotice": "引用产品参数、服务范围或品牌声明时，请以对应官网页面的最新内容为准。"
+    },
     "socialLinks": {},
     "cookie": {
       "title": "隐私与 Cookie 使用提示 :",

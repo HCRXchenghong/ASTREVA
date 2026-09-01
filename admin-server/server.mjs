@@ -29,6 +29,8 @@ import { createPublishRouter } from './modules/publish-router.mjs';
 import { createServiceBridgeProxy } from './modules/servicebridge-proxy.mjs';
 import { createWebsiteTranslationService } from './modules/website-translation-service.mjs';
 import { createWebsiteTranslationRouter } from './modules/website-translation-router.mjs';
+import { createWebsiteSeoService } from './modules/website-seo-service.mjs';
+import { createWebsiteSeoRouter } from './modules/website-seo-router.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -109,6 +111,7 @@ const platformStore = createPlatformStore({
 });
 await platformStore.init();
 const translationService = createWebsiteTranslationService({ platformStore });
+const seoService = createWebsiteSeoService({ aiService: translationService });
 const publishService = createPublishService({
   rebuildUrl: REBUILD_URL,
   rebuildSecret: process.env.REBUILD_WEBHOOK_SECRET || '',
@@ -1122,6 +1125,17 @@ const handleWebsiteTranslation = createWebsiteTranslationRouter({
   applyPublicCors: applyPublicContentCors
 });
 
+const handleWebsiteSeo = createWebsiteSeoRouter({
+  bodyJson,
+  json,
+  verifySession,
+  auditEvent,
+  seoService,
+  readContentRecord,
+  saveContent,
+  getBootstrap
+});
+
 let previousCpuSnapshot = null;
 let previousProcessCpuSnapshot = null;
 
@@ -1697,7 +1711,7 @@ function renderAdminPage(bootstrap, options = {}) {
     .actions { display: flex; align-items: center; gap: 12px; }
     .top-button { height: 44px; border-radius: 8px; border: 1px solid #cbd7e6; background: #fff; color: #111827; padding: 0 18px; font-weight: 900; box-shadow: 0 2px 7px rgba(20,38,68,.04); }
     .top-button.primary { background: #0666d8; border-color: #0666d8; color: #fff; }
-    .top-button:disabled, .save-current:disabled, .ghost:disabled, .danger:disabled { opacity: .58; cursor: not-allowed; filter: grayscale(.12); }
+    .top-button:disabled, .save-current:disabled, .ghost:disabled, .danger:disabled, .seo-ai-button:disabled { opacity: .58; cursor: not-allowed; filter: grayscale(.12); }
     .avatar { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: #eaf4ff; border: 1px solid #cfe0f2; font-size: 23px; }
     .preview-pane { min-width: 0; min-height: 0; overflow: auto; padding: 36px 34px; background: linear-gradient(90deg, #f5f9ff, #eef5fc); }
     .device-tabs { width: fit-content; margin: 0 auto 30px; display: flex; gap: 22px; padding: 6px; border: 1px solid #d1ddeb; border-radius: 10px; background: rgba(255,255,255,.88); box-shadow: 0 6px 20px rgba(15,49,95,.07); }
@@ -1716,6 +1730,10 @@ function renderAdminPage(bootstrap, options = {}) {
     .card-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; font-weight: 900; }
     .ghost, .danger { height: 38px; border-radius: 8px; border: 1px solid #cbd7e6; background: #fff; padding: 0 12px; font-weight: 800; }
     .danger { color: var(--danger); border-color: #ffd1d1; } .save-current { height: 54px; border: 0; border-radius: 8px; background: linear-gradient(135deg, #0875eb, #0655b7); color: #fff; font-size: 17px; font-weight: 900; margin-top: 8px; }
+    .seo-ai-panel { border-color: #a9c8e8; background: #f5faff; }
+    .seo-ai-panel p { margin: 0; }
+    .seo-ai-button { min-height: 48px; border: 0; border-radius: 8px; padding: 0 18px; background: #075fae; color: #fff; font-size: 16px; font-weight: 900; }
+    .seo-ai-status { min-height: 22px; color: #11633b; font-weight: 800; }
     .picker { display: grid; grid-template-columns: 150px 1fr; gap: 12px; } .select-list { display: grid; gap: 8px; align-content: start; }
     .select-list button { min-height: 38px; border-radius: 8px; border: 1px solid #d6e1ef; background: #fff; text-align: left; padding: 8px 10px; font-weight: 800; }
     .select-list button.active { border-color: #0666d8; color: #064b9f; background: #eef7ff; }
@@ -1794,7 +1812,7 @@ function renderAdminPage(bootstrap, options = {}) {
     };
     function showError(error) { errorPanel.textContent = error?.message || String(error); errorPanel.classList.add('show'); }
     function clearError() { errorPanel.textContent = ''; errorPanel.classList.remove('show'); }
-    function syncBusy() { document.querySelectorAll('#saveTop,#publish,#saveExit,#saveCurrent,[data-delete],[data-create-fallback],[data-activate-fallback],[data-delete-fallback]').forEach((button) => { button.disabled = state.busy || button.dataset.operationOnly === 'true'; }); }
+    function syncBusy() { document.querySelectorAll('#saveTop,#publish,#saveExit,#saveCurrent,#generateSeo,[data-delete],[data-create-fallback],[data-activate-fallback],[data-delete-fallback]').forEach((button) => { button.disabled = state.busy || button.dataset.operationOnly === 'true'; }); }
     window.onerror = (_m, _s, _l, _c, error) => showError(error || _m);
     window.onunhandledrejection = (event) => showError(event.reason || '后台运行错误');
     const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
@@ -1857,8 +1875,8 @@ function renderAdminPage(bootstrap, options = {}) {
       nav.querySelectorAll('button').forEach((btn) => btn.classList.toggle('active', btn.dataset.nav === state.active));
       const c = state.content;
       if (state.active === 'allContent') renderAllContent();
-      else if (state.active === 'homeHero') editor.innerHTML = title('首页首屏') + field('眉标', 'home.hero.eyebrow') + field('主标题', 'home.hero.title') + field('商标角标', 'home.hero.trademark') + text('副标题', 'home.hero.subtitle') + mediaField('背景图', 'home.hero.backgroundImage') + mediaField('背景视频', 'home.hero.backgroundVideo', 'video/*') + field('主按钮文字', 'home.hero.primaryCta') + field('主按钮链接', 'home.hero.primaryHref') + field('播放按钮文字', 'home.hero.secondaryCta') + field('播放视频链接', 'home.hero.videoUrl') + field('视频弹窗标题', 'home.hero.videoTitle') + field('视频占位提示', 'home.hero.videoPreviewLabel') + field('外部打开按钮文字', 'home.hero.videoOpenExternalLabel') + field('关闭按钮文字', 'home.hero.videoCloseLabel') + field('合作伙伴标签', 'home.partnerLabel') + field('SEO 标题', 'home.seo.title') + text('SEO 描述', 'home.seo.description') + field('SEO 关键词', 'home.seo.keywords') + field('SEO 分享图', 'home.seo.image') + saveButton() + '</div>';
-      else if (state.active === 'homeProducts') editor.innerHTML = title('首页产品区') + field('产品区标题', 'home.featuredProducts.title') + text('产品区描述', 'home.featuredProducts.description') + field('产品卡片链接文字', 'home.featuredProducts.linkLabel') + field('产品卡片链接图标', 'home.featuredProducts.linkIcon') + listText('合作伙伴', 'home.partners') + field('产品介绍标题', 'home.productIntro.title') + text('产品介绍描述', 'home.productIntro.description', 5) + mediaField('产品介绍图片', 'home.productIntro.image', 'image/*') + listText('产品介绍要点', 'home.productIntro.bullets') + field('产品介绍要点图标', 'home.productIntro.bulletIcon') + field('技术规格按钮文字', 'home.productIntro.ctaLabel') + field('技术规格按钮链接', 'home.productIntro.ctaHref') + saveButton() + '</div>';
+      else if (state.active === 'homeHero') editor.innerHTML = title('首页首屏') + field('眉标', 'home.hero.eyebrow') + field('主标题', 'home.hero.title') + field('商标角标', 'home.hero.trademark') + text('副标题', 'home.hero.subtitle') + mediaField('背景图', 'home.hero.backgroundImage') + mediaField('背景视频', 'home.hero.backgroundVideo', 'video/*') + field('主按钮文字', 'home.hero.primaryCta') + field('主按钮链接', 'home.hero.primaryHref') + field('播放按钮文字', 'home.hero.secondaryCta') + field('播放视频链接', 'home.hero.videoUrl') + field('视频弹窗标题', 'home.hero.videoTitle') + field('视频占位提示', 'home.hero.videoPreviewLabel') + field('外部打开按钮文字', 'home.hero.videoOpenExternalLabel') + field('关闭按钮文字', 'home.hero.videoCloseLabel') + field('SEO 标题', 'home.seo.title') + text('SEO 描述', 'home.seo.description') + field('SEO 关键词', 'home.seo.keywords') + field('SEO 分享图', 'home.seo.image') + saveButton() + '</div>';
+      else if (state.active === 'homeProducts') editor.innerHTML = title('首页产品区') + field('产品区标题', 'home.featuredProducts.title') + text('产品区描述', 'home.featuredProducts.description') + field('产品卡片链接文字', 'home.featuredProducts.linkLabel') + field('产品卡片链接图标', 'home.featuredProducts.linkIcon') + field('产品介绍标题', 'home.productIntro.title') + text('产品介绍描述', 'home.productIntro.description', 5) + mediaField('产品介绍图片', 'home.productIntro.image', 'image/*') + listText('产品介绍要点', 'home.productIntro.bullets') + field('产品介绍要点图标', 'home.productIntro.bulletIcon') + field('技术规格按钮文字', 'home.productIntro.ctaLabel') + field('技术规格按钮链接', 'home.productIntro.ctaHref') + saveButton() + '</div>';
       else if (state.active === 'homeAdvantages') editor.innerHTML = title('首页优势') + field('优势区标题', 'home.advantagesIntro.title') + text('优势区描述', 'home.advantagesIntro.description') + objectList('优势卡片', 'home.advantages', [['title','标题'],['description','描述','textarea'],['icon','图标代号']]) + saveButton() + '</div>';
       else if (state.active === 'homeTestimonials') editor.innerHTML = title('客户评价') + field('区域标题', 'home.testimonialsTitle') + objectList('评价列表', 'home.testimonials', [['name','姓名'],['role','身份'],['text','评价内容','textarea']]) + saveButton() + '</div>';
       else if (state.active === 'homeCta') editor.innerHTML = title('首页行动区') + field('标题', 'home.cta.title') + text('描述', 'home.cta.description') + field('主按钮', 'home.cta.primaryLabel') + field('主按钮链接', 'home.cta.primaryHref') + field('次按钮', 'home.cta.secondaryLabel') + field('次按钮链接', 'home.cta.secondaryHref') + mediaField('背景图', 'home.cta.backgroundImage') + saveButton() + '</div>';
@@ -1870,7 +1888,7 @@ function renderAdminPage(bootstrap, options = {}) {
       else if (['about','solutions','warranty','install','privacy','agreement','faqPage'].includes(state.active)) renderStatic(state.active === 'faqPage' ? 'faq' : state.active);
       else if (state.active === 'media') renderMedia();
       else if (state.active === 'leads') renderLeads();
-      else if (state.active === 'seo') editor.innerHTML = title('SEO 设置') + field('默认 SEO 标题', 'site.defaultSeo.title') + text('默认 SEO 描述', 'site.defaultSeo.description') + field('默认分享图', 'site.defaultSeo.image') + field('默认关键词', 'site.defaultSeo.keywords') + field('首页 SEO 标题', 'home.seo.title') + text('首页 SEO 描述', 'home.seo.description') + field('首页 SEO 分享图', 'home.seo.image') + field('产品中心 SEO 标题', 'productCenter.seo.title') + text('产品中心 SEO 描述', 'productCenter.seo.description') + field('产品中心 SEO 分享图', 'productCenter.seo.image') + field('服务页 SEO 标题', 'support.seo.title') + text('服务页 SEO 描述', 'support.seo.description') + field('服务页 SEO 分享图', 'support.seo.image') + saveButton() + '</div>';
+      else if (state.active === 'seo') editor.innerHTML = title('SEO 设置') + '<div class="card seo-ai-panel"><div class="card-head"><span>AI SEO 生成</span></div><p class="small">根据当前已保存的网站内容，为全站、首页、产品中心、服务页、全部品类、产品和静态页生成中文 SEO，并自动排队生成英文与阿拉伯语版本。现有分享图会保留，空白分享图自动使用页面主图或 ASTREVA Logo。</p><button class="seo-ai-button" id="generateSeo" type="button">一键 AI 生成三语 SEO</button><p class="seo-ai-status" id="seoAiStatus" aria-live="polite">'+esc(state.seoMessage || '')+'</p></div><div class="card"><div class="card-head"><span>搜索引擎站长验证</span></div><p class="small">在各平台站长后台添加网站后，把平台给出的 meta 验证码填入。留空时前台不会输出对应标签。</p>'+field('Google 验证码', 'site.searchVerification.google')+field('Bing 验证码', 'site.searchVerification.bing')+field('百度验证码', 'site.searchVerification.baidu')+field('360 搜索验证码', 'site.searchVerification.so360')+field('搜狗验证码', 'site.searchVerification.sogou')+field('Yandex 验证码', 'site.searchVerification.yandex')+'</div>' + field('默认 SEO 标题', 'site.defaultSeo.title') + text('默认 SEO 描述', 'site.defaultSeo.description') + field('默认分享图', 'site.defaultSeo.image') + field('默认关键词', 'site.defaultSeo.keywords') + field('首页 SEO 标题', 'home.seo.title') + text('首页 SEO 描述', 'home.seo.description') + field('首页 SEO 关键词', 'home.seo.keywords') + field('首页 SEO 分享图', 'home.seo.image') + field('产品中心 SEO 标题', 'productCenter.seo.title') + text('产品中心 SEO 描述', 'productCenter.seo.description') + field('产品中心 SEO 关键词', 'productCenter.seo.keywords') + field('产品中心 SEO 分享图', 'productCenter.seo.image') + field('服务页 SEO 标题', 'support.seo.title') + text('服务页 SEO 描述', 'support.seo.description') + field('服务页 SEO 关键词', 'support.seo.keywords') + field('服务页 SEO 分享图', 'support.seo.image') + saveButton() + '</div>';
       else if (state.active === 'site') editor.innerHTML = title('全站设置') + field('品牌名', 'site.brandName') + field('品牌标语', 'site.brandTagline') + mediaField('Logo', 'site.logoUrl') + field('电话', 'site.phone') + field('邮箱', 'site.email') + field('版权文案', 'site.copyright') + field('ServiceBridge 地址', 'site.serviceBridgeUrl') + field('语言选择标签', 'site.localization.languageLabel') + field('语言切换无障碍标签', 'site.localization.switchAriaLabel') + field('中文名称', 'site.localization.chineseLabel') + field('英语名称', 'site.localization.englishLabel') + field('阿拉伯语名称', 'site.localization.arabicLabel') + field('切换中提示', 'site.localization.switchingText') + field('译文未就绪提示', 'site.localization.unavailableText') + saveButton() + '</div>';
       else if (state.active === 'fallbackVersions') renderFallbackVersions();
       else if (state.active === 'navigation') editor.innerHTML = title('导航文案') + field('首页', 'site.navigation.homeLabel') + field('产品中心', 'site.navigation.productsLabel') + field('解决方案', 'site.navigation.solutionsLabel') + field('服务支持', 'site.navigation.supportLabel') + field('关于我们', 'site.navigation.aboutLabel') + field('移动端菜单无障碍标签', 'site.navigation.mobileMenuLabel') + saveButton() + '</div>';
@@ -1957,7 +1975,7 @@ function renderAdminPage(bootstrap, options = {}) {
       } finally { state.busy = false; syncBusy(); }
     }
     function renderLeads() { const leads = state.data.leads||[]; const rows = leads.map((lead,i)=>'<div class="card"><div class="card-head"><span>'+esc(lead.name||'未命名')+' · '+esc(lead.contactInfo||lead.phone||lead.email||'')+'</span><button class="ghost" data-select-lead="'+i+'">编辑</button></div><p class="small">'+esc(lead.email||lead.phone||'')+'<br>'+esc(lead.message||'')+'</p></div>').join(''); const lead = leads[state.selected.lead] || {}; editor.innerHTML = title('客户咨询') + rows + '<div class="rule"></div><input data-lead-key="id" type="hidden" value="'+esc(lead.id||'')+'"><div class="grid2"><div class="field"><label>状态</label><input data-lead-key="status" value="'+esc(lead.status||'新咨询')+'"></div><div class="field"><label>优先级</label><input data-lead-key="priority" value="'+esc(lead.priority||'普通')+'"></div></div><div class="field"><label>内部备注</label><textarea data-lead-key="internalNotes">'+esc(lead.internalNotes||'')+'</textarea></div>'+saveButton()+'</div>'; }
-    function sectionForActive() { if (state.active === 'allContent') return ['content', state.content]; if (state.active.startsWith('home')) return ['home', state.content.home]; if (state.active === 'productCenter') return ['productCenter', state.content.productCenter]; if (state.active === 'support') return ['support', state.content.support]; if (['seo','site','navigation','footer','social','cookie','chat'].includes(state.active)) return ['site', state.content.site]; if (['about','solutions','warranty','install','privacy','agreement','faqPage'].includes(state.active)) return ['staticPage', state.content.staticPages.find(p => p.slug === state.selected.staticPage)]; return [state.active, null]; }
+    function sectionForActive() { if (['allContent','seo'].includes(state.active)) return ['content', state.content]; if (state.active.startsWith('home')) return ['home', state.content.home]; if (state.active === 'productCenter') return ['productCenter', state.content.productCenter]; if (state.active === 'support') return ['support', state.content.support]; if (['site','navigation','footer','social','cookie','chat'].includes(state.active)) return ['site', state.content.site]; if (['about','solutions','warranty','install','privacy','agreement','faqPage'].includes(state.active)) return ['staticPage', state.content.staticPages.find(p => p.slug === state.selected.staticPage)]; return [state.active, null]; }
     function collectItem(section) { const data = {}; editor.querySelectorAll('[data-item-section="'+section+'"]').forEach(el => { let value = el.type === 'checkbox' ? el.checked : el.value; if (['sortOrder'].includes(el.dataset.key)) value = Number(value||0); if (['galleryImages','features'].includes(el.dataset.key)) value = value.split('\\n').map(s=>s.trim()).filter(Boolean); if (el.dataset.key === 'specifications') value = value.split('\\n').map(s=>s.trim()).filter(Boolean).map(s=>{const [label,...rest]=s.split(/[：:]/); return {label:label||'', value:rest.join('：')||''};}); if (el.dataset.key === 'downloads') value = value.split('\\n').map(s=>s.trim()).filter(Boolean).map(s=>{const [label,...rest]=s.split(/[：:]/); return {label:label||'', url:rest.join(':')||''};}); setNested(data, el.dataset.key, value); }); return data; }
     function setNested(obj, path, value) { const keys = path.split('.'); let cur = obj; keys.slice(0,-1).forEach(k=>{cur[k] ||= {}; cur = cur[k];}); cur[keys.at(-1)] = value; }
     async function uploadAsset(file) { const fd = new FormData(); fd.append('file', file); const res = await fetch('/site-admin-api/upload', { method:'POST', body: fd }); const data = await res.json(); if (!res.ok) throw new Error(data.error?.message || '上传失败'); state.data.media = (await (await fetch('/site-admin-api/media')).json()).data; return data.data; }
@@ -1984,6 +2002,39 @@ function renderAdminPage(bootstrap, options = {}) {
         if (shouldPublish && section !== 'lead') await publishSite();
         else refreshPreview();
         return true;
+      } finally {
+        state.busy = false;
+        syncBusy();
+      }
+    }
+    async function generateSeo() {
+      if (state.busy) return;
+      if (state.dirty) throw new Error('当前页面还有未保存修改，请先保存后再生成 SEO。');
+      if (!window.confirm('AI 将覆盖全站所有页面现有的 SEO 标题、描述和关键词。现有分享图会保留。确认继续？')) return;
+      state.busy = true;
+      state.seoMessage = '';
+      clearError();
+      syncBusy();
+      const button = document.querySelector('#generateSeo');
+      const status = document.querySelector('#seoAiStatus');
+      if (button) button.textContent = 'AI 正在分析全站内容...';
+      if (status) status.textContent = '正在生成，请勿关闭页面。';
+      try {
+        const response = await fetch('/site-admin-api/seo/ai-generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ revision: state.data.contentRevision })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error?.message || 'AI SEO 生成失败。');
+        state.data = payload.data;
+        state.content = payload.data.content;
+        state.dirty = false;
+        state.seoMessage = '已生成并保存 '+Number(payload.meta?.generatedCount || 0)+' 个页面的中文 SEO；英文和阿拉伯语已进入自动翻译队列。';
+        saved.textContent = '✓ 已保存';
+        dirty.textContent = '● SEO 草稿已更新';
+        render();
+        refreshPreview();
       } finally {
         state.busy = false;
         syncBusy();
@@ -2083,7 +2134,7 @@ function renderAdminPage(bootstrap, options = {}) {
       button.dataset.deleteConfirmed = 'true';
       button.click();
     }, true);
-    editor.addEventListener('click', async (event) => { const btn = event.target.closest('button'); if (!btn) return; if (btn.dataset.createFallback !== undefined) { createFallbackVersion().catch(showError); return; } if (btn.dataset.activateFallback) { activateFallbackVersion(btn.dataset.activateFallback).catch(showError); return; } if (btn.dataset.deleteFallback) { deleteFallbackVersion(btn.dataset.deleteFallback).catch(showError); return; } if (btn.id === 'saveCurrent') saveCurrent({ publish: false }).catch(showError); if (btn.dataset.select) { state.selected[btn.dataset.select] = Number(btn.dataset.index); render(); const nextPreview = selectedPreview(btn.dataset.select); if (nextPreview) refreshPreview(nextPreview); } if (btn.dataset.selectLead) { state.selected.lead = Number(btn.dataset.selectLead); renderLeads(); refreshPreview('/support/#support-contact'); } if (btn.dataset.new) { const type=btn.dataset.new; if(type==='category') state.content.categories.push({id:'',name:'新产品品类',slug:'',description:'',coverImage:'',heroVideo:'',sortOrder:0,seo:{title:'',description:''}}); if(type==='product') state.content.products.push({id:'',name:'新产品',slug:'',categorySlug:state.content.categories[0]?.slug||'',coverImage:'',galleryImages:[],videoUrl:'',summary:'',features:[],specifications:[],downloads:[],body:'',isFeatured:false,sortOrder:0,seo:{title:'',description:''}}); state.selected[type] = state.content[type === 'category' ? 'categories' : 'products'].length - 1; render(); markDirty(); refreshPreview(previewForNav(state.active, state.previewPath)); } if (btn.dataset.delete) { if (state.busy) return; state.busy = true; clearError(); syncBusy(); try { const type=btn.dataset.delete; const data=collectItem(type); data._delete=true; const response=await fetch('/site-admin-api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section:type,data,revision:state.data.contentRevision})}); const payload=await response.json(); if(!response.ok) throw new Error(payload.error?.message||'删除失败'); state.data=payload.data; state.content=payload.data.content; state.selected[type]=0; render(); await publishSite(); } finally { state.busy = false; syncBusy(); } } if (btn.dataset.copy) navigator.clipboard?.writeText(btn.dataset.copy); if (btn.dataset.addPair) { const arr=byPath(state.content,btn.dataset.addPair)||[]; arr.push({label:'',href:''}); setPath(state.content,btn.dataset.addPair,arr); render(); } if (btn.dataset.removePair) { const box=btn.closest('[data-pair-list]'); const arr=byPath(state.content,box.dataset.pairList)||[]; arr.splice(Number(btn.dataset.removePair),1); setPath(state.content,box.dataset.pairList,arr); render(); } if (btn.dataset.addObject) { const arr=byPath(state.content,btn.dataset.addObject)||[]; arr.push({title:'',description:'',icon:''}); setPath(state.content,btn.dataset.addObject,arr); render(); } if (btn.dataset.removeObject) { const box=btn.closest('[data-object-list]'); const arr=byPath(state.content,box.dataset.objectList)||[]; arr.splice(Number(btn.dataset.removeObject),1); setPath(state.content,box.dataset.objectList,arr); render(); } if (btn.dataset.addStaticObject) { const page=selectedStaticPage(); const arr=byPath(page,btn.dataset.addStaticObject)||[]; arr.push({}); setNested(page,btn.dataset.addStaticObject,arr); markDirty(); render(); } if (btn.dataset.removeStaticObject) { const page=selectedStaticPage(); const box=btn.closest('[data-static-object-list]'); const arr=byPath(page,box.dataset.staticObjectList)||[]; arr.splice(Number(btn.dataset.removeStaticObject),1); setNested(page,box.dataset.staticObjectList,arr); markDirty(); render(); } });
+    editor.addEventListener('click', async (event) => { const btn = event.target.closest('button'); if (!btn) return; if (btn.id === 'generateSeo') { generateSeo().catch(showError); return; } if (btn.dataset.createFallback !== undefined) { createFallbackVersion().catch(showError); return; } if (btn.dataset.activateFallback) { activateFallbackVersion(btn.dataset.activateFallback).catch(showError); return; } if (btn.dataset.deleteFallback) { deleteFallbackVersion(btn.dataset.deleteFallback).catch(showError); return; } if (btn.id === 'saveCurrent') saveCurrent({ publish: false }).catch(showError); if (btn.dataset.select) { state.selected[btn.dataset.select] = Number(btn.dataset.index); render(); const nextPreview = selectedPreview(btn.dataset.select); if (nextPreview) refreshPreview(nextPreview); } if (btn.dataset.selectLead) { state.selected.lead = Number(btn.dataset.selectLead); renderLeads(); refreshPreview('/support/#support-contact'); } if (btn.dataset.new) { const type=btn.dataset.new; if(type==='category') state.content.categories.push({id:'',name:'新产品品类',slug:'',description:'',coverImage:'',heroVideo:'',sortOrder:0,seo:{title:'',description:''}}); if(type==='product') state.content.products.push({id:'',name:'新产品',slug:'',categorySlug:state.content.categories[0]?.slug||'',coverImage:'',galleryImages:[],videoUrl:'',summary:'',features:[],specifications:[],downloads:[],body:'',isFeatured:false,sortOrder:0,seo:{title:'',description:''}}); state.selected[type] = state.content[type === 'category' ? 'categories' : 'products'].length - 1; render(); markDirty(); refreshPreview(previewForNav(state.active, state.previewPath)); } if (btn.dataset.delete) { if (state.busy) return; state.busy = true; clearError(); syncBusy(); try { const type=btn.dataset.delete; const data=collectItem(type); data._delete=true; const response=await fetch('/site-admin-api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section:type,data,revision:state.data.contentRevision})}); const payload=await response.json(); if(!response.ok) throw new Error(payload.error?.message||'删除失败'); state.data=payload.data; state.content=payload.data.content; state.selected[type]=0; render(); await publishSite(); } finally { state.busy = false; syncBusy(); } } if (btn.dataset.copy) navigator.clipboard?.writeText(btn.dataset.copy); if (btn.dataset.addPair) { const arr=byPath(state.content,btn.dataset.addPair)||[]; arr.push({label:'',href:''}); setPath(state.content,btn.dataset.addPair,arr); render(); } if (btn.dataset.removePair) { const box=btn.closest('[data-pair-list]'); const arr=byPath(state.content,box.dataset.pairList)||[]; arr.splice(Number(btn.dataset.removePair),1); setPath(state.content,box.dataset.pairList,arr); render(); } if (btn.dataset.addObject) { const arr=byPath(state.content,btn.dataset.addObject)||[]; arr.push({title:'',description:'',icon:''}); setPath(state.content,btn.dataset.addObject,arr); render(); } if (btn.dataset.removeObject) { const box=btn.closest('[data-object-list]'); const arr=byPath(state.content,box.dataset.objectList)||[]; arr.splice(Number(btn.dataset.removeObject),1); setPath(state.content,box.dataset.objectList,arr); render(); } if (btn.dataset.addStaticObject) { const page=selectedStaticPage(); const arr=byPath(page,btn.dataset.addStaticObject)||[]; arr.push({}); setNested(page,btn.dataset.addStaticObject,arr); markDirty(); render(); } if (btn.dataset.removeStaticObject) { const page=selectedStaticPage(); const box=btn.closest('[data-static-object-list]'); const arr=byPath(page,box.dataset.staticObjectList)||[]; arr.splice(Number(btn.dataset.removeStaticObject),1); setNested(page,box.dataset.staticObjectList,arr); markDirty(); render(); } });
     editor.addEventListener('input', (event) => { const el = event.target; const pairBox = el.closest('[data-pair-list]'); if (pairBox && el.dataset.pairIndex) { const arr=byPath(state.content,pairBox.dataset.pairList)||[]; arr[Number(el.dataset.pairIndex)] ||= {}; arr[Number(el.dataset.pairIndex)][el.dataset.pairKey]=el.value; markDirty(); } const objBox = el.closest('[data-object-list]'); if (objBox && el.dataset.objectIndex) { const arr=byPath(state.content,objBox.dataset.objectList)||[]; arr[Number(el.dataset.objectIndex)] ||= {}; arr[Number(el.dataset.objectIndex)][el.dataset.objectKey]=el.value; markDirty(); } const staticObjBox = el.closest('[data-static-object-list]'); if (staticObjBox && el.dataset.staticObjectIndex) { const page=selectedStaticPage(); const arr=byPath(page,staticObjBox.dataset.staticObjectList)||[]; arr[Number(el.dataset.staticObjectIndex)] ||= {}; arr[Number(el.dataset.staticObjectIndex)][el.dataset.staticObjectKey]=el.value; setNested(page,staticObjBox.dataset.staticObjectList,arr); markDirty(); } if (el.dataset.staticKey) { const page=state.content.staticPages.find(p=>p.slug===state.selected.staticPage); setNested(page, el.dataset.staticKey, el.value); markDirty(); } });
     editor.addEventListener('click', (event) => {
       const btn = event.target.closest('button');
@@ -2276,7 +2327,7 @@ async function handleMediaRuntimeSettings(req, res, pathname) {
 }
 
 async function handleAdminApi(req, res, pathname) {
-  for (const handler of [leadsModule.handle, handleContent, handleWebsiteTranslation, handleMedia, handlePublish, handleMediaRuntimeSettings]) {
+  for (const handler of [leadsModule.handle, handleContent, handleWebsiteTranslation, handleWebsiteSeo, handleMedia, handlePublish, handleMediaRuntimeSettings]) {
     if (await handler(req, res, pathname)) return true;
   }
   if (pathname.startsWith('/site-admin-api/servicebridge/')) {

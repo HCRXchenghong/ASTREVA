@@ -120,6 +120,21 @@ function parseJsonArray(text) {
   throw new Error('翻译上游没有返回约定的 JSON 数组。');
 }
 
+function parseJsonObject(text) {
+  const cleaned = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  try {
+    const value = JSON.parse(cleaned);
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  } catch {}
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    const value = JSON.parse(cleaned.slice(start, end + 1));
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  }
+  throw new Error('AI 上游没有返回约定的 JSON 对象。');
+}
+
 function shouldTranslate(path, value) {
   if (!/[\u3400-\u9fff]/u.test(value)) return false;
   const key = path.split('.').at(-1) || '';
@@ -266,6 +281,48 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
     return result;
   }
 
+  async function generateJson(prompt, options = {}) {
+    const current = await loadSetting();
+    const config = current.config;
+    const apiKey = String(current.secrets?.apiKey || '');
+    if (!config.enabled) throw Object.assign(new Error('网站 AI 已停用，请先在网站翻译设置中启用。'), { code: 'AI_UNCONFIGURED' });
+    if (!apiKey || !config.model) {
+      throw Object.assign(new Error('网站 AI 未完整配置：请先在网站翻译设置中保存 API Key 和模型。'), { code: 'AI_UNCONFIGURED' });
+    }
+    const system = String(options.system || '你是严格的商业网站内容引擎。');
+    const temperature = Math.max(0, Math.min(Number(options.temperature) || 0.2, 1));
+    const maxTokens = Math.max(1000, Math.min(Number(options.maxTokens) || 16000, 32000));
+    let suffix;
+    let body;
+    if (config.apiType === 'chat_completions') {
+      suffix = 'chat/completions';
+      body = { model: config.model, temperature, max_tokens: maxTokens, messages: [{ role: 'system', content: system }, { role: 'user', content: String(prompt || '') }] };
+    } else if (config.apiType === 'responses') {
+      suffix = 'responses';
+      body = { model: config.model, temperature, max_output_tokens: maxTokens, input: `${system}\n\n${String(prompt || '')}` };
+    } else {
+      suffix = 'messages';
+      body = { model: config.model, temperature, max_tokens: maxTokens, system, messages: [{ role: 'user', content: String(prompt || '') }] };
+    }
+    return runSerializedBatch(async () => {
+      const response = await fetchWithRetry(fetchImpl, apiEndpoint(config.baseUrl, suffix), {
+        method: 'POST',
+        headers: headersFor(config.apiType, apiKey),
+        body: JSON.stringify(body)
+      }, config.timeoutMs, logger);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = payload?.error?.message || payload?.message || '';
+        throw Object.assign(
+          new Error(detail ? `HTTP ${response.status}: ${detail}` : `AI 生成失败（HTTP ${response.status}）`),
+          { code: 'AI_UPSTREAM_ERROR' }
+        );
+      }
+      const text = extractText(payload, config.apiType);
+      return options.type === 'object' ? parseJsonObject(text) : parseJsonArray(text);
+    });
+  }
+
   async function translate(locale, content, sourceRevision) {
     const current = await loadSetting();
     const config = current.config;
@@ -407,6 +464,7 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
     publicSettings,
     saveSettings,
     requestModels,
+    generateJson,
     schedule,
     list: async () => (await platformStore.listContentTranslations()).map((item) => {
       const progress = progressByLocale.get(item.locale);
