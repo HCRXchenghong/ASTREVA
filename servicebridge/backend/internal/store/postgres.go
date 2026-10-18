@@ -26,7 +26,7 @@ const (
 
 	adminColumns        = `id, account, name, password_hash, created_at`
 	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), COALESCE(device_platform, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate, COALESCE(preferences::text, '{}')`
-	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, COALESCE(detected_lang, ''), COALESCE(reply_lang_override, ''), reply_lang_override_at, COALESCE(language_stats::text, '{}'), last_message, last_message_at, unread_for_agent, unread_for_visitor, first_response_at, last_agent_reply_at, COALESCE(sla_state, ''), COALESCE(queue_group, ''), created_at, updated_at`
+	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, COALESCE(detected_lang, ''), COALESCE(reply_lang_override, ''), reply_lang_override_at, COALESCE(language_stats::text, '{}'), last_message, last_message_at, unread_for_agent, unread_for_visitor, first_response_at, last_agent_reply_at, COALESCE(sla_state, ''), COALESCE(queue_group, ''), unattended_notified_at, created_at, updated_at`
 	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id, COALESCE(detected_lang, ''), COALESCE(author_lang, ''), COALESCE(translation_status, ''), COALESCE(knowledge_entry_ids::text, '[]')`
 	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
 	auditColumns        = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
@@ -299,6 +299,8 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_agent_reply_at TIMESTAMPTZ`,
 		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS sla_state TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS queue_group TEXT NOT NULL DEFAULT ''`,
+		// 批次 4 第二波：无人值守兜底话术的发送时间（非空表示本会话已发过，保证只发一次）。
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS unattended_notified_at TIMESTAMPTZ`,
 	}
 	for _, statement := range statements {
 		if _, err := s.pool.Exec(ctx, statement); err != nil {
@@ -2509,6 +2511,7 @@ func (s *PostgresStore) nextWaitingConversationForUpdateTx(ctx context.Context, 
 		SELECT `+conversationColumns+`
 		FROM conversations
 		WHERE assigned_agent_id IS NULL AND status IN ($1, $2, $3)
+			AND id NOT IN (SELECT conversation_id FROM conversation_queue)
 		ORDER BY created_at
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
@@ -2580,6 +2583,15 @@ func (s *PostgresStore) assignConversationTx(ctx context.Context, tx pgx.Tx, con
 
 func (s *PostgresStore) assignHumanConversationTx(ctx context.Context, tx pgx.Tx, conversation *domain.Conversation) error {
 	if conversation.AssignedAgentID != "" {
+		return nil
+	}
+	// 已进入排队队列的会话由应用层按 priority DESC/enqueued_at ASC 出队分配，
+	// 这里跳过以免静默分配打乱排队顺序。
+	var queued bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_queue WHERE conversation_id=$1)`, conversation.ID).Scan(&queued); err != nil {
+		return err
+	}
+	if queued {
 		return nil
 	}
 	// 非营业时间不自动分配人工：AI 继续接待，访客留言由人工在营业时间内跟进。
@@ -3271,6 +3283,7 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 	var replyLangOverrideAt sql.NullTime
 	var firstResponseAt sql.NullTime
 	var lastAgentReplyAt sql.NullTime
+	var unattendedNotifiedAt sql.NullTime
 	var languageStatsJSON string
 	err := row.Scan(
 		&out.ID,
@@ -3296,6 +3309,7 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 		&lastAgentReplyAt,
 		&out.SLAState,
 		&out.QueueGroup,
+		&unattendedNotifiedAt,
 		&out.CreatedAt,
 		&out.UpdatedAt,
 	)
@@ -3313,6 +3327,9 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 	}
 	if lastAgentReplyAt.Valid {
 		out.LastAgentReplyAt = &lastAgentReplyAt.Time
+	}
+	if unattendedNotifiedAt.Valid {
+		out.UnattendedNotifiedAt = &unattendedNotifiedAt.Time
 	}
 	if stats := parseLanguageStatsJSON(languageStatsJSON); len(stats) > 0 {
 		out.LanguageStats = stats

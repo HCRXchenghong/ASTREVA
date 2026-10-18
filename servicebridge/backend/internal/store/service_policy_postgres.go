@@ -298,6 +298,172 @@ func (s *PostgresStore) MatchBlacklist(kind, value string) (domain.BlacklistEntr
 	return entry, true
 }
 
+// TakeoverConversation 客服正式接管会话：分配给该客服、状态置 assigned、清空 sla_state，
+// 并把 first_response_at 重置为空（接管即开启人工首响计时），同时移出排队队列。
+func (s *PostgresStore) TakeoverConversation(agentID, conversationID string) (domain.Conversation, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	agentID = strings.TrimSpace(agentID)
+	var out domain.Conversation
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		conversation, err := s.conversationByIDForUpdateTx(ctx, tx, strings.TrimSpace(conversationID))
+		if err != nil {
+			return mapNoRows(err)
+		}
+		if conversation.Status == domain.ConversationClosed {
+			return ErrForbidden
+		}
+		if conversation.AssignedAgentID != "" && conversation.AssignedAgentID != agentID {
+			// 已被他人负责：不允许抢占，交由管理员转接。
+			return ErrForbidden
+		}
+		agent, err := s.agentByIDForUpdateTx(ctx, tx, agentID)
+		if err != nil || agent.DisabledAt != nil {
+			return ErrForbidden
+		}
+		now := dbNow()
+		if conversation.AssignedAgentID != agentID {
+			if _, err := tx.Exec(ctx, `
+				UPDATE agents SET current_conversations=current_conversations+1, updated_at=$2 WHERE id=$1
+			`, agent.ID, now); err != nil {
+				return err
+			}
+			conversation.AssignedAgentID = agentID
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE conversations
+			SET assigned_agent_id=$2, status=$3, sla_state='', first_response_at=NULL, updated_at=$4
+			WHERE id=$1
+		`, conversation.ID, agentID, domain.ConversationAssigned, now); err != nil {
+			return err
+		}
+		// 接管后不必再排队等待分配。
+		if _, err := tx.Exec(ctx, `DELETE FROM conversation_queue WHERE conversation_id=$1`, conversation.ID); err != nil {
+			return err
+		}
+		conversation.Status = domain.ConversationAssigned
+		conversation.SLAState = ""
+		conversation.FirstResponseAt = nil
+		conversation.UpdatedAt = now
+		conversation.AssignedAgentName = agent.Name
+		conversation.AssignedAgentAvatar = agent.AvatarURL
+		out = conversation
+		return nil
+	})
+	return out, err
+}
+
+// AssignConversationToAgent 静默分配（排队出队时使用）：只写 assigned_agent_id，不改会话状态，
+// 同时递增客服并发并把会话移出排队队列；并发竞态下返回 ErrConflict。
+func (s *PostgresStore) AssignConversationToAgent(conversationID, agentID string) (domain.Conversation, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	agentID = strings.TrimSpace(agentID)
+	var out domain.Conversation
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		conversation, err := s.conversationByIDForUpdateTx(ctx, tx, strings.TrimSpace(conversationID))
+		if err != nil {
+			return mapNoRows(err)
+		}
+		if conversation.Status == domain.ConversationClosed {
+			return ErrConflict
+		}
+		if conversation.AssignedAgentID == agentID {
+			if _, err := tx.Exec(ctx, `DELETE FROM conversation_queue WHERE conversation_id=$1`, conversation.ID); err != nil {
+				return err
+			}
+			out = conversation
+			return nil
+		}
+		if conversation.AssignedAgentID != "" {
+			return ErrConflict
+		}
+		agent, err := s.agentByIDForUpdateTx(ctx, tx, agentID)
+		if err != nil || agent.DisabledAt != nil || agent.Status != domain.AgentOnline {
+			return ErrConflict
+		}
+		now := dbNow()
+		// 原子占位：只有仍有并发额度时才允许分配；失败即回滚整个事务（含计数）。
+		tag, err := tx.Exec(ctx, `
+			UPDATE agents SET current_conversations=current_conversations+1, updated_at=$2
+			WHERE id=$1 AND current_conversations < max_conversations
+		`, agent.ID, now)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrConflict
+		}
+		tag, err = tx.Exec(ctx, `
+			UPDATE conversations SET assigned_agent_id=$2, updated_at=$3
+			WHERE id=$1 AND assigned_agent_id IS NULL
+		`, conversation.ID, agentID, now)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrConflict
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM conversation_queue WHERE conversation_id=$1`, conversation.ID); err != nil {
+			return err
+		}
+		conversation.AssignedAgentID = agentID
+		conversation.AssignedAgentName = agent.Name
+		conversation.AssignedAgentAvatar = agent.AvatarURL
+		conversation.UpdatedAt = now
+		out = conversation
+		return nil
+	})
+	return out, err
+}
+
+// AddUnattendedNotice 落库无人值守兜底系统消息并记录 unattended_notified_at；
+// 已发送过返回 ErrConflict。刻意不调整已读计数：系统提示不应替客服"已读"访客消息。
+func (s *PostgresStore) AddUnattendedNotice(conversationID, content string, translations map[string]string) (domain.Message, domain.Conversation, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return domain.Message{}, domain.Conversation{}, fmt.Errorf("%w: 无人值守兜底话术不能为空", ErrInvalidInput)
+	}
+	var outMessage domain.Message
+	var outConversation domain.Conversation
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		conversation, err := s.conversationByIDForUpdateTx(ctx, tx, strings.TrimSpace(conversationID))
+		if err != nil {
+			return mapNoRows(err)
+		}
+		if conversation.Status == domain.ConversationClosed {
+			return ErrForbidden
+		}
+		if conversation.UnattendedNotifiedAt != nil {
+			return ErrConflict
+		}
+		msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", domain.MessageSystem, content, translations)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE conversations
+			SET unattended_notified_at=$2, last_message=$3, last_message_at=$2, updated_at=$2
+			WHERE id=$1
+		`, conversation.ID, msg.CreatedAt, content); err != nil {
+			return err
+		}
+		notifiedAt := msg.CreatedAt
+		conversation.UnattendedNotifiedAt = &notifiedAt
+		conversation.LastMessage = content
+		conversation.LastMessageAt = &notifiedAt
+		conversation.UpdatedAt = notifiedAt
+		outMessage, outConversation = msg, conversation
+		return nil
+	})
+	return outMessage, outConversation, err
+}
+
 // sealAlertChannelConfig 把渠道配置序列化为 JSON 后用 AES-256-GCM 加密。
 func (s *PostgresStore) sealAlertChannelConfig(config map[string]string) (string, error) {
 	raw, err := json.Marshal(config)
@@ -335,6 +501,7 @@ func (s *PostgresStore) scanAgentAlertChannel(row scanTarget) (domain.AgentAlert
 		out.Config = config
 	}
 	out.ConfigMasked = domain.MaskAlertChannelConfig(out.Kind, out.Config)
+	out.Masked = domain.MaskAlertChannelPrimary(out.Kind, out.Config)
 	return out, nil
 }
 

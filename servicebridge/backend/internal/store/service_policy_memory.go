@@ -177,6 +177,112 @@ func (s *MemoryStore) MatchBlacklist(kind, value string) (domain.BlacklistEntry,
 	return domain.BlacklistEntry{}, false
 }
 
+// TakeoverConversation 客服正式接管会话（批次 4 第二波）。
+// 语义：分配给该客服 + 状态置 assigned + 清空 sla_state + first_response_at 置空；
+// 会话已被他人负责或已结束返回 ErrForbidden，重复接管同一会话幂等（不会重复计并发）。
+func (s *MemoryStore) TakeoverConversation(agentID, conversationID string) (domain.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agentID = strings.TrimSpace(agentID)
+	conversation, ok := s.conversations[strings.TrimSpace(conversationID)]
+	if !ok {
+		return domain.Conversation{}, ErrNotFound
+	}
+	if conversation.Status == domain.ConversationClosed {
+		return domain.Conversation{}, ErrForbidden
+	}
+	if conversation.AssignedAgentID != "" && conversation.AssignedAgentID != agentID {
+		// 已被他人负责：不允许抢占，交由管理员转接。
+		return domain.Conversation{}, ErrForbidden
+	}
+	agent, ok := s.agentsByID[agentID]
+	if !ok || agent.DisabledAt != nil {
+		return domain.Conversation{}, ErrForbidden
+	}
+	now := time.Now().UTC()
+	if conversation.AssignedAgentID != agentID {
+		agent.CurrentConversations++
+		conversation.AssignedAgentID = agentID
+	}
+	agent.Updated = now
+	conversation.Status = domain.ConversationAssigned
+	conversation.SLAState = ""
+	conversation.FirstResponseAt = nil
+	conversation.UpdatedAt = now
+	s.fillAssignedAgentLocked(conversation)
+	// 接管后不必再排队等待分配。
+	delete(s.queue, conversation.ID)
+	return *conversation, nil
+}
+
+// AssignConversationToAgent 静默分配（排队出队时使用）：只写 assigned_agent_id，
+// 不改会话状态（保持无痕转人工语义），同时把会话移出排队队列。
+func (s *MemoryStore) AssignConversationToAgent(conversationID, agentID string) (domain.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	conversation, ok := s.conversations[strings.TrimSpace(conversationID)]
+	if !ok {
+		return domain.Conversation{}, ErrNotFound
+	}
+	agentID = strings.TrimSpace(agentID)
+	if conversation.Status == domain.ConversationClosed {
+		return domain.Conversation{}, ErrConflict
+	}
+	if conversation.AssignedAgentID == agentID {
+		delete(s.queue, conversation.ID)
+		return *conversation, nil
+	}
+	if conversation.AssignedAgentID != "" {
+		return domain.Conversation{}, ErrConflict
+	}
+	agent, ok := s.agentsByID[agentID]
+	if !ok || agent.DisabledAt != nil || agent.Status != domain.AgentOnline {
+		return domain.Conversation{}, ErrConflict
+	}
+	if agent.CurrentConversations >= agent.MaxConversations {
+		return domain.Conversation{}, ErrConflict
+	}
+	now := time.Now().UTC()
+	agent.CurrentConversations++
+	agent.Updated = now
+	conversation.AssignedAgentID = agentID
+	conversation.UpdatedAt = now
+	s.fillAssignedAgentLocked(conversation)
+	delete(s.queue, conversation.ID)
+	return *conversation, nil
+}
+
+// AddUnattendedNotice 落库无人值守兜底话术并记录发送时间；已发送过返回 ErrConflict。
+// 这里刻意不调整会话已读计数：兜底话术是系统提示，不应替客服"已读"访客消息。
+func (s *MemoryStore) AddUnattendedNotice(conversationID, content string, translations map[string]string) (domain.Message, domain.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	conversation, ok := s.conversations[strings.TrimSpace(conversationID)]
+	if !ok {
+		return domain.Message{}, domain.Conversation{}, ErrNotFound
+	}
+	if conversation.Status == domain.ConversationClosed {
+		return domain.Message{}, domain.Conversation{}, ErrForbidden
+	}
+	if conversation.UnattendedNotifiedAt != nil {
+		return domain.Message{}, domain.Conversation{}, ErrConflict
+	}
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return domain.Message{}, domain.Conversation{}, fmt.Errorf("%w: 无人值守兜底话术不能为空", ErrInvalidInput)
+	}
+	msg := s.createMessageLocked(conversation.ID, "", domain.SenderSystem, "system", domain.MessageSystem, content, translations)
+	now := msg.CreatedAt
+	conversation.UnattendedNotifiedAt = &now
+	conversation.LastMessage = content
+	conversation.LastMessageAt = &now
+	conversation.UpdatedAt = now
+	return msg, *conversation, nil
+}
+
 // AgentAlertChannels 返回某客服的提醒渠道（按创建时间升序）；ConfigMasked 为接口展示用掩码。
 func (s *MemoryStore) AgentAlertChannels(agentID string) []domain.AgentAlertChannel {
 	s.mu.RLock()
@@ -316,5 +422,6 @@ func cloneAgentAlertChannel(channel domain.AgentAlertChannel) domain.AgentAlertC
 	out := channel
 	out.Config = copyStringMap(channel.Config)
 	out.ConfigMasked = domain.MaskAlertChannelConfig(channel.Kind, out.Config)
+	out.Masked = domain.MaskAlertChannelPrimary(channel.Kind, out.Config)
 	return out
 }

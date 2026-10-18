@@ -56,6 +56,8 @@ type Config struct {
 	S3ForcePathStyle    bool
 	S3KeyPrefix         string
 	S3PublicBaseURL     string
+	// PublicAdminURL 是可选的对外管理端地址，仅用于客服提醒渠道正文里的"会话链接"提示。
+	PublicAdminURL string
 }
 
 func Load() Config {
@@ -100,6 +102,7 @@ func Load() Config {
 		S3ForcePathStyle:        envBool("S3_FORCE_PATH_STYLE", false),
 		S3KeyPrefix:             env("S3_KEY_PREFIX", "uploads"),
 		S3PublicBaseURL:         env("S3_PUBLIC_BASE_URL", ""),
+		PublicAdminURL:          env("PUBLIC_ADMIN_URL", ""),
 	}
 }
 

@@ -35,6 +35,14 @@ const (
 	BlacklistKindAccount = "account"
 )
 
+// DefaultUnattendedReply 是未配置 unattended_reply 时使用的中文兜底话术；
+// 非中文访客由翻译链路按访客语言翻译，翻译失败时回退该中文原文。
+const DefaultUnattendedReply = "您好，当前暂无客服在线，我们已收到您的留言，会尽快回复您。"
+
+// DefaultBlacklistMessage 是黑名单命中时给访客的统一文案。
+// 文案不得包含被拉黑的值（visitor/ip/account），避免泄露内部风控数据。
+const DefaultBlacklistMessage = "当前无法为您提供服务，请联系官方渠道。"
+
 // 策略数值字段的上限：后台误配置时按上限收敛，避免"配置写了 10 年"之类的值。
 const (
 	ServicePolicyMaxWaitSecondsLimit             = 86400 // 排队最长等待上限：24 小时

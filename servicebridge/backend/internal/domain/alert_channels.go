@@ -35,9 +35,12 @@ type AgentAlertChannel struct {
 	Kind         string            `json:"kind"`
 	Config       map[string]string `json:"-"`
 	ConfigMasked map[string]string `json:"config_masked,omitempty"`
-	Enabled      bool              `json:"enabled"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	// Masked 是该渠道"最主要密钥"的掩码字符串（telegram→token、bark→key、email→address），
+	// 供控制台直接展示，不必再从 ConfigMasked 里挑键。始终为字符串（可能是空串）。
+	Masked    string    `json:"masked"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // AgentAlertChannelPatch 描述渠道的可选更新字段：nil 表示不修改。
@@ -163,6 +166,20 @@ func MaskAlertChannelConfig(kind string, config map[string]string) map[string]st
 		}
 	}
 	return out
+}
+
+// MaskAlertChannelPrimary 返回该渠道最主要密钥的掩码：telegram→token、bark→key、email→address。
+// 配置缺失时返回空串（而不是回退到其它字段），避免把非密钥值当密钥展示。
+func MaskAlertChannelPrimary(kind string, config map[string]string) string {
+	keys := alertChannelSecretKeys(strings.ToLower(strings.TrimSpace(kind)))
+	if len(keys) == 0 {
+		return ""
+	}
+	value := strings.TrimSpace(config[keys[0]])
+	if value == "" {
+		return ""
+	}
+	return maskAlertChannelValue(keys[0], value)
 }
 
 // MaskSecretValue 把密钥替换为「****+末四位」；长度不足 4 时只返回 ****。

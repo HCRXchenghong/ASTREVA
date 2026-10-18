@@ -233,10 +233,13 @@ type Conversation struct {
 	FirstResponseAt  *time.Time `json:"first_response_at,omitempty"`
 	LastAgentReplyAt *time.Time `json:"last_agent_reply_at,omitempty"`
 	// SLAState 是 SLA 状态机字段（本期恒为空串），QueueGroup 是会话所属排队分组。
-	SLAState   string    `json:"sla_state,omitempty"`
-	QueueGroup string    `json:"queue_group,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	SLAState   string `json:"sla_state,omitempty"`
+	QueueGroup string `json:"queue_group,omitempty"`
+	// UnattendedNotifiedAt 记录无人值守兜底话术的发送时间：非空表示该会话已发过，
+	// 保证"每个会话只发一次"在进程重启后依然成立。
+	UnattendedNotifiedAt *time.Time `json:"unattended_notified_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
 type Message struct {
@@ -685,6 +688,32 @@ type BusinessHours struct {
 	Enabled  bool   `json:"enabled"`
 	// OfflineReply 为非营业时间给访客的留言提示；为空时使用内置文案。
 	OfflineReply string `json:"offline_reply"`
+}
+
+// IsOpenAt 判断给定时刻是否处于营业时间：Enabled=false 表示不限制（始终视为营业中）；
+// 时区/时间解析失败时同样视为营业中，避免配置错误把访客挡在兜底话术里。
+func (b BusinessHours) IsOpenAt(now time.Time) bool {
+	if !b.Enabled {
+		return true
+	}
+	location, err := time.LoadLocation(strings.TrimSpace(b.Timezone))
+	if err != nil {
+		location = time.FixedZone("CST", 8*3600)
+	}
+	start, err1 := time.Parse("15:04", strings.TrimSpace(b.Start))
+	end, err2 := time.Parse("15:04", strings.TrimSpace(b.End))
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	local := now.In(location)
+	currentMinutes := local.Hour()*60 + local.Minute()
+	startMinutes := start.Hour()*60 + start.Minute()
+	endMinutes := end.Hour()*60 + end.Minute()
+	if startMinutes <= endMinutes {
+		return currentMinutes >= startMinutes && currentMinutes < endMinutes
+	}
+	// 跨零点营业（如 22:00–06:00）。
+	return currentMinutes >= startMinutes || currentMinutes < endMinutes
 }
 
 // PushPlatform 是客服设备的推送平台，决定使用哪条推送通道。

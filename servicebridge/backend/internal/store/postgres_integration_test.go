@@ -897,3 +897,171 @@ func TestPostgresQueueBlacklistAndChannels(t *testing.T) {
 		t.Fatalf("非法端口应返回 ErrInvalidInput，实际 %v", err)
 	}
 }
+
+// TestPostgresTakeoverAssignAndUnattended 覆盖批次 4 第二波的真实 PostgreSQL 行为：
+// conversations.unattended_notified_at 列、接管/静默分配与排队清理、无人值守话术只发一次。
+func TestPostgresTakeoverAssignAndUnattended(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	st, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	// 关闭营业时间限制：自动分配不受运行时刻影响。
+	if _, err := st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false}); err != nil {
+		t.Fatalf("更新营业时间失败：%v", err)
+	}
+	suffix := time.Now().Format("150405.000000")
+	agentA := createIntegrationAgent(t, st, "to_it_a_"+suffix)
+	agentB := createIntegrationAgent(t, st, "to_it_b_"+suffix)
+
+	// ---------- 接管：清空 SLA / 移出队列 / 拒绝跨客服 ----------
+	visitor, err := st.CreateVisitorConversation("203.0.113.211", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建会话失败：%v", err)
+	}
+	conversationID := visitor.Conversation.ID
+	if _, err := st.pool.Exec(ctx, `
+		UPDATE conversations SET assigned_agent_id=$2, status='assigned', sla_state='idle', first_response_at=now()
+		WHERE id=$1
+	`, conversationID, agentA.ID); err != nil {
+		t.Fatalf("准备会话状态失败：%v", err)
+	}
+	if _, err := st.EnqueueConversation(domain.QueuedConversation{ConversationID: conversationID, Reason: "offline"}); err != nil {
+		t.Fatalf("入队失败：%v", err)
+	}
+	if _, err := st.TakeoverConversation(agentB.ID, conversationID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("他人负责的会话接管应返回 ErrForbidden，实际 %v", err)
+	}
+	taken, err := st.TakeoverConversation(agentA.ID, conversationID)
+	if err != nil {
+		t.Fatalf("接管失败：%v", err)
+	}
+	if taken.Status != domain.ConversationAssigned || taken.SLAState != "" || taken.FirstResponseAt != nil {
+		t.Fatalf("接管后会话状态不符：%+v", taken)
+	}
+	var queued int
+	if err := st.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM conversation_queue WHERE conversation_id=$1`, conversationID).Scan(&queued); err != nil {
+		t.Fatalf("统计排队记录失败：%v", err)
+	}
+	if queued != 0 {
+		t.Fatal("接管后应移出排队队列")
+	}
+	if reloaded, ok := st.Conversation(conversationID); !ok || reloaded.FirstResponseAt != nil || reloaded.SLAState != "" {
+		t.Fatalf("接管结果未落库：%+v", reloaded)
+	}
+
+	// ---------- 静默分配（排队出队）：不改状态、计并发、移出队列 ----------
+	visitor2, err := st.CreateVisitorConversation("203.0.113.212", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建会话失败：%v", err)
+	}
+	secondID := visitor2.Conversation.ID
+	if _, err := st.pool.Exec(ctx, `UPDATE conversations SET assigned_agent_id=NULL, status='waiting' WHERE id=$1`, secondID); err != nil {
+		t.Fatalf("重置会话失败：%v", err)
+	}
+	if _, err := st.pool.Exec(ctx, `UPDATE agents SET current_conversations=0 WHERE id=$1`, agentB.ID); err != nil {
+		t.Fatalf("重置并发失败：%v", err)
+	}
+	if _, err := st.EnqueueConversation(domain.QueuedConversation{ConversationID: secondID, GroupName: "it", Priority: 2}); err != nil {
+		t.Fatalf("入队失败：%v", err)
+	}
+	assigned, err := st.AssignConversationToAgent(secondID, agentB.ID)
+	if err != nil {
+		t.Fatalf("出队分配失败：%v", err)
+	}
+	if assigned.AssignedAgentID != agentB.ID || assigned.Status != domain.ConversationWaiting {
+		t.Fatalf("静默分配结果不符：%+v", assigned)
+	}
+	if err := st.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM conversation_queue WHERE conversation_id=$1`, secondID).Scan(&queued); err != nil {
+		t.Fatalf("统计排队记录失败：%v", err)
+	}
+	if queued != 0 {
+		t.Fatal("分配成功后必须移出队列")
+	}
+	var current int
+	if err := st.pool.QueryRow(ctx, `SELECT current_conversations FROM agents WHERE id=$1`, agentB.ID).Scan(&current); err != nil {
+		t.Fatalf("读取并发失败：%v", err)
+	}
+	if current != 1 {
+		t.Fatalf("分配后并发应为 1，实际 %d", current)
+	}
+	// 重复分配给同一客服幂等；分配给他人冲突。
+	if _, err := st.AssignConversationToAgent(secondID, agentB.ID); err != nil {
+		t.Fatalf("重复分配应幂等：%v", err)
+	}
+	if _, err := st.AssignConversationToAgent(secondID, agentA.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("已分配的会话再分配应返回 ErrConflict，实际 %v", err)
+	}
+	// 并发已满时拒绝分配。
+	visitor3, err := st.CreateVisitorConversation("203.0.113.213", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建会话失败：%v", err)
+	}
+	thirdID := visitor3.Conversation.ID
+	if _, err := st.pool.Exec(ctx, `UPDATE conversations SET assigned_agent_id=NULL WHERE id=$1`, thirdID); err != nil {
+		t.Fatalf("重置会话失败：%v", err)
+	}
+	if _, err := st.pool.Exec(ctx, `UPDATE agents SET current_conversations=max_conversations WHERE id=$1`, agentA.ID); err != nil {
+		t.Fatalf("占满并发失败：%v", err)
+	}
+	if _, err := st.AssignConversationToAgent(thirdID, agentA.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("并发已满应返回 ErrConflict，实际 %v", err)
+	}
+
+	// ---------- 无人值守兜底：新列写入 + 每会话只发一次 ----------
+	notice, noticeConversation, err := st.AddUnattendedNotice(secondID, "集成测试兜底话术", map[string]string{"en": "fallback message"})
+	if err != nil {
+		t.Fatalf("发送无人值守兜底失败：%v", err)
+	}
+	if notice.MessageType != domain.MessageSystem || notice.SenderType != domain.SenderSystem {
+		t.Fatalf("兜底话术应按系统消息落库：%+v", notice)
+	}
+	if noticeConversation.UnattendedNotifiedAt == nil {
+		t.Fatal("返回的会话应带 unattended_notified_at")
+	}
+	reloaded, ok := st.Conversation(secondID)
+	if !ok || reloaded.UnattendedNotifiedAt == nil {
+		t.Fatalf("unattended_notified_at 未落库：%+v", reloaded)
+	}
+	if reloaded.LastMessage != "集成测试兜底话术" {
+		t.Fatalf("兜底话术应更新 last_message：%q", reloaded.LastMessage)
+	}
+	if _, _, err := st.AddUnattendedNotice(secondID, "重复发送", nil); !errors.Is(err, ErrConflict) {
+		t.Fatalf("同一会话重复发送应返回 ErrConflict，实际 %v", err)
+	}
+
+	// 已结束的会话拒绝发送。
+	adminSession := domain.AuthSession{Kind: domain.AccountAdmin, AccountID: "admin_it"}
+	if _, _, err := st.CloseConversation(adminSession, secondID); err != nil {
+		t.Fatalf("关闭会话失败：%v", err)
+	}
+	if _, _, err := st.AddUnattendedNotice(secondID, "关闭后发送", nil); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("已结束会话应返回 ErrForbidden，实际 %v", err)
+	}
+}
+
+// createIntegrationAgent 建一个在线客服（集成测试辅助）。
+func createIntegrationAgent(t *testing.T, st *PostgresStore, account string) domain.Agent {
+	t.Helper()
+	agent, err := st.CreateAgent(domain.Agent{
+		Account: account,
+		Name:    "接管集成客服",
+		Group:   "it",
+		Status:  domain.AgentOnline,
+	}, "IntegrationTest-123")
+	if err != nil {
+		t.Fatalf("创建客服失败：%v", err)
+	}
+	return agent
+}

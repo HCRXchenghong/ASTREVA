@@ -64,6 +64,8 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 	mux := http.NewServeMux()
 	trustedProxies := parseTrustedProxyCIDRs(cfg.TrustedProxyCIDRs)
 	service.SetWebSocketAllowedOrigins(parseAllowedOrigins(cfg.CORSAllowedOrigins))
+	// 提醒渠道正文里的会话链接前缀（可为空；为空时不下发链接）。
+	service.SetAlertLinkHint(cfg.PublicAdminURL)
 	if !strings.EqualFold(strings.TrimSpace(cfg.UploadDriver), "s3") {
 		_ = os.MkdirAll(cfg.UploadDir, 0o755)
 	}
@@ -1082,7 +1084,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			writeError(w, store.ErrForbidden)
 			return
 		}
-		conversation, err := service.Store().MarkConversationRead(session, r.PathValue("id"))
+		conversation, err := service.MarkConversationRead(session, r.PathValue("id"))
 		if err != nil {
 			writeError(w, err)
 			return
@@ -2636,6 +2638,25 @@ func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, target any) bool
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	status, code := errorStatusAndCode(err)
+	message := err.Error()
+	// 限额错误的内部文本只有维度/计数；面向访客的提示必须使用业务文案。
+	if limitMessage := store.RateLimitMessage(err); limitMessage != "" {
+		message = limitMessage
+	}
+	// 黑名单命中的错误文本只有 kind，不含被拉黑的值；统一使用配置文案。
+	if errors.Is(err, store.ErrBlacklisted) {
+		message = domain.DefaultBlacklistMessage
+		if blacklistMessage := store.BlacklistMessage(err); blacklistMessage != "" {
+			message = blacklistMessage
+		}
+	}
+	writeJSON(w, status, map[string]any{"error": code, "message": message})
+}
+
+// errorStatusAndCode 把存储层错误映射为 HTTP 状态码与错误码，供 writeError 与需要
+// 自定义 message 的接口（如接管冲突）共用。
+func errorStatusAndCode(err error) (int, string) {
 	status := http.StatusInternalServerError
 	code := "internal_error"
 	switch {
@@ -2660,13 +2681,12 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrRateLimited):
 		status = http.StatusTooManyRequests
 		code = "rate_limited"
+	case errors.Is(err, store.ErrBlacklisted):
+		// 黑名单命中按 403 拒绝（不复用 429：这是策略拒绝而非频率限制）。
+		status = http.StatusForbidden
+		code = "blacklisted"
 	}
-	message := err.Error()
-	// 限额错误的内部文本只有维度/计数；面向访客的提示必须使用业务文案。
-	if limitMessage := store.RateLimitMessage(err); limitMessage != "" {
-		message = limitMessage
-	}
-	writeJSON(w, status, map[string]any{"error": code, "message": message})
+	return status, code
 }
 
 func canAccessConversation(service *app.Service, r *http.Request, conversationID string) bool {
@@ -2682,7 +2702,11 @@ func canAccessConversation(service *app.Service, r *http.Request, conversationID
 	}
 	if session.Kind == domain.AccountAgent {
 		conversation, ok := service.Store().Conversation(conversationID)
-		return ok && conversation.AssignedAgentID == session.AccountID
+		if !ok {
+			return false
+		}
+		// 只读围观允许查看消息（但不标记已读、不计入并发）。
+		return conversation.AssignedAgentID == session.AccountID || service.IsWatching(session.AccountID, conversationID)
 	}
 	return false
 }

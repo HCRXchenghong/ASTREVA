@@ -238,11 +238,20 @@ func mapStoreError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case errors.Is(err, store.ErrRateLimited):
 		status = http.StatusTooManyRequests
+	case errors.Is(err, store.ErrBlacklisted):
+		// 黑名单命中：策略拒绝，返回 403 + 统一文案（绝不泄露被拉黑的值）。
+		status = http.StatusForbidden
 	}
 	message := err.Error()
 	// 限额错误对外只下发已按访客语言翻译的提示，不暴露内部维度与计数。
 	if limitMessage := store.RateLimitMessage(err); limitMessage != "" {
 		message = limitMessage
+	}
+	if errors.Is(err, store.ErrBlacklisted) {
+		message = domain.DefaultBlacklistMessage
+		if blacklistMessage := store.BlacklistMessage(err); blacklistMessage != "" {
+			message = blacklistMessage
+		}
 	}
 	writeOpenError(w, status, message)
 }

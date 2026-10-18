@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -102,7 +103,18 @@ func registerServicePolicyRoutes(mux *http.ServeMux, service *app.Service, proxi
 			if waitSeconds < 0 {
 				waitSeconds = 0
 			}
-			views = append(views, queuedConversationView{QueuedConversation: entry, WaitSeconds: waitSeconds})
+			// visitor_name：访客备注优先，取不到时回退「访客」（控制台队列页展示用）。
+			visitorName := "访客"
+			if conversation, ok := service.Store().Conversation(entry.ConversationID); ok {
+				if remark := strings.TrimSpace(conversation.VisitorRemark); remark != "" {
+					visitorName = remark
+				}
+			}
+			views = append(views, queuedConversationView{
+				QueuedConversation: entry,
+				WaitSeconds:        waitSeconds,
+				VisitorName:        visitorName,
+			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"queue": views, "total": len(views)})
 	})
@@ -302,6 +314,57 @@ func registerServicePolicyRoutes(mux *http.ServeMux, service *app.Service, proxi
 		}
 		handleAlertChannelTest(service, w, r, proxies, session.AccountID)
 	})
+
+	// ---------- 客服：接管与只读围观（批次 4 第二波）----------
+	// 接管：正式把会话分配给当前客服（停止 AI 自动回复、清空 SLA 状态并进入首响计时）。
+	mux.HandleFunc("POST /api/agent/conversations/{id}/takeover", func(w http.ResponseWriter, r *http.Request) {
+		session, ok := requireAgent(service, w, r)
+		if !ok {
+			return
+		}
+		conversationID := r.PathValue("id")
+		conversation, err := service.TakeoverConversation(session.AccountID, conversationID)
+		if err != nil {
+			// 会话已被他人负责（或已结束）：返回可读 message，而不是裸 forbidden。
+			if errors.Is(err, store.ErrForbidden) {
+				writeAPIError(w, err, "该会话已由其他客服负责或已结束，无法接管")
+				return
+			}
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, proxies, "conversation.takeover", "conversation", conversation.ID, "客服接管会话")
+		writeJSON(w, http.StatusOK, map[string]any{"conversation": conversation})
+	})
+
+	// 只读围观：不分配、不计入并发、不标记已读；进入/退出都写审计。
+	mux.HandleFunc("POST /api/agent/conversations/{id}/watch", func(w http.ResponseWriter, r *http.Request) {
+		session, ok := requireAgent(service, w, r)
+		if !ok {
+			return
+		}
+		conversation, err := service.StartWatching(session.AccountID, r.PathValue("id"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, proxies, "conversation.watch", "conversation", conversation.ID, "进入只读围观")
+		writeJSON(w, http.StatusOK, map[string]any{"conversation": conversation, "watching": true})
+	})
+
+	mux.HandleFunc("DELETE /api/agent/conversations/{id}/watch", func(w http.ResponseWriter, r *http.Request) {
+		session, ok := requireAgent(service, w, r)
+		if !ok {
+			return
+		}
+		conversationID := r.PathValue("id")
+		if err := service.StopWatching(session.AccountID, conversationID); err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, proxies, "conversation.watch_stop", "conversation", conversationID, "退出只读围观")
+		writeJSON(w, http.StatusOK, map[string]any{"watching": false})
+	})
 }
 
 // ---------- 请求/响应结构 ----------
@@ -321,10 +384,12 @@ type servicePolicyPatchRequest struct {
 	TakeoverPopupEnabled    *bool   `json:"takeover_popup_enabled"`
 }
 
-// queuedConversationView 在排队记录上补充"已等待秒数"，供后台展示。
+// queuedConversationView 在排队记录上补充"已等待秒数"与访客名，供后台展示。
+// 字段名同时保留 wait_seconds（既有契约）与 visitor_name（控制台队列页展示）。
 type queuedConversationView struct {
 	domain.QueuedConversation
-	WaitSeconds int `json:"wait_seconds"`
+	WaitSeconds int    `json:"wait_seconds"`
+	VisitorName string `json:"visitor_name"`
 }
 
 // blacklistCreateRequest 是新增黑名单请求；expires_at 省略表示永不过期。
@@ -383,6 +448,13 @@ func requireAgent(service *app.Service, w http.ResponseWriter, r *http.Request) 
 		return domain.AuthSession{}, false
 	}
 	return session, true
+}
+
+// writeAPIError 返回带可读 message 的错误响应：状态码与错误码仍按存储层错误映射，
+// 用于"业务上要拒绝、但需要告诉用户为什么"的场景（如接管他人负责的会话）。
+func writeAPIError(w http.ResponseWriter, err error, message string) {
+	status, code := errorStatusAndCode(err)
+	writeJSON(w, status, map[string]any{"error": code, "message": message})
 }
 
 // alertChannelsResponse 统一渠道列表响应结构（ConfigMasked 已在存储层填充）。

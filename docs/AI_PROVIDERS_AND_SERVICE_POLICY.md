@@ -364,3 +364,15 @@ App 的「AI 建议」按钮同样按两者共同启用/禁用；控制台「客
 5. 缺范围被拒写审计（断言审计条数增加，且不包含请求体敏感内容）。
 6. 控制台：应用详情能看到/修改 scopes，预置一键套用，保存后立即生效（无需重启）。
 7. 真实 PG：`api_apps.scopes` JSONB 往返与默认值（扩展 `TestPostgres*`）。
+
+### A5 已实现后的语义修订（接线 2a）
+
+1. **无人值守兜底只在"无人接待"时发送**：若 AI 正在接待（`AISettings.Enabled` 且模式非 `manual_only`），非营业时间也**不再额外发离线话术**（否则访客会同时收到 AI 回答和"当前离线"提示，自相矛盾）。即：无人值守兜底 = 人类客服不在线 **且** AI 不可用/未启用时的最后兜底；每会话只发一次（`conversations.unattended_notified_at` 落库，重启仍成立）。
+2. **排队**：分配失败（无人在线/并发满）入队并给访客推送 `conversation.queue_position {position, waiting_seconds, group?}`；客服上线、会话结束、转接时统一由应用层 `drainQueue()` 按 `priority DESC, enqueued_at ASC` 出队；store 的静默分配会跳过"已在队列中"的会话以保证顺序；离线释放且**尚未首响**的会话重新入队。`queue_enabled=false` 时不入队，改走无人值守兜底。
+3. **接管/围观**：接管 = 分配给自己 + `assigned` + 清空 SLA 状态 + 移出队列 + 广播；围观 = 进程内登记（重启失效），不分配、不计并发、**不标记已读**（已读入口统一走 `service.MarkConversationRead`，围观期间直接返回快照），围观者可只读拉取消息。
+4. **接管提示**：`conversation.takeover_request` 只推给"在线 且 `takeover_popup_enabled != false`"的客服，且受全局策略 `takeover_popup_enabled` 约束；App 侧自己做去重与"稍后"。
+5. **黑名单**：建会话前查 ip+account，发消息前查 visitor+ip+account；命中返回 403（错误码 `blacklisted`，文案不含被拉黑值），写审计 `blacklist.blocked`；为省上游调用，拦截文案不做翻译。
+6. **提醒渠道派发**：新会话分配 / 转接 / 访客新消息 → 对负责客服 goroutine+recover 调 `notify.SendAlertChannels`（标题 + 访客名 + 消息摘要前 80 字 + conversation_id + `PUBLIC_ADMIN_URL` 链接）；渠道为空不开 goroutine。
+7. **队列接口字段**：`GET /api/admin/service-queue` 每项含 `conversation_id, group_name, priority, enqueued_at, wait_seconds, reason, visitor_name`。
+8. **渠道掩码字段**：渠道列表/详情同时返回字符串 `masked`（主密钥掩码）与 `config_masked`（各字段掩码），并带信封 `max_channels`。
+9. `first_response_at` 的写入属 SLA 计时器接线（下一波 2b）；在那之前"未首响"等同于"无人工首响记录"。

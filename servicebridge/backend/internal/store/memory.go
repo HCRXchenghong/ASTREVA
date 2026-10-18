@@ -24,6 +24,8 @@ var (
 	ErrInvalidInput       = errors.New("invalid input")
 	// ErrRateLimited 表示请求触发了 AI 频率/次数限额，调用方应把错误转成访客可见提示。
 	ErrRateLimited = errors.New("rate limited")
+	// ErrBlacklisted 表示访客命中黑名单（visitor|ip|account），调用方应拒绝并返回统一文案。
+	ErrBlacklisted = errors.New("blacklist blocked")
 )
 
 var _ Store = (*MemoryStore)(nil)
@@ -362,6 +364,11 @@ func (s *MemoryStore) SetAgentStatus(agentID string, status domain.AgentStatus) 
 				switch conversation.Status {
 				case domain.ConversationWaiting, domain.ConversationHumanRequested, domain.ConversationAIServing:
 					if conversation.AssignedAgentID != "" {
+						continue
+					}
+					// 排队中的会话由应用层按 priority DESC/enqueued_at ASC 出队分配，
+					// 这里跳过以免静默分配打乱排队顺序。
+					if _, queued := s.queue[conversation.ID]; queued {
 						continue
 					}
 					// 静默分配：不改变会话状态，客服实际回复后才对外显示人工服务。
@@ -1990,6 +1997,11 @@ func (s *MemoryStore) assignConversationLocked(conversation *domain.Conversation
 
 func (s *MemoryStore) assignHumanConversationLocked(conversation *domain.Conversation) {
 	if conversation.AssignedAgentID != "" {
+		return
+	}
+	// 已进入排队队列的会话必须由队列出队逻辑统一分配（应用层按 priority/enqueued_at 顺序出队），
+	// 这里静默抢走会打乱排队顺序，因此直接跳过。
+	if _, queued := s.queue[conversation.ID]; queued {
 		return
 	}
 	// 非营业时间不自动分配人工：AI 继续接待，访客留言由人工在营业时间内跟进。

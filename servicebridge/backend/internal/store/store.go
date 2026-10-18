@@ -130,6 +130,18 @@ type Store interface {
 	// MatchBlacklist 判断 (kind,value) 是否命中有效黑名单；过期项视为未命中并顺手清理。
 	MatchBlacklist(kind, value string) (domain.BlacklistEntry, bool)
 
+	// TakeoverConversation 客服正式接管会话：分配给该客服、状态置 assigned、清空 SLA 状态，
+	// 并把 first_response_at 重置为空（接管即开启人工首响计时），同时移出排队队列。
+	// 会话已被他人负责或已结束时返回 ErrForbidden；重复接管同一会话是幂等的。
+	TakeoverConversation(agentID, conversationID string) (domain.Conversation, error)
+	// AssignConversationToAgent 把一个未分配的会话静默分配给指定客服（排队出队分配使用）：
+	// 递增客服并发并把会话移出排队队列，不改变会话状态。
+	// 会话已被他人负责、已结束、客服非在线或已达并发上限时返回 ErrConflict。
+	AssignConversationToAgent(conversationID, agentID string) (domain.Conversation, error)
+	// AddUnattendedNotice 落库一条无人值守兜底系统消息并记录 unattended_notified_at。
+	// 同一会话已发送过时返回 ErrConflict，保证"每个会话只发一次"在重启后依然成立。
+	AddUnattendedNotice(conversationID, content string, translations map[string]string) (domain.Message, domain.Conversation, error)
+
 	// AgentAlertChannels 返回某客服的全部提醒渠道（Config 为明文，仅服务端内部使用；
 	// ConfigMasked 为掩码，供接口返回）。
 	AgentAlertChannels(agentID string) []domain.AgentAlertChannel

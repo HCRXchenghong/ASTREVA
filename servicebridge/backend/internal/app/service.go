@@ -33,6 +33,11 @@ type Service struct {
 	limitTracker *limitTracker
 	// limitTexts 缓存超限提示的译文，避免刷屏式请求反复调用翻译上游。
 	limitTexts *limitTextTranslator
+
+	// watching 是"只读围观"的进程内登记表（见 service_policy_flow.go），重启后失效。
+	watching *watchRegistry
+	// alertLinkHint 是提醒渠道正文里的会话链接前缀（PUBLIC_ADMIN_URL），为空则不下发链接。
+	alertLinkHint string
 }
 
 func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Service {
@@ -45,6 +50,7 @@ func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Serv
 		websocketAllowedOrigins: map[string]bool{"*": true},
 		limitTracker:            newLimitTracker(),
 		limitTexts:              newLimitTextTranslator(),
+		watching:                newWatchRegistry(),
 	}
 }
 
@@ -211,6 +217,10 @@ func (s *Service) SubmitRating(conversationID string, score int, tags []string, 
 }
 
 func (s *Service) CreateVisitorConversation(ip, source, lang, ipSource, remark string) (domain.VisitorSession, error) {
+	// 黑名单：建会话前按 ip 与"账号"（开放 API 的外部用户 ID 落在 remark 上）拦截。
+	if err := s.checkBlacklist("", ip, remark); err != nil {
+		return domain.VisitorSession{}, err
+	}
 	session, err := s.store.CreateVisitorConversation(ip, source, lang, ipSource, remark)
 	if err != nil {
 		return domain.VisitorSession{}, err
@@ -224,6 +234,14 @@ func (s *Service) CreateVisitorConversation(ip, source, lang, ipSource, remark s
 		s.hub.SendToAgent(session.Conversation.AssignedAgentID, realtime.Event{Event: "conversation.assigned", Data: session.Conversation})
 		// 新会话被静默分配给在线客服时也要推送，否则 App 在后台收不到任何提醒。
 		s.notifyAgent(session.Conversation)
+		s.dispatchAgentAlert(session.Conversation.AssignedAgentID, "新会话分配",
+			"访客「"+visitorDisplayName(session.Conversation)+"」发起了新会话。", session.Conversation.ID)
+	}
+	// 新会话立即向在线客服弹「接管」提示（未点接管前 AI 继续接待）。
+	s.notifyTakeoverRequest(session.Conversation, session.Conversation.CreatedAt)
+	if session.Conversation.AssignedAgentID == "" {
+		// 分配失败（无在线客服/并发已满）：按策略入队，并在需要时补发无人值守兜底。
+		s.handleUnassignedConversation(session.Conversation)
 	}
 	return session, nil
 }
@@ -259,9 +277,18 @@ func (s *Service) SetAgentStatus(agentID string, status domain.AgentStatus) (dom
 	for _, conversation := range assigned {
 		if conversation.AssignedAgentID != "" {
 			s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "conversation.assigned", Data: conversation})
+			s.dispatchAgentAlert(conversation.AssignedAgentID, "新会话分配",
+				"访客「"+visitorDisplayName(conversation)+"」已分配给您。", conversation.ID)
+		} else if status == domain.AgentOffline && conversation.FirstResponseAt == nil {
+			// 离线释放：会话尚未被人工真正回复过，重新入队而不是丢弃。
+			s.handleUnassignedConversation(conversation)
 		}
 		s.hub.SendToVisitor(conversation.ID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
 		s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: conversation})
+	}
+	if status == domain.AgentOnline {
+		// 客服上线后按 优先级/入队时间 出队分配排队中的会话。
+		s.drainQueue()
 	}
 	return agent, nil
 }
@@ -332,6 +359,10 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 	if !ok {
 		return store.MessageResult{}, store.ErrNotFound
 	}
+	// 黑名单：发消息前按 visitor | ip | account 三类拦截（命中写审计，不下发被拉黑的值）。
+	if err := s.checkBlacklist(conversation.VisitorID, conversation.VisitorIP, conversationBlacklistAccount(conversation)); err != nil {
+		return store.MessageResult{}, err
+	}
 	// 频率限额：必须在任何落库、翻译与 AI/关键词触发之前拦截。
 	// 超限只返回带访客文案的业务错误，由 HTTP/WS 层转成访客可见提示。
 	if err := s.checkVisitorMessageLimit(conversation); err != nil {
@@ -395,6 +426,16 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: result.Conversation})
 	if result.Conversation.Status == domain.ConversationHumanRequested || result.Conversation.AssignedAgentID != "" {
 		s.notifyAgent(result.Conversation)
+	}
+	// 新访客消息：异步推送到负责客服自配的提醒渠道（标题/摘要，不含密钥）。
+	if result.Conversation.AssignedAgentID != "" {
+		s.dispatchAgentAlert(result.Conversation.AssignedAgentID, "新访客消息",
+			"访客「"+visitorDisplayName(result.Conversation)+"」："+alertPreview(result.Input.Content),
+			result.Conversation.ID)
+	}
+	// 仍未分配客服：按策略入队并（必要时）补发无人值守兜底话术。
+	if result.Conversation.AssignedAgentID == "" && result.Conversation.Status != domain.ConversationClosed {
+		s.handleUnassignedConversation(result.Conversation)
 	}
 	if result.NeedAI {
 		// 访客端显示"AI 正在回复"输入指示，AI 消息送达或生成结束时关闭。
@@ -670,6 +711,12 @@ func (s *Service) CloseConversation(actor domain.AuthSession, conversationID str
 		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
 	}
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: conversation})
+	// 结束的会话不应继续占着排队位置；清理失败（不在队列中）无需关心。
+	if err := s.store.DequeueConversation(conversationID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.logger.Warn("清理排队记录失败", "conversation_id", conversationID, "error", err)
+	}
+	// 会话结束释放了客服并发：尝试把排队中的会话分配给空闲客服。
+	s.drainQueue()
 	return conversation, nil
 }
 
@@ -695,10 +742,14 @@ func (s *Service) TransferConversation(actor domain.AuthSession, conversationID,
 	if conversation.AssignedAgentID != "" {
 		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "conversation.assigned", Data: conversation})
 		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "message.receive", Data: AgentFacingMessage(msg)})
-		// 转接后通知新接手的客服（含后台推送）。
+		// 转接后通知新接手的客服（含后台推送与提醒渠道）。
 		s.notifyAgent(conversation)
+		s.dispatchAgentAlert(conversation.AssignedAgentID, "会话转接",
+			"访客「"+visitorDisplayName(conversation)+"」的会话已转接到您名下。", conversation.ID)
 	}
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: conversation})
+	// 原负责客服的并发被释放：尝试把排队中的会话分配出去。
+	s.drainQueue()
 	return conversation, nil
 }
 
@@ -939,6 +990,14 @@ func errorEvent(err error) realtime.Event {
 		status = "rate_limited"
 		if limitMessage := store.RateLimitMessage(err); limitMessage != "" {
 			message = limitMessage
+		}
+	}
+	if errors.Is(err, store.ErrBlacklisted) {
+		// 黑名单命中：同样只下发统一文案，绝不包含被拉黑的 kind/value。
+		status = "blacklisted"
+		message = domain.DefaultBlacklistMessage
+		if blacklistMessage := store.BlacklistMessage(err); blacklistMessage != "" {
+			message = blacklistMessage
 		}
 	}
 	return realtime.Event{Event: "error", Data: map[string]string{"code": status, "message": message}}
