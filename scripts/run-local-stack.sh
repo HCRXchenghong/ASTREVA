@@ -34,6 +34,9 @@ export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$SERVICEBRIDGE_CORS_ALLOWED
 export FRAME_ANCESTORS="${FRAME_ANCESTORS:-http://127.0.0.1:4321}"
 export STORE_DRIVER="${STORE_DRIVER:-memory}"
 export HTTP_ADDR="${HTTP_ADDR:-0.0.0.0:8080}"
+# 受限沙箱（以及部分 CI）禁止写默认的 ~/Library/Caches/go-build；把 Go 构建缓存放到可写目录。
+export GOCACHE="${GOCACHE:-${TMPDIR:-/tmp}/astreva-go-cache}"
+mkdir -p "$GOCACHE"
 
 pids=()
 

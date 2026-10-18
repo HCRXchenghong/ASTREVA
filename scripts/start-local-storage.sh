@@ -43,12 +43,26 @@ fi
 if ! docker inspect astreva-cms-minio >/dev/null 2>&1; then
   docker run -d --name astreva-cms-minio --restart unless-stopped \
     -p 127.0.0.1:10006:9000 \
+    -p 127.0.0.1:10007:9001 \
     -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" \
     -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" \
     -v astreva-cms-minio-data:/data \
     minio/minio:RELEASE.2024-01-11T07-46-16Z server /data --console-address :9001 >/dev/null
 else
-  docker start astreva-cms-minio >/dev/null
+  # 旧容器可能没有映射控制台端口；检测到就重建（数据在命名卷里不会丢）。
+  if ! docker port astreva-cms-minio 9001 >/dev/null 2>&1; then
+    echo "重建 MinIO 容器以暴露 Web 控制台（127.0.0.1:10007）..."
+    docker rm -f astreva-cms-minio >/dev/null
+    docker run -d --name astreva-cms-minio --restart unless-stopped \
+      -p 127.0.0.1:10006:9000 \
+      -p 127.0.0.1:10007:9001 \
+      -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" \
+      -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" \
+      -v astreva-cms-minio-data:/data \
+      minio/minio:RELEASE.2024-01-11T07-46-16Z server /data --console-address :9001 >/dev/null
+  else
+    docker start astreva-cms-minio >/dev/null
+  fi
 fi
 
 for _ in $(seq 1 30); do
