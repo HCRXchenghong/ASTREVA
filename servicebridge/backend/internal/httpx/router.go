@@ -26,7 +26,6 @@ import (
 	"customer-service/backend/internal/app"
 	"customer-service/backend/internal/config"
 	"customer-service/backend/internal/domain"
-	"customer-service/backend/internal/knowledge"
 	"customer-service/backend/internal/notify"
 	"customer-service/backend/internal/openapi"
 	"customer-service/backend/internal/store"
@@ -1831,8 +1830,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		if limit > 20 {
 			limit = 20
 		}
-		entries := service.Store().KnowledgeEntriesForBases(req.BaseIDs)
-		hits := knowledge.RankKnowledgeEntries(query, entries, limit)
+		hits := service.PreviewKnowledgeSearch(query, req.BaseIDs, limit)
 		if hits == nil {
 			hits = []domain.KnowledgeHit{}
 		}
@@ -2234,6 +2232,9 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 
 	// ===== P5：访客画像（配置 / 列表 / 详情 / 重算 / 客服会话侧画像卡）=====
 	registerVisitorProfileRoutes(mux, service, trustedProxies)
+
+	// ===== 服务间接口（X-Internal-Token 鉴权；未配置令牌时 503）=====
+	registerInternalRoutes(mux, service, cfg)
 
 	handler := logRequests(logger, mux)
 	handler = rateLimit(cfg, trustedProxies, handler)

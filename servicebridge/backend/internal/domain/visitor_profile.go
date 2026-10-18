@@ -99,9 +99,12 @@ type VisitorProfile struct {
 	Evidence              []VisitorProfileEvidence `json:"evidence"`
 	Visits                int                      `json:"visits"`
 	LastPath              string                   `json:"last_path"`
-	AIUpdatedAt           *time.Time               `json:"ai_updated_at,omitempty"`
-	CreatedAt             time.Time                `json:"created_at"`
-	UpdatedAt             time.Time                `json:"updated_at"`
+	// LastSeenAt 是最近一次上报的访客活动时间（跨服务上报的 occurred_at）。
+	// 为空时接口视图回落为 updated_at，保证历史数据行为不变。
+	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
+	AIUpdatedAt *time.Time `json:"ai_updated_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // VisitorProfileConversation 是画像详情里的会话摘要。

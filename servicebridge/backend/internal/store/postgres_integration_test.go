@@ -1392,6 +1392,20 @@ func TestPostgresVisitorProfiles(t *testing.T) {
 			t.Fatalf("ensureCoreTables 未建表：%s", table)
 		}
 	}
+	// 跨服务画像上报新增的 last_seen_at 列必须由 ensureCoreTables 的 ALTER 补齐
+	// （历史库不重建表也能升级）。
+	var hasLastSeenAt bool
+	if err := st.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name='visitor_profiles' AND column_name='last_seen_at'
+		)
+	`).Scan(&hasLastSeenAt); err != nil {
+		t.Fatalf("查询 last_seen_at 列失败：%v", err)
+	}
+	if !hasLastSeenAt {
+		t.Fatal("ensureCoreTables 未补齐 visitor_profiles.last_seen_at 列")
+	}
 
 	// 2) 配置单例：默认值 -> 写入（密钥加密）-> 读回掩码。
 	defaults := st.VisitorProfileSettings()
@@ -1450,6 +1464,7 @@ func TestPostgresVisitorProfiles(t *testing.T) {
 	uniqueSummary := fmt.Sprintf("咨询太阳能项目报价-%d", nano%1000000)
 	visitorID := "vis_pg_it_" + time.Now().Format("150405.000000")
 	evidenceTime := time.Now().UTC().Truncate(time.Second)
+	lastSeenAt := evidenceTime.Add(-30 * time.Minute)
 	written, err := st.UpdateVisitorProfile(visitorID, func(profile *domain.VisitorProfile) error {
 		profile.Country = "沙特阿拉伯"
 		profile.CountryCode = "SA"
@@ -1470,6 +1485,7 @@ func TestPostgresVisitorProfiles(t *testing.T) {
 		profile.Evidence = []domain.VisitorProfileEvidence{{MessageID: "msg_pg_1", Text: "كم السعر؟", CreatedAt: evidenceTime}}
 		profile.Visits = 4
 		profile.LastPath = "/ar/pricing"
+		profile.LastSeenAt = &lastSeenAt
 		return nil
 	})
 	if err != nil {
@@ -1501,6 +1517,12 @@ func TestPostgresVisitorProfiles(t *testing.T) {
 	if !read.CodeSwitching || read.Dialect != "ar-Gulf" || read.Visits != 4 {
 		t.Fatalf("标量字段往返失败：%+v", read)
 	}
+	if read.LastPath != "/ar/pricing" {
+		t.Fatalf("last_path 往返失败：%q", read.LastPath)
+	}
+	if read.LastSeenAt == nil || !read.LastSeenAt.Equal(lastSeenAt) {
+		t.Fatalf("last_seen_at 往返失败：got=%v want=%v", read.LastSeenAt, lastSeenAt)
+	}
 	// 原始 JSONB 必须是数组/对象而不是 null。
 	var basisText, languagesText string
 	if err := st.pool.QueryRow(ctx, `SELECT nationality_basis::text, languages::text FROM visitor_profiles WHERE visitor_id=$1`, visitorID).
@@ -1523,6 +1545,11 @@ func TestPostgresVisitorProfiles(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatalf("写入第二个画像失败：%v", err)
+	}
+	// 未上报过活动的画像 last_seen_at 必须保持 NULL（接口层回落 updated_at）。
+	secondRead, ok := st.VisitorProfile(secondID)
+	if !ok || secondRead.LastSeenAt != nil {
+		t.Fatalf("未上报时 last_seen_at 应为 NULL：%+v", secondRead.LastSeenAt)
 	}
 	byCountry, total := st.VisitorProfiles(domain.VisitorProfileQuery{Country: "SA"})
 	if total < 1 || len(byCountry) < 1 || byCountry[0].CountryCode != "SA" {

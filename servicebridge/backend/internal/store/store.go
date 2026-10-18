@@ -104,7 +104,8 @@ type Store interface {
 	DeleteKnowledgeEntry(id string) (domain.KnowledgeEntry, error)
 	// KnowledgeEntriesForBases 返回启用中的条目：仅限启用中的知识库；
 	// baseIDs 为空表示全部启用库。Postgres 用 WHERE enabled AND base_id = ANY($1) 取候选，
-	// 避免全表扫描；后续可再加倒排表（本期不做）。
+	// 避免全表扫描；应用层倒排索引按库懒加载调用本方法（见 app.knowledgeIndex），
+	// 因此它只在建索引/回退时才被调用，不在每次检索时调用。
 	KnowledgeEntriesForBases(baseIDs []string) []domain.KnowledgeEntry
 	KnowledgeSettings() domain.KnowledgeSettings
 	UpdateKnowledgeSettings(next domain.KnowledgeSettings) (domain.KnowledgeSettings, error)

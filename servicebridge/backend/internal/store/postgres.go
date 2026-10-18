@@ -301,7 +301,8 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 			dialect TEXT NOT NULL DEFAULT '', code_switching BOOLEAN NOT NULL DEFAULT false,
 			summary TEXT NOT NULL DEFAULT '', tags JSONB NOT NULL DEFAULT '[]'::jsonb,
 			interests JSONB NOT NULL DEFAULT '[]'::jsonb, evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
-			visits INTEGER NOT NULL DEFAULT 0, last_path TEXT NOT NULL DEFAULT '', ai_updated_at TIMESTAMPTZ,
+			visits INTEGER NOT NULL DEFAULT 0, last_path TEXT NOT NULL DEFAULT '',
+			last_seen_at TIMESTAMPTZ, ai_updated_at TIMESTAMPTZ,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			CONSTRAINT visitor_profiles_visits_check CHECK (visits >= 0),
 			CONSTRAINT visitor_profiles_confidence_check CHECK (nationality_confidence >= 0 AND nationality_confidence <= 1)
@@ -323,6 +324,8 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 			CONSTRAINT visitor_profile_settings_every_check CHECK (ai_summary_every_messages BETWEEN 1 AND 200)
 		)`,
 		`ALTER TABLE visitor_profiles ADD COLUMN IF NOT EXISTS country_code TEXT NOT NULL DEFAULT ''`,
+		// 跨服务画像上报（admin-server）写入的最近活动时间；NULL 时接口回落 updated_at。
+		`ALTER TABLE visitor_profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ`,
 		`CREATE TABLE IF NOT EXISTS auth_sessions (
 			token TEXT PRIMARY KEY, kind TEXT NOT NULL, account_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			expires_at TIMESTAMPTZ NOT NULL, revoked_at TIMESTAMPTZ,

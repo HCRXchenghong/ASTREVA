@@ -24,4 +24,10 @@ STORE_DRIVER=memory HTTP_ADDR=127.0.0.1:8080 go run ./cmd/server
 
 AI 供应商熔断变量：`AI_CIRCUIT_COOLDOWN_MS`（普通故障冷却，默认 30000，最小 5000）与 `AI_CIRCUIT_AUTH_COOLDOWN_MS`（401/403 冷却，默认 300000，最小 5000）。同一能力可挂多个供应商（`ai_binding_targets`，按 priority 升序尝试），连续失败 3 次后熔断跳过，冷却结束放行一次探测；管理端接口为 `GET/PUT /api/admin/ai-binding-targets` 与 `GET /api/admin/ai-providers/health`。
 
+知识库检索变量：`KNOWLEDGE_INDEX_TTL_SECONDS`（每个知识库的进程内倒排索引 TTL，默认 60 秒，<=0 表示禁用缓存）与 `KNOWLEDGE_INDEX_MAX_ENTRIES`（索引缓存条目上限，默认 50000，超出后按最近使用淘汰；单个库自身超过上限时不做缓存，该次检索回退全表 BM25，结果不变）。索引在知识库/条目增删改（含 `POST /api/admin/knowledge/import`）后自动失效。
+
+服务间接口：`INTERNAL_API_TOKEN` 是 `/api/internal/*` 的共享令牌，未配置时接口直接返回 503。`POST /api/internal/visitor-activity`（Header `X-Internal-Token`，Body `{"visitor_id","path","occurred_at?"}`）供 admin-server 上报访客浏览活动：更新画像 `last_path`、`visits+1`、`last_seen_at`；画像关闭返回 200 + `{"ok":false,"reason":"disabled"}`，画像不存在返回 200 + `{"ok":false,"reason":"no_profile"}`（不凭空创建）。
+
+策略告警：`GET /api/admin/policy-alerts`（仅管理员）返回 `takeover` / `sla_idle` / `sla_first_response` 三类告警，按紧急度排序（takeover > idle > first_response，同级按等待时长倒序），供控制台轮询。
+
 完整接口见 `../docs/API与WebSocket协议.md`。客服使用 `../apps/agent-mobile/` Flutter App，管理员使用仓库根 `admin-server/` 统一后台；推送、自动化端到端测试和生产验收状态见根目录 `功能完善任务.md`。

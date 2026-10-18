@@ -58,6 +58,9 @@ type Config struct {
 	S3PublicBaseURL     string
 	// PublicAdminURL 是可选的对外管理端地址，仅用于客服提醒渠道正文里的"会话链接"提示。
 	PublicAdminURL string
+	// InternalAPIToken 是服务间接口（/api/internal/*）的共享令牌。
+	// 未配置时相关接口返回 503，避免内网接口裸奔。
+	InternalAPIToken string
 }
 
 func Load() Config {
@@ -103,6 +106,7 @@ func Load() Config {
 		S3KeyPrefix:             env("S3_KEY_PREFIX", "uploads"),
 		S3PublicBaseURL:         env("S3_PUBLIC_BASE_URL", ""),
 		PublicAdminURL:          env("PUBLIC_ADMIN_URL", ""),
+		InternalAPIToken:        env("INTERNAL_API_TOKEN", ""),
 	}
 }
 

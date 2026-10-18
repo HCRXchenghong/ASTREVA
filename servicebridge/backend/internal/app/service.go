@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -49,10 +50,17 @@ type Service struct {
 	circuit *aiCircuitBreaker
 	// failoverLogs 限制故障转移日志频率，避免上游持续故障时刷屏。
 	failoverLogs *aiFailoverLogLimiter
+
+	// knowledgeIndex 是知识库的进程内倒排索引缓存（每个知识库一份，懒加载 + TTL + 写失效）。
+	// 见 knowledge_index.go。
+	knowledgeIndex *knowledgeIndex
+
+	// internalTokenWarnOnce 保证 "INTERNAL_API_TOKEN 未配置" 只记一次 warning，避免刷屏。
+	internalTokenWarnOnce sync.Once
 }
 
 func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Service {
-	return &Service{
+	service := &Service{
 		store:                   store,
 		hub:                     hub,
 		ai:                      ai.NewClient(),
@@ -66,7 +74,11 @@ func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Serv
 		profile:                 newVisitorProfileRuntime(),
 		circuit:                 newServiceAICircuitBreaker(),
 		failoverLogs:            newAIFailoverLogLimiter(time.Minute),
+		knowledgeIndex:          newKnowledgeIndex(),
 	}
+	// 包装存储层：知识库/条目的增删改成功后自动失效倒排索引，覆盖所有 service.Store() 写路径。
+	service.store = &knowledgeIndexStore{Store: store, index: service.knowledgeIndex}
+	return service
 }
 
 func (s *Service) SetNotifier(notifier notify.Notifier) {

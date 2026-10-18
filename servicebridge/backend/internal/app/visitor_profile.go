@@ -137,7 +137,11 @@ func (s *Service) RefreshVisitorProfile(ctx context.Context, visitorID string) (
 
 // visitorProfileView 把画像转换为接口视图：按 show_full_ip 决定是否脱敏 IP。
 func (s *Service) visitorProfileView(profile domain.VisitorProfile, settings domain.VisitorProfileSettings, withDetail bool) domain.VisitorProfileView {
+	// last_seen_at 优先取跨服务上报的活动时间；未上报过时回落 updated_at（历史行为不变）。
 	lastSeen := profile.UpdatedAt
+	if profile.LastSeenAt != nil {
+		lastSeen = *profile.LastSeenAt
+	}
 	view := domain.VisitorProfileView{
 		VisitorID:             profile.VisitorID,
 		Country:               profile.Country,

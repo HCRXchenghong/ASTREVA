@@ -146,11 +146,28 @@ func bm25Field(termFrequency, fieldLength int, averageLength, idf float64) float
 	return idf * (float64(termFrequency) * (bm25K1 + 1)) / (float64(termFrequency) + bm25K1*normalization)
 }
 
+// CorpusStats 是候选条目所在**全量语料**的全局统计。
+//
+// 倒排索引先取候选，只对候选算 BM25；但 idf 与平均长度必须仍按全量语料计算，
+// 否则候选子集上的分数/排序会和"全表 BM25"不一致。因此这些量在索引加载时算好，
+// 通过 CorpusStats 传入 RankKnowledgeCandidates。
+type CorpusStats struct {
+	// DocumentCount 是语料中的文档数（float64 与 BM25 公式保持一致）。
+	DocumentCount float64
+	// TotalLength 是语料中所有文档长度之和。
+	TotalLength float64
+	// DocumentFrequency 是查询词在全量语料中的文档频次（只存在于语料的词才有键）。
+	DocumentFrequency map[string]float64
+}
+
 // RankKnowledgeEntries 对候选知识条目按查询词做 BM25 排序，返回分数最高的前 limit 条。
 //
 // 该函数是纯函数：不读数据库、不改入参、不做阈值过滤（阈值由调用方用
 // FilterKnowledgeHits 处理）。limit<=0 时使用 domain.DefaultKnowledgeMaxEntries。
 // 返回结果按 分数降序 → priority 降序 → ID 升序 排列，保证同一输入结果稳定。
+//
+// entries 是**全量语料**：语料统计与打分都基于它。只对候选条目打分的场景请用
+// RankKnowledgeCandidates，并传入由倒排索引预计算的 CorpusStats。
 func RankKnowledgeEntries(query string, entries []domain.KnowledgeEntry, limit int) []domain.KnowledgeHit {
 	if limit <= 0 {
 		limit = domain.DefaultKnowledgeMaxEntries
@@ -170,8 +187,57 @@ func RankKnowledgeEntries(query string, entries []domain.KnowledgeEntry, limit i
 	if totalLength == 0 {
 		return nil
 	}
-	averageLength := float64(totalLength) / float64(len(docs))
-	documentCount := float64(len(docs))
+	stats := CorpusStats{
+		DocumentCount:     float64(len(docs)),
+		TotalLength:       float64(totalLength),
+		DocumentFrequency: make(map[string]float64, len(queryTokens)),
+	}
+	for _, token := range queryTokens {
+		documentFrequency := 0.0
+		for _, other := range docs {
+			if other.contains(token) {
+				documentFrequency++
+			}
+		}
+		if documentFrequency > 0 {
+			stats.DocumentFrequency[token] = documentFrequency
+		}
+	}
+	return rankEntryDocs(queryTokens, docs, stats, limit)
+}
+
+// RankKnowledgeCandidates 只对倒排索引取出的候选条目做 BM25 打分，语料统计由调用方
+// 预计算（见 CorpusStats）。在"候选 = 语料中所有含任一查询词的条目"这一前提下，
+// 结果与 RankKnowledgeEntries(query, 全量语料, limit) 的顺序与分数完全一致。
+func RankKnowledgeCandidates(query string, candidates []domain.KnowledgeEntry, stats CorpusStats, limit int) []domain.KnowledgeHit {
+	if limit <= 0 {
+		limit = domain.DefaultKnowledgeMaxEntries
+	}
+	queryTokens := uniqueTokens(Tokenize(query))
+	if len(queryTokens) == 0 || len(candidates) == 0 {
+		// 语料非空但无候选时，与全表 BM25 一样返回空切片（而非 nil），保持结果形状一致。
+		if len(queryTokens) == 0 || stats.DocumentCount <= 0 || stats.TotalLength <= 0 {
+			return nil
+		}
+		return []domain.KnowledgeHit{}
+	}
+	if stats.DocumentCount <= 0 || stats.TotalLength <= 0 {
+		return nil
+	}
+	docs := make([]entryDoc, 0, len(candidates))
+	for _, entry := range candidates {
+		docs = append(docs, newEntryDoc(entry))
+	}
+	return rankEntryDocs(queryTokens, docs, stats, limit)
+}
+
+// rankEntryDocs 是 BM25 打分的公共实现：按预计算的语料统计对 docs 打分并排序。
+func rankEntryDocs(queryTokens []string, docs []entryDoc, stats CorpusStats, limit int) []domain.KnowledgeHit {
+	if len(queryTokens) == 0 || len(docs) == 0 || stats.DocumentCount <= 0 || stats.TotalLength <= 0 {
+		return nil
+	}
+	averageLength := stats.TotalLength / stats.DocumentCount
+	documentCount := stats.DocumentCount
 
 	// 先算一次每个 query token 的 idf，并据此得到"理论最高分"：
 	// 单字段上 BM25 的极限是 idf*(k1+1)，因此
@@ -182,12 +248,7 @@ func RankKnowledgeEntries(query string, entries []domain.KnowledgeEntry, limit i
 	idfByToken := make(map[string]float64, len(queryTokens))
 	maxPossible := 0.0
 	for _, token := range queryTokens {
-		documentFrequency := 0.0
-		for _, other := range docs {
-			if other.contains(token) {
-				documentFrequency++
-			}
-		}
+		documentFrequency := stats.DocumentFrequency[token]
 		if documentFrequency == 0 {
 			continue
 		}
@@ -195,6 +256,13 @@ func RankKnowledgeEntries(query string, entries []domain.KnowledgeEntry, limit i
 		idf := math.Log(1 + (documentCount-documentFrequency+0.5)/(documentFrequency+0.5))
 		idfByToken[token] = idf
 		maxPossible += idf * (bm25K1 + 1) * (titleWeight + keywordsWeight + contentWeight)
+	}
+
+	// 同分时的稳定排序键：priority 降序 → ID 升序。优先级从待打分的 docs 直接取，
+	// 候选集就是参与打分的全部文档，因此与全量 BM25 的 priorityOf 结果一致。
+	priorityByID := make(map[string]int, len(docs))
+	for _, doc := range docs {
+		priorityByID[doc.entry.ID] = doc.entry.Priority
 	}
 
 	hits := make([]domain.KnowledgeHit, 0, len(docs))
@@ -238,7 +306,7 @@ func RankKnowledgeEntries(query string, entries []domain.KnowledgeEntry, limit i
 		if hits[i].Score != hits[j].Score {
 			return hits[i].Score > hits[j].Score
 		}
-		priorityI, priorityJ := priorityOf(entries, hits[i].EntryID), priorityOf(entries, hits[j].EntryID)
+		priorityI, priorityJ := priorityByID[hits[i].EntryID], priorityByID[hits[j].EntryID]
 		if priorityI != priorityJ {
 			return priorityI > priorityJ
 		}
@@ -248,16 +316,6 @@ func RankKnowledgeEntries(query string, entries []domain.KnowledgeEntry, limit i
 		hits = hits[:limit]
 	}
 	return hits
-}
-
-// priorityOf 在候选集中查条目的优先级，用于同分时的稳定排序。
-func priorityOf(entries []domain.KnowledgeEntry, entryID string) int {
-	for _, entry := range entries {
-		if entry.ID == entryID {
-			return entry.Priority
-		}
-	}
-	return 0
 }
 
 // FilterKnowledgeHits 过滤掉低于阈值的命中；threshold<=0 时返回原结果。

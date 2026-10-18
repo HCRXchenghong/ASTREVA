@@ -119,6 +119,20 @@ func registerServicePolicyRoutes(mux *http.ServeMux, service *app.Service, proxi
 		writeJSON(w, http.StatusOK, map[string]any{"queue": views, "total": len(views)})
 	})
 
+	// ---------- 管理员：策略告警（控制台轮询）----------
+	// 只读汇总：takeover（等待人工首响）优先，其次 sla_idle，再 sla_first_response。
+	mux.HandleFunc("GET /api/admin/policy-alerts", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		alerts := service.PolicyAlerts(time.Now().UTC())
+		if alerts == nil {
+			alerts = []app.PolicyAlert{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"alerts": alerts})
+	})
+
 	// ---------- 管理员：黑名单 ----------
 	mux.HandleFunc("GET /api/admin/blacklist", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(service, r) {

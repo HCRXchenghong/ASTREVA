@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"customer-service/backend/internal/ai"
 	"customer-service/backend/internal/domain"
@@ -55,14 +56,19 @@ type knowledgeSearch struct {
 
 // searchKnowledge 执行一次本地检索。
 // baseIDs 为空表示全部启用库（AI 自主接待）；非空表示只在这些库里检索（客服侧限定）。
+//
+// 检索流程：倒排索引按查询词取候选（并集）→ 无候选直接返回空（不再对全表做 BM25）
+// → 对候选跑 BM25（语料统计由索引预计算，结果与全表 BM25 完全一致）。
+// 只有在候选库超过索引内存上限时，才回退为一次全量读取 + 全表 BM25。
 func (s *Service) searchKnowledge(query string, baseIDs []string) knowledgeSearch {
 	settings := s.store.KnowledgeSettings()
 	if !settings.Enabled {
 		return knowledgeSearch{Settings: settings}
 	}
 	// 硬性要求：没有任何启用中的知识库时，AI 行为必须与未接入知识库时完全一致。
+	bases := s.store.KnowledgeBases()
 	enabledBases := 0
-	for _, base := range s.store.KnowledgeBases() {
+	for _, base := range bases {
 		if base.Enabled {
 			enabledBases++
 		}
@@ -70,16 +76,112 @@ func (s *Service) searchKnowledge(query string, baseIDs []string) knowledgeSearc
 	if enabledBases == 0 {
 		return knowledgeSearch{Settings: settings}
 	}
-	entries := s.store.KnowledgeEntriesForBases(baseIDs)
-	byID := make(map[string]domain.KnowledgeEntry, len(entries))
-	for _, entry := range entries {
-		byID[entry.ID] = entry
+	queryTokens := knowledgeQueryTokens(query)
+	if len(queryTokens) == 0 {
+		return knowledgeSearch{Active: true, Settings: settings}
 	}
+	scope := enabledKnowledgeBaseIDs(bases, baseIDs)
+	if candidates, stats, ok := s.knowledgeIndex.search(s.store, scope, queryTokens, time.Now().UTC()); ok {
+		hits := knowledge.FilterKnowledgeHits(
+			knowledge.RankKnowledgeCandidates(query, candidates, stats, settings.MaxEntries),
+			settings.ScoreThreshold,
+		)
+		return knowledgeSearch{Active: true, Hits: hits, ByID: knowledgeEntriesByID(candidates), Settings: settings}
+	}
+	// 回退：索引不可用（单库条目数超上限）。这里才读全量，结果与旧实现一致。
+	entries := s.store.KnowledgeEntriesForBases(baseIDs)
 	hits := knowledge.FilterKnowledgeHits(
 		knowledge.RankKnowledgeEntries(query, entries, settings.MaxEntries),
 		settings.ScoreThreshold,
 	)
-	return knowledgeSearch{Active: true, Hits: hits, ByID: byID, Settings: settings}
+	return knowledgeSearch{Active: true, Hits: hits, ByID: knowledgeEntriesByID(entries), Settings: settings}
+}
+
+// PreviewKnowledgeSearch 是后台"检索预览"入口：走同一套倒排索引，但不做阈值过滤，
+// 便于管理员对照阈值调参。limit<=0 时使用知识库配置的 MaxEntries。
+func (s *Service) PreviewKnowledgeSearch(query string, baseIDs []string, limit int) []domain.KnowledgeHit {
+	if limit <= 0 {
+		limit = s.store.KnowledgeSettings().MaxEntries
+	}
+	queryTokens := knowledgeQueryTokens(query)
+	if len(queryTokens) == 0 {
+		return nil
+	}
+	scope := enabledKnowledgeBaseIDs(s.store.KnowledgeBases(), baseIDs)
+	if candidates, stats, ok := s.knowledgeIndex.search(s.store, scope, queryTokens, time.Now().UTC()); ok {
+		return knowledge.RankKnowledgeCandidates(query, candidates, stats, limit)
+	}
+	return knowledge.RankKnowledgeEntries(query, s.store.KnowledgeEntriesForBases(baseIDs), limit)
+}
+
+// enabledKnowledgeBaseIDs 计算检索实际覆盖的启用知识库集合：
+// baseIDs 为空 = 全部启用库；非空 = 其中存在且启用的库（显式指定无效库时不回落全部库）。
+func enabledKnowledgeBaseIDs(bases []domain.KnowledgeBase, baseIDs []string) []string {
+	requested := cleanKnowledgeBaseIDs(baseIDs)
+	restricted := len(requested) > 0
+	allowed := make(map[string]bool, len(requested))
+	for _, id := range requested {
+		allowed[id] = true
+	}
+	out := make([]string, 0, len(bases))
+	for _, base := range bases {
+		if !base.Enabled {
+			continue
+		}
+		if restricted && !allowed[base.ID] {
+			continue
+		}
+		out = append(out, base.ID)
+	}
+	return out
+}
+
+// cleanKnowledgeBaseIDs 去空去重，与存储层 KnowledgeEntriesForBases 的清洗规则保持一致。
+func cleanKnowledgeBaseIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// knowledgeQueryTokens 按检索词规则切分查询并去重，顺序与 RankKnowledgeEntries 内部一致。
+func knowledgeQueryTokens(query string) []string {
+	tokens := knowledge.Tokenize(query)
+	if len(tokens) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(tokens))
+	out := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		if token == "" || seen[token] {
+			continue
+		}
+		seen[token] = true
+		out = append(out, token)
+	}
+	return out
+}
+
+// knowledgeEntriesByID 建立条目 ID -> 条目的映射（用于拼装回答依据 prompt）。
+func knowledgeEntriesByID(entries []domain.KnowledgeEntry) map[string]domain.KnowledgeEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	byID := make(map[string]domain.KnowledgeEntry, len(entries))
+	for _, entry := range entries {
+		byID[entry.ID] = entry
+	}
+	return byID
 }
 
 // knowledgeHitIDs 按分数顺序返回命中条目 ID，用于落库"回答依据"。

@@ -19,7 +19,7 @@ const visitorProfileColumns = `visitor_id, country, country_code, region, city, 
 	nationality_guess, nationality_confidence, COALESCE(nationality_basis::text, '[]'), ip_first, ip_last,
 	COALESCE(languages::text, '{}'), dialect, code_switching, summary,
 	COALESCE(tags::text, '[]'), COALESCE(interests::text, '[]'), COALESCE(evidence::text, '[]'),
-	visits, last_path, ai_updated_at, created_at, updated_at`
+	visits, last_path, last_seen_at, ai_updated_at, created_at, updated_at`
 
 func scanVisitorProfile(row scanTarget) (domain.VisitorProfile, error) {
 	var out domain.VisitorProfile
@@ -30,7 +30,7 @@ func scanVisitorProfile(row scanTarget) (domain.VisitorProfile, error) {
 		&out.NationalityGuess, &confidence, &basisJSON, &out.IPFirst, &out.IPLast,
 		&languagesJSON, &out.Dialect, &out.CodeSwitching, &out.Summary,
 		&tagsJSON, &interestsJSON, &evidenceJSON,
-		&out.Visits, &out.LastPath, &out.AIUpdatedAt, &out.CreatedAt, &out.UpdatedAt,
+		&out.Visits, &out.LastPath, &out.LastSeenAt, &out.AIUpdatedAt, &out.CreatedAt, &out.UpdatedAt,
 	)
 	if err != nil {
 		return domain.VisitorProfile{}, err
@@ -193,9 +193,9 @@ func (s *PostgresStore) UpdateVisitorProfile(visitorID string, mutate func(*doma
 				visitor_id, country, country_code, region, city, timezone,
 				nationality_guess, nationality_confidence, nationality_basis, ip_first, ip_last,
 				languages, dialect, code_switching, summary, tags, interests, evidence,
-				visits, last_path, ai_updated_at, created_at, updated_at
+				visits, last_path, last_seen_at, ai_updated_at, created_at, updated_at
 			)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12::jsonb,$13,$14,$15,$16::jsonb,$17::jsonb,$18::jsonb,$19,$20,$21,$22,$23)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12::jsonb,$13,$14,$15,$16::jsonb,$17::jsonb,$18::jsonb,$19,$20,$21,$22,$23,$24)
 			ON CONFLICT (visitor_id) DO UPDATE SET
 				country=EXCLUDED.country,
 				country_code=EXCLUDED.country_code,
@@ -216,6 +216,7 @@ func (s *PostgresStore) UpdateVisitorProfile(visitorID string, mutate func(*doma
 				evidence=EXCLUDED.evidence,
 				visits=EXCLUDED.visits,
 				last_path=EXCLUDED.last_path,
+				last_seen_at=EXCLUDED.last_seen_at,
 				ai_updated_at=EXCLUDED.ai_updated_at,
 				updated_at=EXCLUDED.updated_at
 			RETURNING `+visitorProfileColumns,
@@ -223,7 +224,7 @@ func (s *PostgresStore) UpdateVisitorProfile(visitorID string, mutate func(*doma
 			normalized.NationalityGuess, normalized.NationalityConfidence, basisJSON, normalized.IPFirst, normalized.IPLast,
 			languagesJSON, normalized.Dialect, normalized.CodeSwitching, normalized.Summary,
 			tagsJSON, interestsJSON, evidenceJSON,
-			normalized.Visits, normalized.LastPath, normalized.AIUpdatedAt, normalized.CreatedAt, normalized.UpdatedAt,
+			normalized.Visits, normalized.LastPath, normalized.LastSeenAt, normalized.AIUpdatedAt, normalized.CreatedAt, normalized.UpdatedAt,
 		))
 		if err != nil {
 			return err
