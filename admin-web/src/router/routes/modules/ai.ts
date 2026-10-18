@@ -51,5 +51,11 @@ export default {
       component: () => import('@/views/ai/bindings.vue'),
       meta: { title: '能力绑定', locale: '能力绑定', requiresAuth: true },
     },
+    {
+      path: 'knowledge',
+      name: 'AiKnowledge',
+      component: () => import('@/views/ai/knowledge.vue'),
+      meta: { title: '知识库', locale: '知识库', requiresAuth: true },
+    },
   ],
 };

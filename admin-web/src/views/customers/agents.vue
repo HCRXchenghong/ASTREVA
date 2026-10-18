@@ -106,6 +106,31 @@
           <a-form-item label="AI 推荐发送内容">
             <a-switch v-model="prefs.ai_suggest_replies" />
           </a-form-item>
+          <a-divider class="pref-divider">AI 知识推荐</a-divider>
+          <a-form-item label="启用知识库推荐">
+            <a-switch
+              v-model="prefs.knowledge_suggest_enabled"
+              data-testid="pref-knowledge-suggest"
+            />
+            <a-typography-text type="secondary" class="pref-hint">
+              关闭后该客服不使用 AI 推荐发送内容（含知识库检索命中）。
+            </a-typography-text>
+          </a-form-item>
+          <a-form-item label="可用的知识库">
+            <a-select
+              v-model="prefs.knowledge_base_ids"
+              multiple
+              allow-clear
+              allow-search
+              :options="knowledgeBaseOptions"
+              :loading="knowledgeBasesLoading"
+              placeholder="留空表示使用全部知识库"
+              data-testid="pref-knowledge-bases"
+            />
+            <a-typography-text type="secondary" class="pref-hint">
+              可多选；留空表示该客服可以使用全部知识库。
+            </a-typography-text>
+          </a-form-item>
         </a-form>
         <a-button size="small" :loading="prefSaving" @click="resetPreferences">
           恢复默认
@@ -137,7 +162,7 @@
 </template>
 
 <script lang="ts" setup>
-  import { onMounted, reactive, ref } from 'vue';
+  import { computed, onMounted, reactive, ref } from 'vue';
   import { Message, Modal } from '@arco-design/web-vue';
   import {
     createAgent,
@@ -147,6 +172,7 @@
     fetchAgentPreferences,
     fetchAgentRatings,
     fetchAgents,
+    fetchKnowledgeBases,
     fetchRatingSummaries,
     resetAgentPassword,
     resetAgentRatings,
@@ -155,14 +181,17 @@
     updateAgentPreferences,
   } from '@/api/admin';
 
-  // 翻译偏好默认值：5 项开关全开 + 标准语（与服务端 WithDefaults 一致）。
+  // 偏好默认值：既有 5 项翻译偏好 + 2 项知识推荐偏好（与服务端默认一致）。
+  // 原有 5 项保持全开 + 标准语；知识推荐默认开启，知识库留空=全部库。
   const DEFAULT_PREFS = {
     auto_translate_incoming: true,
     auto_translate_outgoing: true,
     review_translation_before_send: true,
     translation_dialect_mode: 'standard',
     ai_suggest_replies: true,
-  } as const;
+    knowledge_suggest_enabled: true,
+    knowledge_base_ids: [] as string[],
+  };
 
   const agents = ref<any[]>([]);
   const loading = ref(false);
@@ -174,10 +203,16 @@
   const prefLoading = ref(false);
   const prefSaving = ref(false);
   const prefAgent = ref<any>(null);
+  const knowledgeBases = ref<any[]>([]);
+  const knowledgeBasesLoading = ref(false);
   const ratingValue = ref(100);
   const ratingAgent = ref<any>(null);
   const detail = ref<any>(null);
   const prefs = reactive({ ...DEFAULT_PREFS });
+  // 偏好弹窗里的知识库多选项；知识库接口不可用时保持空列表，不影响既有偏好。
+  const knowledgeBaseOptions = computed(() =>
+    knowledgeBases.value.map((item) => ({ label: item.name, value: item.id }))
+  );
   const form = reactive({
     id: '',
     account: '',
@@ -302,7 +337,24 @@
       translation_dialect_mode:
         value?.translation_dialect_mode === 'dialect' ? 'dialect' : 'standard',
       ai_suggest_replies: value?.ai_suggest_replies ?? true,
+      knowledge_suggest_enabled: value?.knowledge_suggest_enabled ?? true,
+      knowledge_base_ids: Array.isArray(value?.knowledge_base_ids)
+        ? [...value.knowledge_base_ids]
+        : [],
     });
+  }
+
+  // 知识库列表只用于多选下拉的选项，失败时保持空列表并允许留空=全部库。
+  async function loadKnowledgeBases() {
+    knowledgeBasesLoading.value = true;
+    try {
+      const payload = await fetchKnowledgeBases();
+      knowledgeBases.value = payload?.bases || [];
+    } catch {
+      knowledgeBases.value = [];
+    } finally {
+      knowledgeBasesLoading.value = false;
+    }
   }
 
   async function openPreferences(record: any) {
@@ -310,6 +362,7 @@
     applyPreferences(DEFAULT_PREFS);
     prefVisible.value = true;
     prefLoading.value = true;
+    loadKnowledgeBases();
     try {
       const payload = await fetchAgentPreferences(record.id);
       applyPreferences(payload?.preferences);
@@ -321,7 +374,7 @@
     }
   }
 
-  // 局部 PATCH：这里一次提交全部 5 项，恢复默认也走同一条路径。
+  // 局部 PATCH：这里一次提交全部偏好（既有 5 项 + 知识推荐 2 项），恢复默认也走同一条路径。
   async function persistPreferences() {
     if (!prefAgent.value) return false;
     prefSaving.value = true;
@@ -332,6 +385,10 @@
         review_translation_before_send: prefs.review_translation_before_send,
         translation_dialect_mode: prefs.translation_dialect_mode,
         ai_suggest_replies: prefs.ai_suggest_replies,
+        knowledge_suggest_enabled: prefs.knowledge_suggest_enabled,
+        knowledge_base_ids: Array.isArray(prefs.knowledge_base_ids)
+          ? [...prefs.knowledge_base_ids]
+          : [],
       });
       if (result?.preferences) applyPreferences(result.preferences);
       return true;
@@ -402,5 +459,15 @@
   .pref-body {
     display: block;
     min-height: 80px;
+  }
+  .pref-divider {
+    margin: 4px 0 14px;
+    font-size: 12px;
+    color: var(--color-text-3);
+  }
+  .pref-hint {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
   }
 </style>

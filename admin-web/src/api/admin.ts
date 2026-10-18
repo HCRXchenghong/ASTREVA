@@ -204,6 +204,79 @@ export const updateAgentPreferences = (
     )
     .then((r) => r.data);
 
+// ---------- AI 知识库 ----------
+// 契约冻结：bases / entries / search / import / settings 五组接口，字段名与后端保持一致。
+export const fetchKnowledgeBases = () =>
+  client.get(bridge('/api/admin/knowledge/bases')).then((r) => r.data);
+export const createKnowledgeBase = (payload: Record<string, unknown>) =>
+  client.post(bridge('/api/admin/knowledge/bases'), payload).then((r) => r.data);
+export const updateKnowledgeBase = (
+  id: string,
+  payload: Record<string, unknown>
+) =>
+  client
+    .patch(
+      bridge(`/api/admin/knowledge/bases/${encodeURIComponent(id)}`),
+      payload
+    )
+    .then((r) => r.data);
+export const deleteKnowledgeBase = (id: string) =>
+  client.delete(bridge(`/api/admin/knowledge/bases/${encodeURIComponent(id)}`));
+
+export const fetchKnowledgeEntries = (params: {
+  base_id?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}) =>
+  client
+    .get(bridge('/api/admin/knowledge/entries'), { params })
+    .then((r) => r.data);
+export const createKnowledgeEntry = (payload: Record<string, unknown>) =>
+  client
+    .post(bridge('/api/admin/knowledge/entries'), payload)
+    .then((r) => r.data);
+export const updateKnowledgeEntry = (
+  id: string,
+  payload: Record<string, unknown>
+) =>
+  client
+    .patch(
+      bridge(`/api/admin/knowledge/entries/${encodeURIComponent(id)}`),
+      payload
+    )
+    .then((r) => r.data);
+export const deleteKnowledgeEntry = (id: string) =>
+  client.delete(
+    bridge(`/api/admin/knowledge/entries/${encodeURIComponent(id)}`)
+  );
+
+export const searchKnowledge = (payload: {
+  query: string;
+  base_ids?: string[];
+  limit?: number;
+}) =>
+  client
+    .post(bridge('/api/admin/knowledge/search'), payload)
+    .then((r) => r.data);
+export const importKnowledgeEntries = (
+  baseId: string,
+  entries: Array<Record<string, unknown>>
+) =>
+  client
+    .post(bridge('/api/admin/knowledge/import'), {
+      base_id: baseId,
+      entries,
+    })
+    .then((r) => r.data);
+
+export const fetchKnowledgeSettings = () =>
+  client.get(bridge('/api/admin/knowledge/settings')).then((r) => r.data);
+export const updateKnowledgeSettings = (payload: Record<string, unknown>) =>
+  client
+    .patch(bridge('/api/admin/knowledge/settings'), payload)
+    .then((r) => r.data);
+
 export const fetchPushSettings = () =>
   client.get(bridge('/api/admin/push-settings')).then((r) => r.data);
 export const updatePushSettings = (payload: Record<string, unknown>) =>
