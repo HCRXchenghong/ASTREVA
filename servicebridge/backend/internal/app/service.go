@@ -478,12 +478,13 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 func (s *Service) generateAIReply(conversationID, currentMsgID, userText string, visitorLang string) {
 	// 优先使用 reception 能力链首（targets 按 priority 升序，其次旧 binding），未绑定/被禁用时回退全局 ai_settings。
 	// 候选只解析一次：既用于超时计算与分支判断，也用于下面的故障转移，避免热路径重复读存储。
-	settings, settingsErr, receptionCandidates := s.resolveAISettings(domain.AICapabilityReception)
+	_, settingsErr, receptionCandidates := s.resolveAISettings(domain.AICapabilityReception)
 	if settingsErr != nil {
 		s.logger.Warn("AI 能力绑定不可用，跳过本次 AI 回复",
 			"conversation_id", conversationID, "capability", domain.AICapabilityReception, "error", settingsErr)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), aiReplyTimeout(settings))
+	// 预算按候选链求和：故障转移时每个候选都要有自己的超时额度。
+	ctx, cancel := context.WithTimeout(context.Background(), upstreamBudgetFor(s.aiSettingsChain(domain.AICapabilityReception), translationWindow))
 	defer cancel()
 	visitorLang = ai.NormalizeLang(visitorLang, ai.LangZh)
 	// 仅读取本会话的历史消息作为上下文，按 conversationID 隔离，绝不跨会话共享。
@@ -1033,6 +1034,47 @@ func errorEvent(err error) realtime.Event {
 // translationWindow 是同步翻译路径的最长等待时间，超时后回退为原文下发，避免阻塞消息送达。
 const translationWindow = 25 * time.Second
 
+// maxUpstreamCallTimeout 是单个上游调用的时间预算上限，避免配置异常导致请求长期挂起。
+const maxUpstreamCallTimeout = 120 * time.Second
+
+// upstreamBudgetFor 返回"一次能力调用"应给的时间预算：
+// 故障转移会依次尝试链上每个候选，因此预算必须覆盖"各候选超时之和"，
+// 否则先试一个故障供应商再切到慢速供应商时，后一个候选会被外层上下文提前掐断。
+// 同时保证不小于默认窗口（单候选/未配置时行为与改造前一致）。
+func upstreamBudgetFor(chain []domain.AISettings, floor time.Duration) time.Duration {
+	total := floor
+	if total < defaultAITimeout {
+		total = defaultAITimeout
+	}
+	for _, candidate := range chain {
+		seconds := candidate.TimeoutSeconds
+		if seconds <= 0 {
+			seconds = int(defaultAITimeout / time.Second)
+		}
+		total += time.Duration(seconds) * time.Second
+	}
+	if total > maxUpstreamCallTimeout {
+		total = maxUpstreamCallTimeout
+	}
+	return total
+}
+
+// translationBudgetFor 返回翻译调用的时间预算：至少 translationWindow，
+// 但不超过候选超时+5s（慢速上游如 MiMo 单次约 10s，写死 25s 会在故障转移时被掐断）。
+func translationBudgetFor(settings domain.AISettings) time.Duration {
+	budget := translationWindow
+	if settings.TimeoutSeconds > 0 {
+		candidate := time.Duration(settings.TimeoutSeconds)*time.Second + 5*time.Second
+		if candidate > budget {
+			budget = candidate
+		}
+	}
+	if budget > maxUpstreamCallTimeout {
+		budget = maxUpstreamCallTimeout
+	}
+	return budget
+}
+
 // defaultAITimeout 是未配置（或配置过小）时 AI 请求的默认超时。
 const defaultAITimeout = 20 * time.Second
 
@@ -1068,7 +1110,7 @@ func (s *Service) translateInitialMessageForVisitor(conversationID, visitorLang 
 	serverMsgID := msg.ServerMsgID
 	original := msg.Content
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
+		ctx, cancel := context.WithTimeout(context.Background(), upstreamBudgetFor(s.aiSettingsChain(domain.AICapabilityTranslation), translationWindow))
 		defer cancel()
 		// 欢迎语翻译属于非访客阻塞链路：白名单拒绝时回退全局配置，保证翻译不中断。
 		translated, err := s.doWithFailoverLenient(ctx, domain.AICapabilityTranslation, func(candidate domain.AISettings) (string, error) {
@@ -1195,7 +1237,7 @@ func (s *Service) translateAndStoreSystemMessage(conversationID, visitorLang str
 	if translated, ok := knownSystemText(msg.Content, visitorLang); ok {
 		msg.Translations = map[string]string{visitorLang: translated}
 	} else {
-		ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
+		ctx, cancel := context.WithTimeout(context.Background(), upstreamBudgetFor(s.aiSettingsChain(domain.AICapabilityTranslation), translationWindow))
 		defer cancel()
 		// 系统消息翻译属于非访客阻塞链路：白名单拒绝时回退全局配置，保证翻译不中断。
 		translated, err := s.doWithFailoverLenient(ctx, domain.AICapabilityTranslation, func(candidate domain.AISettings) (string, error) {
