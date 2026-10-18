@@ -54,8 +54,10 @@ type MemoryStore struct {
 	cacheProbe   domain.AICacheProbe
 	aiProviders  map[string]*domain.AIProvider
 	aiBindings   map[string]domain.AIBinding
-	business     domain.BusinessHours
-	push         domain.PushSettings
+	// aiBindingTargets 按 (capability, provider_id) 存候选供应商：同一能力可挂多个，按 priority 尝试。
+	aiBindingTargets map[aiBindingTargetKey]domain.AIBindingTarget
+	business         domain.BusinessHours
+	push             domain.PushSettings
 
 	knowledgeBases    map[string]*domain.KnowledgeBase
 	knowledgeEntries  map[string]*domain.KnowledgeEntry
@@ -103,6 +105,7 @@ func NewMemoryStore(options Options) *MemoryStore {
 		apiApps:          map[string]*domain.APIApp{},
 		aiProviders:      map[string]*domain.AIProvider{},
 		aiBindings:       map[string]domain.AIBinding{},
+		aiBindingTargets: map[aiBindingTargetKey]domain.AIBindingTarget{},
 		knowledgeBases:   map[string]*domain.KnowledgeBase{},
 		knowledgeEntries: map[string]*domain.KnowledgeEntry{},
 		// 知识库默认开启，但没有任何知识库时 AI 行为与未接入知识库时完全一致。
@@ -1874,7 +1877,7 @@ func (s *MemoryStore) UpdateAIProvider(id string, patch domain.AIProvider, apiKe
 	return out, nil
 }
 
-// DeleteAIProvider 删除供应商，并删除指向它的能力绑定（无残留、无悬挂引用），
+// DeleteAIProvider 删除供应商，并删除指向它的能力绑定与候选（无残留、无悬挂引用），
 // 运行时该能力自动回退到 ai_settings。
 func (s *MemoryStore) DeleteAIProvider(id string) error {
 	s.mu.Lock()
@@ -1888,6 +1891,11 @@ func (s *MemoryStore) DeleteAIProvider(id string) error {
 	for capability, binding := range s.aiBindings {
 		if binding.ProviderID == id {
 			delete(s.aiBindings, capability)
+		}
+	}
+	for key := range s.aiBindingTargets {
+		if key.providerID == id {
+			delete(s.aiBindingTargets, key)
 		}
 	}
 	return nil
@@ -1923,6 +1931,73 @@ func (s *MemoryStore) UpsertAIBinding(next domain.AIBinding) (domain.AIBinding, 
 	next.UpdatedAt = time.Now().UTC()
 	s.aiBindings[next.Capability] = next
 	return next, nil
+}
+
+// aiBindingTargetKey 是候选供应商的内存主键，等价于数据库的 (capability, provider_id) 主键。
+type aiBindingTargetKey struct {
+	capability string
+	providerID string
+}
+
+// AIBindingTargets 返回全部候选供应商，按 capability、priority、provider_id 稳定排序，
+// 便于运行时按序构造能力链与测试断言。
+func (s *MemoryStore) AIBindingTargets() []domain.AIBindingTarget {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]domain.AIBindingTarget, 0, len(s.aiBindingTargets))
+	for _, target := range s.aiBindingTargets {
+		out = append(out, target)
+	}
+	if len(out) > 1 {
+		sort.SliceStable(out, func(i, j int) bool {
+			if out[i].Capability != out[j].Capability {
+				return out[i].Capability < out[j].Capability
+			}
+			if out[i].Priority != out[j].Priority {
+				return out[i].Priority < out[j].Priority
+			}
+			return out[i].ProviderID < out[j].ProviderID
+		})
+	}
+	return out
+}
+
+// UpsertAIBindingTarget 新增或覆盖一条候选（主键为 capability+provider_id）。
+func (s *MemoryStore) UpsertAIBindingTarget(next domain.AIBindingTarget) (domain.AIBindingTarget, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	next, err := normalizeAIBindingTarget(next)
+	if err != nil {
+		return domain.AIBindingTarget{}, err
+	}
+	key := aiBindingTargetKey{capability: next.Capability, providerID: next.ProviderID}
+	now := time.Now().UTC()
+	if existing, ok := s.aiBindingTargets[key]; ok {
+		// 覆盖更新保留首次写入时间，便于后台按创建时间排查。
+		next.CreatedAt = existing.CreatedAt
+	} else {
+		next.CreatedAt = now
+	}
+	next.UpdatedAt = now
+	s.aiBindingTargets[key] = next
+	return next, nil
+}
+
+func (s *MemoryStore) DeleteAIBindingTarget(capability, providerID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := aiBindingTargetKey{
+		capability: strings.ToLower(strings.TrimSpace(capability)),
+		providerID: strings.TrimSpace(providerID),
+	}
+	if _, ok := s.aiBindingTargets[key]; !ok {
+		return ErrNotFound
+	}
+	delete(s.aiBindingTargets, key)
+	return nil
 }
 
 // AICacheProbe 读取模型缓存探测结果。

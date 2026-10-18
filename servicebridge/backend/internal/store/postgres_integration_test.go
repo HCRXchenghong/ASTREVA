@@ -1592,3 +1592,181 @@ func TestPostgresVisitorProfiles(t *testing.T) {
 
 func intPtr(value int) *int    { return &value }
 func boolPtr(value bool) *bool { return &value }
+
+// TestPostgresAIBindingTargets 是能力候选供应商的真实 PostgreSQL 集成测试：
+// 验证 ensureCoreTables 能建 ai_binding_targets 表、主键 (capability, provider_id) 的唯一约束、
+// 优先级读写、能力 CHECK 约束、删除接口语义，以及删除供应商后的级联清理。
+func TestPostgresAIBindingTargets(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	primary, err := st.CreateAIProvider(domain.AIProvider{
+		Name:    "候选主供应商",
+		Kind:    domain.AIProviderKindText,
+		APIType: domain.AIAPITypeChatCompletions,
+		BaseURL: "https://api.openai.com/v1",
+		Models:  []string{"gpt-a"},
+		Enabled: true,
+	}, "sk-target-primary")
+	if err != nil {
+		t.Fatalf("创建主供应商失败：%v", err)
+	}
+	backup, err := st.CreateAIProvider(domain.AIProvider{
+		Name:    "候选备供应商",
+		Kind:    domain.AIProviderKindText,
+		APIType: domain.AIAPITypeChatCompletions,
+		BaseURL: "https://api2.openai.com/v1",
+		Models:  []string{"gpt-b"},
+		Enabled: true,
+	}, "sk-target-backup")
+	if err != nil {
+		t.Fatalf("创建备供应商失败：%v", err)
+	}
+	// 级联清理用例单独用一个供应商，避免影响后续断言。
+	orphan, err := st.CreateAIProvider(domain.AIProvider{
+		Name:    "待删除供应商",
+		Kind:    domain.AIProviderKindText,
+		APIType: domain.AIAPITypeChatCompletions,
+		BaseURL: "https://api3.openai.com/v1",
+		Enabled: true,
+	}, "sk-target-orphan")
+	if err != nil {
+		t.Fatalf("创建待删除供应商失败：%v", err)
+	}
+
+	first, err := st.UpsertAIBindingTarget(domain.AIBindingTarget{
+		Capability: domain.AICapabilityTranslation,
+		ProviderID: primary.ID,
+		Model:      "gpt-a",
+		Priority:   1,
+		Enabled:    true,
+	})
+	if err != nil {
+		t.Fatalf("写入候选失败（ai_binding_targets 表缺失时必然失败）：%v", err)
+	}
+	if first.CreatedAt.IsZero() || first.UpdatedAt.IsZero() {
+		t.Fatal("候选 created_at/updated_at 未写入")
+	}
+	if _, err := st.UpsertAIBindingTarget(domain.AIBindingTarget{
+		Capability: domain.AICapabilityTranslation,
+		ProviderID: backup.ID,
+		Model:      "gpt-b",
+		Priority:   0,
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("写入备候选失败：%v", err)
+	}
+	if _, err := st.UpsertAIBindingTarget(domain.AIBindingTarget{
+		Capability: domain.AICapabilityReception,
+		ProviderID: orphan.ID,
+		Priority:   0,
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("写入接待候选失败：%v", err)
+	}
+
+	// 排序：capability、priority、provider_id。
+	targets := st.AIBindingTargets()
+	if len(targets) != 3 {
+		t.Fatalf("候选数量 = %d, want 3：%#v", len(targets), targets)
+	}
+	if targets[0].Capability != domain.AICapabilityReception || targets[0].ProviderID != orphan.ID {
+		t.Fatalf("reception 候选应排在最前：%#v", targets[0])
+	}
+	if targets[1].ProviderID != backup.ID || targets[1].Priority != 0 || targets[2].ProviderID != primary.ID || targets[2].Priority != 1 {
+		t.Fatalf("translation 候选应按 priority 升序：%#v", targets[1:])
+	}
+
+	// 主键覆盖：同 (capability, provider_id) 只更新 model/priority/enabled，created_at 保留。
+	overwritten, err := st.UpsertAIBindingTarget(domain.AIBindingTarget{
+		Capability: domain.AICapabilityTranslation,
+		ProviderID: primary.ID,
+		Model:      "gpt-a-v2",
+		Priority:   0,
+		Enabled:    false,
+	})
+	if err != nil {
+		t.Fatalf("覆盖候选失败：%v", err)
+	}
+	if !overwritten.CreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("覆盖更新应保留 created_at：%v -> %v", first.CreatedAt, overwritten.CreatedAt)
+	}
+	if overwritten.Model != "gpt-a-v2" || overwritten.Priority != 0 || overwritten.Enabled {
+		t.Fatalf("覆盖更新未生效：%+v", overwritten)
+	}
+	var translationRows int
+	if err := st.pool.QueryRow(ctx,
+		`SELECT COUNT(*)::int FROM ai_binding_targets WHERE capability='translation'`).Scan(&translationRows); err != nil {
+		t.Fatalf("统计候选失败：%v", err)
+	}
+	if translationRows != 2 {
+		t.Fatalf("覆盖更新不应新增行：translation rows=%d, want 2", translationRows)
+	}
+
+	// 主键唯一约束：绕过 Upsert 直接插入重复 (capability, provider_id) 必须被拒绝。
+	if _, err := st.pool.Exec(ctx, `
+		INSERT INTO ai_binding_targets (capability, provider_id, model, priority, enabled)
+		VALUES ('translation', $1, 'dup', 9, true)`, primary.ID); err == nil {
+		t.Fatal("重复 (capability, provider_id) 应被主键约束拒绝")
+	}
+
+	// 能力 CHECK 约束：非法能力必须被拒绝。
+	if _, err := st.pool.Exec(ctx, `
+		INSERT INTO ai_binding_targets (capability, provider_id) VALUES ('unknown', $1)`, backup.ID); err == nil {
+		t.Fatal("非法 capability 应被 CHECK 约束拒绝")
+	}
+
+	// 存储层归一化：非法能力/空 provider_id 返回 ErrInvalidInput。
+	if _, err := st.UpsertAIBindingTarget(domain.AIBindingTarget{Capability: "unknown", ProviderID: primary.ID}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("非法能力应返回 ErrInvalidInput，实际 %v", err)
+	}
+	if _, err := st.UpsertAIBindingTarget(domain.AIBindingTarget{Capability: domain.AICapabilityTranslation, ProviderID: "  "}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("空 provider_id 应返回 ErrInvalidInput，实际 %v", err)
+	}
+
+	// 删除接口：不存在返回 ErrNotFound，存在则删除。
+	if err := st.DeleteAIBindingTarget(domain.AICapabilityTranslation, "aip_missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("删除不存在的候选应返回 ErrNotFound，实际 %v", err)
+	}
+	if err := st.DeleteAIBindingTarget(domain.AICapabilityTranslation, backup.ID); err != nil {
+		t.Fatalf("删除候选失败：%v", err)
+	}
+	if err := st.DeleteAIBindingTarget(domain.AICapabilityTranslation, backup.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("重复删除应返回 ErrNotFound，实际 %v", err)
+	}
+
+	// 删除供应商：其候选被级联清理（外键 ON DELETE CASCADE + 事务内显式删除）。
+	if err := st.DeleteAIProvider(orphan.ID); err != nil {
+		t.Fatalf("删除供应商失败：%v", err)
+	}
+	for _, item := range st.AIBindingTargets() {
+		if item.ProviderID == orphan.ID {
+			t.Fatalf("删除供应商后不应残留候选：%#v", item)
+		}
+	}
+
+	// 清理本次用例数据，避免污染同库的其它集成测试。
+	if _, err := st.pool.Exec(ctx, `DELETE FROM ai_binding_targets WHERE provider_id = ANY($1)`,
+		[]string{primary.ID, backup.ID, orphan.ID}); err != nil {
+		t.Fatalf("清理候选失败：%v", err)
+	}
+	if err := st.DeleteAIProvider(primary.ID); err != nil && !errors.Is(err, ErrNotFound) {
+		t.Fatalf("清理主供应商失败：%v", err)
+	}
+	if err := st.DeleteAIProvider(backup.ID); err != nil && !errors.Is(err, ErrNotFound) {
+		t.Fatalf("清理备供应商失败：%v", err)
+	}
+}

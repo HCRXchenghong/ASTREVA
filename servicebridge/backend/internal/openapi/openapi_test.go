@@ -189,11 +189,21 @@ func TestAdminAppLifecycleAndOpenFlow(t *testing.T) {
 		t.Fatalf("message echo = %v", payload["message"])
 	}
 
-	status, payload = env.do(t, http.MethodGet, "/open/v1/conversations/"+conversationID+"/messages?limit=50", apiKey, nil)
-	if status != http.StatusOK {
-		t.Fatalf("messages status = %d", status)
+	// AI 接待回复由服务端异步生成（见 app.AddVisitorMessage 里的 go generateAIReply），
+	// 这里必须轮询等待落库，不能在发出消息后立刻断言消息条数（否则是竞态）。
+	var messages []any
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		status, payload = env.do(t, http.MethodGet, "/open/v1/conversations/"+conversationID+"/messages?limit=50", apiKey, nil)
+		if status != http.StatusOK {
+			t.Fatalf("messages status = %d", status)
+		}
+		messages = payload["messages"].([]any)
+		if len(messages) >= 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	messages := payload["messages"].([]any)
 	if len(messages) < 2 {
 		t.Fatalf("expected entry reply + visitor message, got %d", len(messages))
 	}

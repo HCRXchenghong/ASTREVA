@@ -327,6 +327,27 @@ func normalizeAIBinding(next domain.AIBinding) (domain.AIBinding, error) {
 	return next, nil
 }
 
+// normalizeAIBindingTarget 归一化并校验能力候选供应商：
+// 能力必须合法、provider_id 非空且长度受限、model 长度受限、priority 负数归零。
+// 是否要求供应商存在/启用/类型匹配由 HTTP 层整体校验（存储层保持与 ai_bindings 一致的宽松度）。
+func normalizeAIBindingTarget(next domain.AIBindingTarget) (domain.AIBindingTarget, error) {
+	next.Capability = strings.ToLower(strings.TrimSpace(next.Capability))
+	if !domain.ValidAICapability(next.Capability) {
+		return domain.AIBindingTarget{}, ErrInvalidInput
+	}
+	next.ProviderID = strings.TrimSpace(next.ProviderID)
+	if next.ProviderID == "" || len([]rune(next.ProviderID)) > maxAIBindingProviderID {
+		return domain.AIBindingTarget{}, ErrInvalidInput
+	}
+	if _, err := cleanOptionalText(next.Model, maxAIModelRunes); err != nil {
+		return domain.AIBindingTarget{}, err
+	}
+	if next.Priority < 0 {
+		next.Priority = 0
+	}
+	return next, nil
+}
+
 // normalizePushPlatform 归一化设备平台：令牌为空时平台也为空，其余只允许 android/ios。
 func normalizePushPlatform(platform, deviceToken string) string {
 	if strings.TrimSpace(deviceToken) == "" {

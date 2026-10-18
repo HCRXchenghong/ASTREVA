@@ -585,9 +585,21 @@ func cleanTranslatedText(text string) string {
 	return text
 }
 
+// UpstreamError 表示上游返回了非成功 HTTP 状态。
+// 保留 StatusCode 供上层判定可重试性/熔断冷却时长；Error() 文案与历史实现完全一致，
+// 既有日志与测试断言（status=NNN body=...）不受影响。
+type UpstreamError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *UpstreamError) Error() string {
+	return fmt.Sprintf("AI API status=%d body=%s", e.StatusCode, e.Body)
+}
+
 func responseError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	return fmt.Errorf("AI API status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	return &UpstreamError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 }
 
 // fallbackReply 在未配置 AI API Key 时按访客语言返回兜底回复。

@@ -43,6 +43,12 @@ type Service struct {
 
 	// profile 是访客画像的进程内运行时（地理解析器与告警去重，见 visitor_profile.go）。
 	profile *visitorProfileRuntime
+
+	// circuit 是按供应商维度的进程内熔断器（见 ai_circuit.go）：连续失败达阈值后
+	// 冷却期内完全跳过该供应商，冷却后 half_open 放行一次探测。重启后状态清零。
+	circuit *aiCircuitBreaker
+	// failoverLogs 限制故障转移日志频率，避免上游持续故障时刷屏。
+	failoverLogs *aiFailoverLogLimiter
 }
 
 func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Service {
@@ -58,6 +64,8 @@ func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Serv
 		watching:                newWatchRegistry(),
 		policyLoop:              &policyLoopRunner{},
 		profile:                 newVisitorProfileRuntime(),
+		circuit:                 newServiceAICircuitBreaker(),
+		failoverLogs:            newAIFailoverLogLimiter(time.Minute),
 	}
 }
 
@@ -468,8 +476,9 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 }
 
 func (s *Service) generateAIReply(conversationID, currentMsgID, userText string, visitorLang string) {
-	// 优先使用 reception 能力绑定的供应商；未绑定/被禁用时回退到全局 ai_settings。
-	settings, settingsErr := s.aiSettingsForCapability(domain.AICapabilityReception)
+	// 优先使用 reception 能力链首（targets 按 priority 升序，其次旧 binding），未绑定/被禁用时回退全局 ai_settings。
+	// 候选只解析一次：既用于超时计算与分支判断，也用于下面的故障转移，避免热路径重复读存储。
+	settings, settingsErr, receptionCandidates := s.resolveAISettings(domain.AICapabilityReception)
 	if settingsErr != nil {
 		s.logger.Warn("AI 能力绑定不可用，跳过本次 AI 回复",
 			"conversation_id", conversationID, "capability", domain.AICapabilityReception, "error", settingsErr)
@@ -524,12 +533,20 @@ func (s *Service) generateAIReply(conversationID, currentMsgID, userText string,
 			}
 		}
 		if len(search.Hits) > 0 {
-			// 命中知识：把资料注入 system prompt，并要求只依据资料回答。
-			settings.SystemPrompt = knowledge.BuildKnowledgePrompt(settings.SystemPrompt, search.Hits, search.ByID)
+			// 命中知识：记录依据条目，实际注入在下面的故障转移闭包里逐候选完成。
 			knowledgeEntryIDs = knowledgeHitIDs(search.Hits)
 		}
+		// 接待能力走故障转移：链上按优先级依次尝试，失败（网络/超时/5xx/鉴权）自动切下一个，
+		// 熔断打开的供应商被完全跳过；每个候选都要注入知识资料（system prompt 与候选无关地重建）。
 		// cacheKey 用会话 ID：同一会话的多轮请求共享同一缓存前缀，跨会话天然隔离。
-		generated, err := s.ai.Reply(ctx, settings, s.store.ContactSettings(), history, userText, visitorLang, conversationID)
+		generated, err := s.runFailoverChain(ctx, domain.AICapabilityReception,
+			s.chainFromCandidates(domain.AICapabilityReception, receptionCandidates),
+			func(candidate domain.AISettings) (string, error) {
+				if len(search.Hits) > 0 {
+					candidate.SystemPrompt = knowledge.BuildKnowledgePrompt(candidate.SystemPrompt, search.Hits, search.ByID)
+				}
+				return s.ai.Reply(ctx, candidate, s.store.ContactSettings(), history, userText, visitorLang, conversationID)
+			})
 		if err != nil {
 			s.logger.Warn("AI reply failed", "conversation_id", conversationID, "error", err)
 			generated = aiBusyText(visitorLang)
@@ -549,13 +566,13 @@ func (s *Service) generateAIReply(conversationID, currentMsgID, userText string,
 		// 超限提示的中文原文已知，直接作为中文译文落库，避免再调用一次翻译上游。
 		translations[ai.LangZh] = limitExceededChinese
 	case visitorLang != ai.LangZh && ai.DetectLang(reply) != ai.LangZh:
-		// AI 回复的中文译文属于 translation 能力，单独解析其绑定。
-		translateSettings, translateSettingsErr := s.aiSettingsForCapability(domain.AICapabilityTranslation)
-		if translateSettingsErr != nil {
-			s.logger.Warn("翻译能力绑定不可用，跳过 AI 回复译文",
-				"conversation_id", conversationID, "error", translateSettingsErr)
-		} else if zhText, translateErr := s.ai.Translate(ctx, translateSettings, reply, visitorLang, ai.LangZh); translateErr == nil && strings.TrimSpace(zhText) != "" {
+		// AI 回复的中文译文属于 translation 能力，单独解析其绑定并同样走故障转移。
+		if zhText, translateErr := s.doWithFailover(ctx, domain.AICapabilityTranslation, func(candidate domain.AISettings) (string, error) {
+			return s.ai.Translate(ctx, candidate, reply, visitorLang, ai.LangZh)
+		}); translateErr == nil && strings.TrimSpace(zhText) != "" {
 			translations[ai.LangZh] = zhText
+		} else if translateErr != nil {
+			s.logger.Warn("AI 回复译文生成失败", "conversation_id", conversationID, "error", translateErr)
 		}
 	}
 	msg, conversation, err := s.store.AddAIMessageWithKnowledge(conversationID, reply, translations, knowledgeEntryIDs)
@@ -1053,7 +1070,10 @@ func (s *Service) translateInitialMessageForVisitor(conversationID, visitorLang 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
 		defer cancel()
-		translated, err := s.ai.Translate(ctx, s.translationSettingsOrDefault(conversationID), original, ai.LangZh, visitorLang)
+		// 欢迎语翻译属于非访客阻塞链路：白名单拒绝时回退全局配置，保证翻译不中断。
+		translated, err := s.doWithFailoverLenient(ctx, domain.AICapabilityTranslation, func(candidate domain.AISettings) (string, error) {
+			return s.ai.Translate(ctx, candidate, original, ai.LangZh, visitorLang)
+		})
 		if err != nil || strings.TrimSpace(translated) == "" {
 			s.logger.Warn("translate initial message failed", "conversation_id", conversationID, "error", err)
 			return
@@ -1143,16 +1163,13 @@ func (s *Service) translateMessageWithStyle(sourceLang, targetLang string, messa
 	if translated, ok := knownSystemText(content, targetLang); ok {
 		return map[string]string{targetLang: translated}
 	}
-	// 翻译能力优先使用其绑定的供应商，未绑定/禁用时回退到全局 ai_settings。
-	settings, settingsErr := s.aiSettingsForCapability(domain.AICapabilityTranslation)
-	if settingsErr != nil {
-		s.logger.Warn("翻译能力绑定不可用，跳过本次翻译",
-			"source", sourceLang, "target", targetLang, "error", settingsErr)
-		return nil
-	}
+	// 翻译能力优先使用其绑定的供应商，未绑定/禁用时回退到全局 ai_settings；
+	// 绑定多个供应商时按优先级依次尝试，失败自动切下一个（白名单拒绝直接失败并记录日志）。
 	ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
 	defer cancel()
-	translated, err := s.ai.TranslateWithStyle(ctx, settings, content, sourceLang, targetLang, styleHint)
+	translated, err := s.doWithFailover(ctx, domain.AICapabilityTranslation, func(candidate domain.AISettings) (string, error) {
+		return s.ai.TranslateWithStyle(ctx, candidate, content, sourceLang, targetLang, styleHint)
+	})
 	if err != nil || strings.TrimSpace(translated) == "" {
 		s.logger.Warn("translate message failed", "source", sourceLang, "target", targetLang, "error", err)
 		return nil
@@ -1180,7 +1197,10 @@ func (s *Service) translateAndStoreSystemMessage(conversationID, visitorLang str
 	} else {
 		ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
 		defer cancel()
-		translated, err := s.ai.Translate(ctx, s.translationSettingsOrDefault(conversationID), msg.Content, ai.LangZh, visitorLang)
+		// 系统消息翻译属于非访客阻塞链路：白名单拒绝时回退全局配置，保证翻译不中断。
+		translated, err := s.doWithFailoverLenient(ctx, domain.AICapabilityTranslation, func(candidate domain.AISettings) (string, error) {
+			return s.ai.Translate(ctx, candidate, msg.Content, ai.LangZh, visitorLang)
+		})
 		if err != nil || strings.TrimSpace(translated) == "" {
 			s.logger.Warn("translate system message failed", "conversation_id", conversationID, "error", err)
 			return

@@ -1339,6 +1339,19 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		writeJSON(w, http.StatusOK, map[string]any{"providers": providers})
 	})
 
+	// 供应商熔断健康快照：只读、仅管理员，返回状态与脱敏后的最后错误，绝不含密钥。
+	mux.HandleFunc("GET /api/admin/ai-providers/health", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		providers := service.AIProviderHealth()
+		if providers == nil {
+			providers = []domain.AIProviderHealth{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"providers": providers})
+	})
+
 	mux.HandleFunc("POST /api/admin/ai-providers", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(service, r) {
 			writeError(w, store.ErrForbidden)
@@ -1528,6 +1541,70 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		}
 		recordAuditFromRequest(service, r, trustedProxies, "ai_bindings.update", "ai_bindings", "", "更新 AI 能力绑定")
 		writeJSON(w, http.StatusOK, map[string]any{"bindings": aiBindingList(service.Store().AIBindings())})
+	})
+
+	// ===== 能力候选供应商（同能力多供应商 + 故障转移）=====
+	// GET 返回全部候选；PUT 为整体替换：请求里未出现的候选会被删除（可传空数组清空）。
+	mux.HandleFunc("GET /api/admin/ai-binding-targets", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"targets": aiBindingTargetList(service.Store().AIBindingTargets())})
+	})
+
+	mux.HandleFunc("PUT /api/admin/ai-binding-targets", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req struct {
+			Targets []aiBindingTargetRequest `json:"targets"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		targets := make([]domain.AIBindingTarget, 0, len(req.Targets))
+		for _, item := range req.Targets {
+			enabled := true
+			if item.Enabled != nil {
+				enabled = *item.Enabled
+			}
+			targets = append(targets, domain.AIBindingTarget{
+				Capability: item.Capability,
+				ProviderID: item.ProviderID,
+				Model:      item.Model,
+				Priority:   item.Priority,
+				Enabled:    enabled,
+			})
+		}
+		// 先整体校验再落库，避免部分成功导致能力指向半配置状态。
+		if err := validateAIBindingTargetRequest(service, targets); err != nil {
+			writeError(w, err)
+			return
+		}
+		keep := make(map[string]bool, len(targets))
+		for _, target := range targets {
+			saved, err := service.Store().UpsertAIBindingTarget(target)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			keep[saved.Capability+"\x00"+saved.ProviderID] = true
+		}
+		// 整体替换语义：删除本次请求未包含的旧候选。
+		for _, existing := range service.Store().AIBindingTargets() {
+			key := existing.Capability + "\x00" + existing.ProviderID
+			if keep[key] {
+				continue
+			}
+			if err := service.Store().DeleteAIBindingTarget(existing.Capability, existing.ProviderID); err != nil && !errors.Is(err, store.ErrNotFound) {
+				writeError(w, err)
+				return
+			}
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "ai_binding_targets.update", "ai_binding_targets", "", "更新 AI 能力候选供应商")
+		writeJSON(w, http.StatusOK, map[string]any{"targets": aiBindingTargetList(service.Store().AIBindingTargets())})
 	})
 
 	// ===== AI 知识库（后台管理）=====
@@ -2284,6 +2361,16 @@ type aiProviderPatchRequest struct {
 	SortOrder    *int      `json:"sort_order"`
 }
 
+// aiBindingTargetRequest 是能力候选供应商的写入请求体。
+// enabled 用指针区分“未提供”（默认启用）与“显式禁用”。
+type aiBindingTargetRequest struct {
+	Capability string `json:"capability"`
+	ProviderID string `json:"provider_id"`
+	Model      string `json:"model"`
+	Priority   int    `json:"priority"`
+	Enabled    *bool  `json:"enabled"`
+}
+
 type aiSettingsRequest struct {
 	Enabled         bool                  `json:"enabled"`
 	Mode            domain.AICustomerMode `json:"mode"`
@@ -2493,6 +2580,48 @@ func validateAIBindingRequest(service *app.Service, bindings []domain.AIBinding)
 			// 空 provider_id 表示解除绑定，允许。
 			continue
 		}
+		provider, ok := service.Store().AIProvider(providerID)
+		if !ok {
+			return fmt.Errorf("%w: 供应商 %q 不存在", store.ErrInvalidInput, providerID)
+		}
+		if !provider.Enabled {
+			return fmt.Errorf("%w: 供应商 %q 已禁用", store.ErrInvalidInput, providerID)
+		}
+		if provider.Kind != domain.AICapabilityKind(capability) {
+			return fmt.Errorf("%w: 能力 %q 需要 %s 类型供应商，供应商 %q 是 %s 类型",
+				store.ErrInvalidInput, capability, domain.AICapabilityKind(capability), providerID, provider.Kind)
+		}
+	}
+	return nil
+}
+
+// aiBindingTargetList 把候选列表归一为稳定顺序（capability、priority、provider_id），
+// 存储层已排序，这里只保证空列表序列化为 []。
+func aiBindingTargetList(targets []domain.AIBindingTarget) []domain.AIBindingTarget {
+	if targets == nil {
+		return []domain.AIBindingTarget{}
+	}
+	return targets
+}
+
+// validateAIBindingTargetRequest 在落库前整体校验候选：
+// 能力合法、provider_id 非空且不重复、供应商存在且已启用、类型与能力匹配。
+func validateAIBindingTargetRequest(service *app.Service, targets []domain.AIBindingTarget) error {
+	seen := map[string]bool{}
+	for _, target := range targets {
+		capability := strings.ToLower(strings.TrimSpace(target.Capability))
+		if !domain.ValidAICapability(capability) {
+			return fmt.Errorf("%w: 能力 %q 不合法", store.ErrInvalidInput, target.Capability)
+		}
+		providerID := strings.TrimSpace(target.ProviderID)
+		if providerID == "" {
+			return fmt.Errorf("%w: 能力 %q 的 provider_id 不能为空", store.ErrInvalidInput, capability)
+		}
+		key := capability + "\x00" + providerID
+		if seen[key] {
+			return fmt.Errorf("%w: 能力 %q 的供应商 %q 重复提交", store.ErrInvalidInput, capability, providerID)
+		}
+		seen[key] = true
 		provider, ok := service.Store().AIProvider(providerID)
 		if !ok {
 			return fmt.Errorf("%w: 供应商 %q 不存在", store.ErrInvalidInput, providerID)

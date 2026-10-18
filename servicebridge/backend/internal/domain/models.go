@@ -352,6 +352,10 @@ type AISettings struct {
 	// CacheMode 为当前 Model 解析出的缓存模式（运行时字段，不入库）：
 	// auto=上游自动提示词缓存；explicit=需显式标记（Anthropic）；空=不启用缓存优化。
 	CacheMode string `json:"-"`
+	// ProviderID / ProviderName 是运行时字段（不入库）：由能力链解析时写入，
+	// 供熔断器按供应商维度计数、健康接口与日志定位使用；全局 ai_settings 兜底时为空。
+	ProviderID   string `json:"-"`
+	ProviderName string `json:"-"`
 }
 
 // AICacheProbe 记录各模型的提示词缓存探测结果，与 ai_settings 分表存放。
@@ -463,6 +467,37 @@ type AIBinding struct {
 	Model      string         `json:"model,omitempty"`
 	Params     map[string]any `json:"params,omitempty"`
 	UpdatedAt  time.Time      `json:"updated_at,omitempty"`
+}
+
+// AIBindingTarget 是某能力下的一个候选供应商：同一能力可挂多个供应商，
+// 运行时按 Priority 升序依次尝试，前一个失败（网络/超时/5xx/鉴权失败）时自动切到下一个。
+// 旧的 ai_bindings 记录仍然有效，等价于在 targets 之后追加的兜底候选（priority=0 语义）。
+type AIBindingTarget struct {
+	Capability string    `json:"capability"`
+	ProviderID string    `json:"provider_id"`
+	Model      string    `json:"model,omitempty"`
+	Priority   int       `json:"priority"`
+	Enabled    bool      `json:"enabled"`
+	CreatedAt  time.Time `json:"created_at,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at,omitempty"`
+}
+
+// AI 供应商熔断状态取值。
+const (
+	AICircuitStateClosed   = "closed"    // 正常放行
+	AICircuitStateOpen     = "open"      // 连续失败达到阈值，冷却期内完全跳过
+	AICircuitStateHalfOpen = "half_open" // 冷却结束，放行一次探测
+)
+
+// AIProviderHealth 是供应商的熔断健康快照（仅管理员可读，不含任何密钥）。
+type AIProviderHealth struct {
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	Enabled             bool       `json:"enabled"`
+	State               string     `json:"state"`
+	ConsecutiveFailures int        `json:"consecutive_failures"`
+	OpenedUntil         *time.Time `json:"opened_until,omitempty"`
+	LastError           string     `json:"last_error,omitempty"`
 }
 
 // ===== AI 知识库 =====

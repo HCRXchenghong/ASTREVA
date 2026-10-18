@@ -69,6 +69,13 @@ type Store interface {
 	// AIBindings 返回能力标识到绑定的映射。
 	AIBindings() map[string]domain.AIBinding
 	UpsertAIBinding(next domain.AIBinding) (domain.AIBinding, error)
+	// AIBindingTargets 返回全部能力候选供应商（按 capability、priority、provider_id 稳定排序）。
+	// 同一能力可挂多个供应商，运行时按 priority 升序依次尝试。
+	AIBindingTargets() []domain.AIBindingTarget
+	// UpsertAIBindingTarget 新增或覆盖一条候选（主键为 capability+provider_id），created_at 保留首次写入值。
+	UpsertAIBindingTarget(next domain.AIBindingTarget) (domain.AIBindingTarget, error)
+	// DeleteAIBindingTarget 删除一条候选；不存在时返回 ErrNotFound。
+	DeleteAIBindingTarget(capability, providerID string) error
 	BusinessHours() domain.BusinessHours
 	UpdateBusinessHours(next domain.BusinessHours) (domain.BusinessHours, error)
 	PushSettings() domain.PushSettings

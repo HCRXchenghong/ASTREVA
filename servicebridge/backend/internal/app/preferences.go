@@ -120,11 +120,10 @@ func (s *Service) TranslatePreview(ctx context.Context, agentID, conversationID,
 	translateCtx, cancel := context.WithTimeout(ctx, translationWindow)
 	defer cancel()
 	// 翻译能力优先使用其绑定的供应商；白名单校验失败时直接返回错误，不发出请求。
-	settings, settingsErr := s.aiSettingsForCapability(domain.AICapabilityTranslation)
-	if settingsErr != nil {
-		return TranslationPreview{}, settingsErr
-	}
-	translated, err := s.ai.TranslateWithStyle(translateCtx, settings, content, sourceLang, targetLang, styleHint)
+	// 绑定多个供应商时按优先级依次尝试，失败自动切下一个。
+	translated, err := s.doWithFailover(translateCtx, domain.AICapabilityTranslation, func(candidate domain.AISettings) (string, error) {
+		return s.ai.TranslateWithStyle(translateCtx, candidate, content, sourceLang, targetLang, styleHint)
+	})
 	if err != nil {
 		return TranslationPreview{}, err
 	}

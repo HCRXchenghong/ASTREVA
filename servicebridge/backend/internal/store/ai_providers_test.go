@@ -221,3 +221,124 @@ func TestMemoryAIBindingsAndDeleteResidual(t *testing.T) {
 		t.Fatal("删除供应商后不应残留能力绑定")
 	}
 }
+
+// TestMemoryAIBindingTargetsCRUDAndCascade 覆盖候选供应商的增改查、主键覆盖、
+// 优先级排序、参数校验与删除供应商后的级联清理。
+func TestMemoryAIBindingTargetsCRUDAndCascade(t *testing.T) {
+	s := NewMemoryStore(Options{})
+
+	// 显式指定 ID，便于断言同优先级下的稳定排序（provider_id 升序）。
+	primary, err := s.CreateAIProvider(domain.AIProvider{
+		ID:      "aip_primary",
+		Name:    "主供应商",
+		Kind:    domain.AIProviderKindText,
+		BaseURL: "https://api.example.com/v1",
+		Models:  []string{"model-a"},
+		Enabled: true,
+	}, "key-primary")
+	if err != nil {
+		t.Fatalf("create primary provider: %v", err)
+	}
+	backup, err := s.CreateAIProvider(domain.AIProvider{
+		ID:      "aip_backup",
+		Name:    "备供应商",
+		Kind:    domain.AIProviderKindText,
+		BaseURL: "https://api2.example.com/v1",
+		Models:  []string{"model-b"},
+		Enabled: true,
+	}, "key-backup")
+	if err != nil {
+		t.Fatalf("create backup provider: %v", err)
+	}
+
+	first, err := s.UpsertAIBindingTarget(domain.AIBindingTarget{
+		Capability: domain.AICapabilityTranslation,
+		ProviderID: primary.ID,
+		Model:      "model-a",
+		Priority:   1,
+		Enabled:    true,
+	})
+	if err != nil {
+		t.Fatalf("upsert primary target: %v", err)
+	}
+	if first.CreatedAt.IsZero() || first.UpdatedAt.IsZero() {
+		t.Fatal("候选 created_at/updated_at 未写入")
+	}
+	if _, err := s.UpsertAIBindingTarget(domain.AIBindingTarget{
+		Capability: domain.AICapabilityTranslation,
+		ProviderID: backup.ID,
+		Model:      "model-b",
+		Priority:   0,
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("upsert backup target: %v", err)
+	}
+
+	// 排序：priority 升序。
+	targets := s.AIBindingTargets()
+	if len(targets) != 2 || targets[0].ProviderID != backup.ID || targets[1].ProviderID != primary.ID {
+		t.Fatalf("候选排序不符合 priority 升序：%#v", targets)
+	}
+
+	// 覆盖更新：主键相同，created_at 保留、model/priority/enabled 覆盖。
+	updated, err := s.UpsertAIBindingTarget(domain.AIBindingTarget{
+		Capability: domain.AICapabilityTranslation,
+		ProviderID: primary.ID,
+		Model:      "model-a-v2",
+		Priority:   0,
+		Enabled:    false,
+	})
+	if err != nil {
+		t.Fatalf("overwrite primary target: %v", err)
+	}
+	if !updated.CreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("覆盖更新应保留 created_at：%v -> %v", first.CreatedAt, updated.CreatedAt)
+	}
+	if updated.Model != "model-a-v2" || updated.Priority != 0 || updated.Enabled {
+		t.Fatalf("覆盖更新未生效：%+v", updated)
+	}
+	// 同优先级（0）下按 provider_id 升序：aip_backup < aip_primary。
+	targets = s.AIBindingTargets()
+	if len(targets) != 2 || targets[0].ProviderID != backup.ID || targets[1].ProviderID != primary.ID {
+		t.Fatalf("同优先级排序应为 provider_id 升序：%#v", targets)
+	}
+
+	// 非法能力 / 空 provider_id / 负数 priority 归一。
+	if _, err := s.UpsertAIBindingTarget(domain.AIBindingTarget{Capability: "unknown", ProviderID: primary.ID}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("非法能力应返回 ErrInvalidInput，实际 %v", err)
+	}
+	if _, err := s.UpsertAIBindingTarget(domain.AIBindingTarget{Capability: domain.AICapabilityTranslation, ProviderID: "  "}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("空 provider_id 应返回 ErrInvalidInput，实际 %v", err)
+	}
+	negative, err := s.UpsertAIBindingTarget(domain.AIBindingTarget{
+		Capability: domain.AICapabilityTranslation,
+		ProviderID: backup.ID,
+		Priority:   -5,
+		Enabled:    true,
+	})
+	if err != nil {
+		t.Fatalf("负数 priority 应被归一而非报错：%v", err)
+	}
+	if negative.Priority != 0 {
+		t.Fatalf("负数 priority 应归零，实际 %d", negative.Priority)
+	}
+
+	// 删除：不存在返回 ErrNotFound，存在则移除。
+	if err := s.DeleteAIBindingTarget(domain.AICapabilityTranslation, "aip_missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("删除不存在的候选应返回 ErrNotFound，实际 %v", err)
+	}
+	if err := s.DeleteAIBindingTarget(domain.AICapabilityTranslation, backup.ID); err != nil {
+		t.Fatalf("删除候选失败：%v", err)
+	}
+	if got := s.AIBindingTargets(); len(got) != 1 || got[0].ProviderID != primary.ID {
+		t.Fatalf("删除后剩余候选不符合预期：%#v", got)
+	}
+
+	// 删除供应商：其候选被级联清理。
+	if err := s.DeleteAIProvider(primary.ID); err != nil {
+		t.Fatalf("delete provider: %v", err)
+	}
+	if got := s.AIBindingTargets(); len(got) != 0 {
+		t.Fatalf("删除供应商后不应残留候选：%#v", got)
+	}
+}

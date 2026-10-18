@@ -258,3 +258,139 @@ func TestAdminAgentPreferences(t *testing.T) {
 	agentToken := loginForToken(t, router, "/api/agent/login", agent.Account, "AgentPass-123456")
 	doJSON(t, router, http.MethodGet, "/api/admin/agents/"+agent.ID+"/preferences", agentToken, nil, http.StatusForbidden)
 }
+
+// TestAdminAIBindingTargetsAndHealth 覆盖能力候选供应商接口（GET/PUT、整体替换、校验）
+// 与熔断健康接口（仅管理员、脱敏、默认 closed）。
+func TestAdminAIBindingTargetsAndHealth(t *testing.T) {
+	router, st := newAgentPreferencesRouter(t)
+
+	// 未登录：候选与健康接口都必须 403。
+	doJSON(t, router, http.MethodGet, "/api/admin/ai-binding-targets", "", nil, http.StatusForbidden)
+	doJSON(t, router, http.MethodPut, "/api/admin/ai-binding-targets", "", map[string]any{"targets": []any{}}, http.StatusForbidden)
+	doJSON(t, router, http.MethodGet, "/api/admin/ai-providers/health", "", nil, http.StatusForbidden)
+
+	adminToken := loginForToken(t, router, "/api/admin/login", "superadmin", "123456")
+	createProvider := func(name, kind, baseURL string) string {
+		t.Helper()
+		apiType := "chat_completions"
+		if kind == "image" {
+			apiType = "images"
+		}
+		created := doJSON(t, router, http.MethodPost, "/api/admin/ai-providers", adminToken, map[string]any{
+			"name":     name,
+			"kind":     kind,
+			"api_type": apiType,
+			"base_url": baseURL,
+			"api_key":  "sk-" + name + "-1234567890",
+			"enabled":  true,
+		}, http.StatusCreated)
+		return created["provider"].(map[string]any)["id"].(string)
+	}
+	primaryID := createProvider("主供应商", "text", "https://api.openai.com/v1")
+	backupID := createProvider("备供应商", "text", "https://api2.openai.com/v1")
+	imageID := createProvider("图像供应商", "image", "https://image.openai.com/v1")
+
+	// 初始为空数组。
+	empty := doJSON(t, router, http.MethodGet, "/api/admin/ai-binding-targets", adminToken, nil, http.StatusOK)
+	if targets, _ := empty["targets"].([]any); len(targets) != 0 {
+		t.Fatalf("初始候选应为空：%#v", empty)
+	}
+
+	// 写入两条候选（priority 0/1），返回按优先级排序。
+	saved := doJSON(t, router, http.MethodPut, "/api/admin/ai-binding-targets", adminToken, map[string]any{
+		"targets": []map[string]any{
+			{"capability": "translation", "provider_id": backupID, "model": "model-b", "priority": 1, "enabled": true},
+			{"capability": "translation", "provider_id": primaryID, "model": "model-a", "priority": 0, "enabled": true},
+		},
+	}, http.StatusOK)
+	targets, _ := saved["targets"].([]any)
+	if len(targets) != 2 {
+		t.Fatalf("候选数量 = %d, want 2", len(targets))
+	}
+	first := targets[0].(map[string]any)
+	if first["provider_id"] != primaryID || first["priority"] != float64(0) {
+		t.Fatalf("候选应按 priority 升序返回：%#v", first)
+	}
+	if stored := st.AIBindingTargets(); len(stored) != 2 || stored[0].ProviderID != primaryID || stored[0].Model != "model-a" {
+		t.Fatalf("候选未落库：%#v", stored)
+	}
+
+	// enabled 缺省时默认启用。
+	defaulted := doJSON(t, router, http.MethodPut, "/api/admin/ai-binding-targets", adminToken, map[string]any{
+		"targets": []map[string]any{
+			{"capability": "reception", "provider_id": primaryID, "priority": 0},
+		},
+	}, http.StatusOK)
+	receptionTargets, _ := defaulted["targets"].([]any)
+	if len(receptionTargets) != 1 || receptionTargets[0].(map[string]any)["enabled"] != true {
+		t.Fatalf("缺省 enabled 应默认启用：%#v", defaulted)
+	}
+
+	// PUT 是整体替换：上一次的 translation 候选已被清除。
+	if stored := st.AIBindingTargets(); len(stored) != 1 || stored[0].Capability != "reception" {
+		t.Fatalf("PUT 应为整体替换语义：%#v", stored)
+	}
+
+	// 校验失败一律 400：非法能力、类型不匹配、供应商不存在、重复提交。
+	doJSON(t, router, http.MethodPut, "/api/admin/ai-binding-targets", adminToken, map[string]any{
+		"targets": []map[string]any{{"capability": "unknown", "provider_id": primaryID}},
+	}, http.StatusBadRequest)
+	doJSON(t, router, http.MethodPut, "/api/admin/ai-binding-targets", adminToken, map[string]any{
+		"targets": []map[string]any{{"capability": "image", "provider_id": primaryID}},
+	}, http.StatusBadRequest)
+	doJSON(t, router, http.MethodPut, "/api/admin/ai-binding-targets", adminToken, map[string]any{
+		"targets": []map[string]any{{"capability": "translation", "provider_id": imageID}},
+	}, http.StatusBadRequest)
+	doJSON(t, router, http.MethodPut, "/api/admin/ai-binding-targets", adminToken, map[string]any{
+		"targets": []map[string]any{{"capability": "translation", "provider_id": "aip_missing"}},
+	}, http.StatusBadRequest)
+	doJSON(t, router, http.MethodPut, "/api/admin/ai-binding-targets", adminToken, map[string]any{
+		"targets": []map[string]any{
+			{"capability": "translation", "provider_id": primaryID},
+			{"capability": "translation", "provider_id": primaryID},
+		},
+	}, http.StatusBadRequest)
+
+	// 禁用供应商后不允许再写入候选。
+	doJSON(t, router, http.MethodPatch, "/api/admin/ai-providers/"+backupID, adminToken, map[string]any{
+		"enabled": false,
+	}, http.StatusOK)
+	doJSON(t, router, http.MethodPut, "/api/admin/ai-binding-targets", adminToken, map[string]any{
+		"targets": []map[string]any{{"capability": "translation", "provider_id": backupID}},
+	}, http.StatusBadRequest)
+
+	// 健康接口：默认 closed/0，且绝不包含密钥。
+	health := doJSON(t, router, http.MethodGet, "/api/admin/ai-providers/health", adminToken, nil, http.StatusOK)
+	providers, _ := health["providers"].([]any)
+	if len(providers) != 3 {
+		t.Fatalf("健康列表应包含全部供应商（含禁用）：%#v", health)
+	}
+	if strings.Contains(recString(health), "sk-") || strings.Contains(recString(health), "api_key") {
+		t.Fatalf("健康接口泄露了密钥：%s", recString(health))
+	}
+	for _, item := range providers {
+		entry := item.(map[string]any)
+		if entry["state"] != domain.AICircuitStateClosed || entry["consecutive_failures"] != float64(0) {
+			t.Fatalf("未失败供应商应为 closed/0：%#v", entry)
+		}
+		if _, hasOpened := entry["opened_until"]; hasOpened {
+			t.Fatalf("closed 状态不应返回 opened_until：%#v", entry)
+		}
+	}
+
+	// 删除供应商后其候选被级联清理。
+	doJSON(t, router, http.MethodDelete, "/api/admin/ai-providers/"+primaryID, adminToken, nil, http.StatusOK)
+	for _, item := range st.AIBindingTargets() {
+		if item.ProviderID == primaryID {
+			t.Fatalf("删除供应商后不应残留候选：%#v", item)
+		}
+	}
+
+	// 空数组可清空全部候选。
+	cleared := doJSON(t, router, http.MethodPut, "/api/admin/ai-binding-targets", adminToken, map[string]any{
+		"targets": []any{},
+	}, http.StatusOK)
+	if got, _ := cleared["targets"].([]any); len(got) != 0 {
+		t.Fatalf("空数组应清空候选：%#v", cleared)
+	}
+}

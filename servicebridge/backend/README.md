@@ -22,4 +22,6 @@ STORE_DRIVER=memory HTTP_ADDR=127.0.0.1:8080 go run ./cmd/server
 
 上传变量包括 `UPLOAD_DRIVER`、`UPLOAD_DIR`、`UPLOAD_PUBLIC_BASE_URL`、`UPLOAD_MAX_BYTES` 以及 `S3_*`。AI 变量包括 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`、`OPENAI_API_TYPE`；后台保存的数据库配置优先于启动默认值。
 
+AI 供应商熔断变量：`AI_CIRCUIT_COOLDOWN_MS`（普通故障冷却，默认 30000，最小 5000）与 `AI_CIRCUIT_AUTH_COOLDOWN_MS`（401/403 冷却，默认 300000，最小 5000）。同一能力可挂多个供应商（`ai_binding_targets`，按 priority 升序尝试），连续失败 3 次后熔断跳过，冷却结束放行一次探测；管理端接口为 `GET/PUT /api/admin/ai-binding-targets` 与 `GET /api/admin/ai-providers/health`。
+
 完整接口见 `../docs/API与WebSocket协议.md`。客服使用 `../apps/agent-mobile/` Flutter App，管理员使用仓库根 `admin-server/` 统一后台；推送、自动化端到端测试和生产验收状态见根目录 `功能完善任务.md`。

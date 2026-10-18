@@ -24,14 +24,15 @@ var _ Store = (*PostgresStore)(nil)
 const (
 	defaultDBTimeout = 5 * time.Second
 
-	adminColumns        = `id, account, name, password_hash, created_at`
-	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), COALESCE(device_platform, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate, COALESCE(preferences::text, '{}')`
-	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, COALESCE(detected_lang, ''), COALESCE(reply_lang_override, ''), reply_lang_override_at, COALESCE(language_stats::text, '{}'), last_message, last_message_at, unread_for_agent, unread_for_visitor, first_response_at, last_agent_reply_at, COALESCE(sla_state, ''), COALESCE(queue_group, ''), unattended_notified_at, created_at, updated_at`
-	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id, COALESCE(detected_lang, ''), COALESCE(author_lang, ''), COALESCE(translation_status, ''), COALESCE(knowledge_entry_ids::text, '[]')`
-	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
-	auditColumns        = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
-	aiProviderColumns   = `id, name, kind, api_type, base_url, api_key_ciphertext, COALESCE(models::text, '[]'), default_model, timeout_ms, allowed_hosts, enabled, sort_order, created_at, updated_at`
-	aiBindingColumns    = `capability, provider_id, COALESCE(model, ''), COALESCE(params::text, '{}'), updated_at`
+	adminColumns           = `id, account, name, password_hash, created_at`
+	agentColumns           = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), COALESCE(device_platform, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate, COALESCE(preferences::text, '{}')`
+	conversationColumns    = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, COALESCE(detected_lang, ''), COALESCE(reply_lang_override, ''), reply_lang_override_at, COALESCE(language_stats::text, '{}'), last_message, last_message_at, unread_for_agent, unread_for_visitor, first_response_at, last_agent_reply_at, COALESCE(sla_state, ''), COALESCE(queue_group, ''), unattended_notified_at, created_at, updated_at`
+	messageColumns         = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id, COALESCE(detected_lang, ''), COALESCE(author_lang, ''), COALESCE(translation_status, ''), COALESCE(knowledge_entry_ids::text, '[]')`
+	ratingColumns          = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
+	auditColumns           = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
+	aiProviderColumns      = `id, name, kind, api_type, base_url, api_key_ciphertext, COALESCE(models::text, '[]'), default_model, timeout_ms, allowed_hosts, enabled, sort_order, created_at, updated_at`
+	aiBindingColumns       = `capability, provider_id, COALESCE(model, ''), COALESCE(params::text, '{}'), updated_at`
+	aiBindingTargetColumns = `capability, provider_id, COALESCE(model, ''), priority, enabled, created_at, updated_at`
 )
 
 type PostgresStore struct {
@@ -182,6 +183,17 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 			CONSTRAINT ai_bindings_capability_check CHECK (capability IN ('reception','translation','detection','seo','image'))
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_bindings_provider ON ai_bindings(provider_id)`,
+		// 能力候选供应商：同一能力可挂多个（主键 capability+provider_id），按 priority 升序尝试。
+		// provider_id 建外键并 ON DELETE CASCADE：删除供应商时候选一并清理，不留悬挂引用。
+		`CREATE TABLE IF NOT EXISTS ai_binding_targets (
+			capability TEXT NOT NULL, provider_id TEXT NOT NULL REFERENCES ai_providers(id) ON DELETE CASCADE,
+			model TEXT NOT NULL DEFAULT '', priority INT NOT NULL DEFAULT 0, enabled BOOLEAN NOT NULL DEFAULT true,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			PRIMARY KEY (capability, provider_id),
+			CONSTRAINT ai_binding_targets_capability_check CHECK (capability IN ('reception','translation','detection','seo','image'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_binding_targets_provider ON ai_binding_targets(provider_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_binding_targets_order ON ai_binding_targets(capability, priority)`,
 		// ===== AI 知识库（多库、两种用途、库外拒答）=====
 		`CREATE TABLE IF NOT EXISTS ai_knowledge_bases (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
@@ -1885,7 +1897,8 @@ func (s *PostgresStore) UpdateAIProvider(id string, patch domain.AIProvider, api
 	return provider, nil
 }
 
-// DeleteAIProvider 删除供应商并删除指向它的能力绑定，避免悬挂引用。
+// DeleteAIProvider 删除供应商并删除指向它的能力绑定与候选，避免悬挂引用
+// （候选表另有 ON DELETE CASCADE 外键兜底，这里显式删除保持两种存储行为一致）。
 func (s *PostgresStore) DeleteAIProvider(id string) error {
 	ctx, cancel := dbContext()
 	defer cancel()
@@ -1899,7 +1912,10 @@ func (s *PostgresStore) DeleteAIProvider(id string) error {
 		if tag.RowsAffected() == 0 {
 			return ErrNotFound
 		}
-		_, err = tx.Exec(ctx, `DELETE FROM ai_bindings WHERE provider_id=$1`, id)
+		if _, err = tx.Exec(ctx, `DELETE FROM ai_bindings WHERE provider_id=$1`, id); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM ai_binding_targets WHERE provider_id=$1`, id)
 		return err
 	})
 }
@@ -1967,6 +1983,78 @@ func (s *PostgresStore) UpsertAIBinding(next domain.AIBinding) (domain.AIBinding
 		return domain.AIBinding{}, err
 	}
 	return binding, nil
+}
+
+func scanAIBindingTarget(row scanTarget) (domain.AIBindingTarget, error) {
+	var out domain.AIBindingTarget
+	if err := row.Scan(&out.Capability, &out.ProviderID, &out.Model, &out.Priority, &out.Enabled, &out.CreatedAt, &out.UpdatedAt); err != nil {
+		return domain.AIBindingTarget{}, err
+	}
+	return out, nil
+}
+
+// AIBindingTargets 返回全部能力候选供应商，按 capability、priority、provider_id 稳定排序。
+func (s *PostgresStore) AIBindingTargets() []domain.AIBindingTarget {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	out := []domain.AIBindingTarget{}
+	rows, err := s.pool.Query(ctx, `SELECT `+aiBindingTargetColumns+` FROM ai_binding_targets ORDER BY capability, priority, provider_id`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		target, err := scanAIBindingTarget(rows)
+		if err != nil {
+			return out
+		}
+		out = append(out, target)
+	}
+	return out
+}
+
+// UpsertAIBindingTarget 覆盖写入一条候选；主键冲突时更新 model/priority/enabled，created_at 保持不变。
+func (s *PostgresStore) UpsertAIBindingTarget(next domain.AIBindingTarget) (domain.AIBindingTarget, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	next, err := normalizeAIBindingTarget(next)
+	if err != nil {
+		return domain.AIBindingTarget{}, err
+	}
+	target, err := scanAIBindingTarget(s.pool.QueryRow(ctx, `
+		INSERT INTO ai_binding_targets (capability, provider_id, model, priority, enabled, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $6)
+		ON CONFLICT (capability, provider_id) DO UPDATE SET
+			model=EXCLUDED.model,
+			priority=EXCLUDED.priority,
+			enabled=EXCLUDED.enabled,
+			updated_at=EXCLUDED.updated_at
+		RETURNING `+aiBindingTargetColumns,
+		next.Capability, next.ProviderID, next.Model, next.Priority, next.Enabled, dbNow(),
+	))
+	if err != nil {
+		return domain.AIBindingTarget{}, err
+	}
+	return target, nil
+}
+
+// DeleteAIBindingTarget 删除一条候选；不存在时返回 ErrNotFound。
+func (s *PostgresStore) DeleteAIBindingTarget(capability, providerID string) error {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	capability = strings.ToLower(strings.TrimSpace(capability))
+	providerID = strings.TrimSpace(providerID)
+	tag, err := s.pool.Exec(ctx, `DELETE FROM ai_binding_targets WHERE capability=$1 AND provider_id=$2`, capability, providerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // AICacheProbe 读取模型缓存探测结果；无记录时返回空结果。
