@@ -13,6 +13,19 @@
       </a-grid-item>
     </a-grid>
 
+    <!-- T1：策略告警提示条；点击在「全部会话 / 仅告警会话」之间切换。 -->
+    <a-alert
+      v-if="alerts.length"
+      class="alert-banner"
+      :class="{ 'alert-banner-active': onlyAlerted }"
+      type="warning"
+      data-testid="policy-alert-banner"
+      @click="toggleAlertFilter"
+    >
+      <span class="alert-banner-text">当前有 {{ takeoverAlertCount }} 个待接管 / {{ timeoutAlertCount }} 个超时</span>
+      <a-tag size="small" class="alert-banner-tag">{{ onlyAlerted ? '取消筛选' : '仅看告警会话' }}</a-tag>
+    </a-alert>
+
     <a-card :bordered="false" class="board">
       <a-row :gutter="12">
         <a-col :span="8">
@@ -24,13 +37,29 @@
               :class="{ active: item.id === currentId }"
               @click="selectConversation(item.id)"
             >
-              <a-list-item-meta :title="conversationName(item)" :description="item.last_message || statusLabel(item.status)">
+              <a-list-item-meta :description="item.last_message || statusLabel(item.status)">
                 <template #avatar>
                   <a-badge :count="item.unread_for_agent || 0" :offset="[-2, 4]">
                     <a-avatar :style="{ backgroundColor: '#165dff' }">
                       {{ conversationName(item).slice(0, 1) }}
                     </a-avatar>
                   </a-badge>
+                </template>
+                <template #title>
+                  <span class="conversation-title">
+                    <span class="conversation-name">{{ conversationName(item) }}</span>
+                    <!-- T1：待接管 / 排队 / SLA 告警徽标。 -->
+                    <a-tag
+                      v-for="alert in alertsFor(item.id)"
+                      :key="alertKey(alert)"
+                      size="small"
+                      class="policy-alert-tag"
+                      :color="alertColor(alert)"
+                      :data-alert-kind="alert.kind"
+                    >
+                      {{ alertLabel(alert) }}
+                    </a-tag>
+                  </span>
                 </template>
               </a-list-item-meta>
               <template #actions>
@@ -43,6 +72,17 @@
           <div class="chat-head">
             <div class="chat-head-main">
               <strong>{{ current ? conversationName(current) : '请选择一条会话' }}</strong>
+              <!-- T1：当前打开的会话若出现在告警里，头部同样显示对应徽标。 -->
+              <a-tag
+                v-for="alert in alertsFor(current?.id)"
+                :key="`head-${alertKey(alert)}`"
+                size="small"
+                class="policy-alert-tag"
+                :color="alertColor(alert)"
+                :data-alert-kind="alert.kind"
+              >
+                {{ alertLabel(alert) }}
+              </a-tag>
               <!-- T4：客户显式要求「请用某语言回答」，整个会话持续生效；本轮只读展示。 -->
               <a-tooltip v-if="replyLangOverrideName" content="该要求对整个会话持续生效">
                 <a-tag class="reply-lang-tag" color="arcoblue">
@@ -121,6 +161,7 @@
     fetchConversations,
     fetchDashboard,
     fetchMessages,
+    fetchPolicyAlerts,
     transferConversation,
   } from '@/api/admin';
 
@@ -136,6 +177,9 @@
   const transferOptions = ref<Array<{ label: string; value: string }>>([]);
   const hasMore = ref(false);
   const nextBefore = ref('');
+  // T1（询盘告警）：接管 / SLA 告警由既有 10s 定时器一并轮询，不再新增独立定时器。
+  const alerts = ref<any[]>([]);
+  const onlyAlerted = ref(false);
   // T1：原文/译文切换按消息独立记录，key 为 server_msg_id，刷新消息列表不丢状态。
   const originalShownIds = ref<Set<string>>(new Set());
   let timer: number | undefined;
@@ -174,10 +218,21 @@
   }
 
   const current = computed(() => conversations.value.find((item) => item.id === currentId.value));
+  // T1：告警按 conversation_id 归并；顶部提示条只统计两类（待接管 / 超时）。
+  const alertConversationIds = computed(
+    () => new Set(alerts.value.map((item) => String(item?.conversation_id || '')).filter(Boolean))
+  );
+  const takeoverAlertCount = computed(() => alerts.value.filter((item) => item?.kind === 'takeover').length);
+  const timeoutAlertCount = computed(
+    () => alerts.value.filter((item) => item?.kind === 'sla_first_response' || item?.kind === 'sla_idle').length
+  );
   const filteredConversations = computed(() => {
     const query = keyword.value.trim().toLowerCase();
-    if (!query) return conversations.value;
-    return conversations.value.filter((item) =>
+    const scoped = onlyAlerted.value
+      ? conversations.value.filter((item) => alertConversationIds.value.has(String(item.id)))
+      : conversations.value;
+    if (!query) return scoped;
+    return scoped.filter((item) =>
       [conversationName(item), item.source, item.last_message].join(' ').toLowerCase().includes(query)
     );
   });
@@ -230,6 +285,71 @@
     if (!value) return '';
     // 客服引擎上传的相对路径需要经后台同源代理回显；绝对地址直接使用。
     return value.startsWith('/uploads/') ? `/site-admin-api/servicebridge${value}` : value;
+  }
+
+  // ---------- T1：策略告警（接管 / 排队 / SLA） ----------
+  function alertsFor(conversationId?: string) {
+    const id = String(conversationId || '');
+    if (!id) return [] as any[];
+    return alerts.value.filter((item) => String(item?.conversation_id || '') === id);
+  }
+
+  function alertMinutes(value: any) {
+    const minutes = Math.round(Number(value));
+    return Number.isFinite(minutes) && minutes > 0 ? String(minutes) : '0';
+  }
+
+  function alertLabel(alert: any) {
+    const kind = String(alert?.kind || '');
+    if (kind === 'takeover') {
+      const position = Number(alert?.queue_position);
+      return Number.isFinite(position) && position > 0 ? `排队中 第 ${position} 位` : '待接管';
+    }
+    if (kind === 'sla_first_response') return `首响超时 ${alertMinutes(alert?.minutes)} 分钟`;
+    if (kind === 'sla_idle') return `待回复超时 ${alertMinutes(alert?.minutes)} 分钟`;
+    return '';
+  }
+
+  // 首响超时=红色，接管/待回复超时=橙色。
+  function alertColor(alert: any) {
+    return String(alert?.kind || '') === 'sla_first_response' ? 'red' : 'orange';
+  }
+
+  function alertKey(alert: any) {
+    return [alert?.kind, alert?.conversation_id, alert?.minutes, alert?.queue_position].join('-');
+  }
+
+  function toggleAlertFilter() {
+    onlyAlerted.value = !onlyAlerted.value;
+  }
+
+  function pageHidden() {
+    if (typeof document === 'undefined') return false;
+    return document.hidden || document.visibilityState === 'hidden';
+  }
+
+  async function loadAlerts() {
+    try {
+      const payload = await fetchPolicyAlerts();
+      const list = Array.isArray(payload?.alerts) ? payload.alerts : [];
+      alerts.value = list;
+      // 空数组时清空全部徽标；筛选态下无告警可看时自动退出筛选，避免列表空白。
+      if (!list.length) onlyAlerted.value = false;
+    } catch {
+      // 静默降级：告警接口失败不弹错、不阻塞既有会话刷新，保留上一次徽标。
+    }
+  }
+
+  // 页面隐藏时整体暂停轮询（会话 + 消息 + 告警共用一个 10s 定时器）。
+  function refreshTick() {
+    if (pageHidden()) return;
+    load().catch(() => {});
+    loadMessages().catch(() => {});
+    loadAlerts();
+  }
+
+  function onVisibilityChange() {
+    if (!pageHidden()) refreshTick();
   }
 
   function isRevoked(message: any) {
@@ -359,6 +479,7 @@
 
   onMounted(async () => {
     await load();
+    await loadAlerts();
     // 支持从「排队队列」等页面深链：/operations/inquiries?conversation=<id>
     const deepLinkId = typeof route.query.conversation === 'string' ? route.query.conversation.trim() : '';
     if (deepLinkId) {
@@ -366,13 +487,13 @@
         Message.warning('未能加载指定会话，可能已结束或无权访问');
       });
     }
-    timer = window.setInterval(() => {
-      load().catch(() => {});
-      loadMessages().catch(() => {});
-    }, 10000);
+    timer = window.setInterval(refreshTick, 10000);
+    // 页面重新可见时立即补一次刷新（隐藏期间定时器整体跳过）。
+    document.addEventListener('visibilitychange', onVisibilityChange);
   });
   onUnmounted(() => {
     if (timer) window.clearInterval(timer);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
   });
 </script>
 
@@ -399,6 +520,29 @@
   }
   .board {
     min-height: 560px;
+  }
+  // T1：顶部告警提示条，整条可点击切换「仅看告警会话」。
+  .alert-banner {
+    margin-bottom: 12px;
+    cursor: pointer;
+  }
+  .alert-banner-active {
+    outline: 1px solid rgb(var(--warning-6));
+  }
+  .alert-banner-text {
+    font-weight: 600;
+  }
+  .alert-banner-tag {
+    margin-left: 8px;
+  }
+  .conversation-title {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+  }
+  .policy-alert-tag {
+    flex: none;
   }
   .search {
     margin-bottom: 8px;

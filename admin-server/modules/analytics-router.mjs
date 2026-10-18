@@ -6,6 +6,76 @@ const BEACON_RATE_WINDOW_MS = 60 * 1000;
 const BEACON_RATE_MAX = Number(process.env.ADMIN_ANALYTICS_RATE_MAX || 120);
 const ALLOWED_EVENTS = new Set(['pageview', 'chat_open', 'lead_submit']);
 
+// 官网埋点 → 客服引擎访客画像的服务间通道：只有配置了 INTERNAL_API_TOKEN 才会启用。
+const VISITOR_ACTIVITY_PATH = '/api/internal/visitor-activity';
+const VISITOR_ACTIVITY_TIMEOUT_MS = 2000;
+const VISITOR_ACTIVITY_LOG_CAP = 200;
+
+/**
+ * 访客活跃转发的 fire-and-forget 发送器。
+ *
+ * - 仅在同时配置了 `SERVICEBRIDGE_API_URL` 与 `INTERNAL_API_TOKEN` 时启用；
+ *   token 缺失时 `forward()` 直接跳过（不抛错、不发请求），符合「未配置即完全静默」。
+ * - `forward()` 返回的 Promise **永不 reject**（内部已吞掉全部异常），调用方拿到后
+ *   可以直接忽略；埋点响应因此在任何情况下都不会被阻塞或改写。
+ * - 失败（网络错误 / 超时 / 非 2xx）只按「错误特征」去重后记一条 debug 日志，
+ *   避免上游长时间不可用时刷屏。
+ */
+export function createVisitorActivityForwarder({
+  apiUrl = '',
+  token = '',
+  timeoutMs = VISITOR_ACTIVITY_TIMEOUT_MS,
+  logger = console
+} = {}) {
+  const base = String(apiUrl || '').trim().replace(/\/+$/, '');
+  const internalToken = String(token || '').trim();
+  const enabled = Boolean(base && internalToken);
+  const loggedFailures = new Set();
+
+  function logFailureOnce(key, message) {
+    if (loggedFailures.has(key)) return;
+    if (loggedFailures.size >= VISITOR_ACTIVITY_LOG_CAP) loggedFailures.clear();
+    loggedFailures.add(key);
+    // 只走 debug：控制台访问路径上不产生噪音。
+    try {
+      logger?.debug?.(`[visitor-activity] ${message}`);
+    } catch {}
+  }
+
+  function forward(payload = {}) {
+    if (!enabled) return Promise.resolve({ ok: false, skipped: 'disabled' });
+    const visitorId = String(payload.visitorId ?? payload.visitor_id ?? '').trim();
+    // 未同意 analytics 的匿名上报同样带服务端派生的 anon_*；空 visitor_id 才跳过。
+    if (!visitorId) return Promise.resolve({ ok: false, skipped: 'no-visitor' });
+    const path = String(payload.path || '/').trim() || '/';
+    return (async () => {
+      try {
+        const response = await fetch(`${base}${VISITOR_ACTIVITY_PATH}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Internal-Token': internalToken
+          },
+          body: JSON.stringify({ visitor_id: visitorId, path }),
+          signal: AbortSignal.timeout(timeoutMs)
+        });
+        // 必须消费响应体，否则连接不会被释放。
+        await response.text().catch(() => '');
+        if (!response.ok) {
+          logFailureOnce(`http-${response.status}`, `客服引擎返回 HTTP ${response.status}`);
+          return { ok: false, status: response.status };
+        }
+        return { ok: true, status: response.status };
+      } catch (error) {
+        logFailureOnce(`error-${error?.name || 'Error'}`, `转发失败：${error?.message || error}`);
+        return { ok: false, error: error?.message || String(error) };
+      }
+    })();
+  }
+
+  return { enabled, forward, timeoutMs };
+}
+
 /**
  * 匿名 UV 的根密钥。生产优先用独立配置的 `ADMIN_ANALYTICS_ANON_SALT`，
  * 未配置时依次回退到已有的服务端密钥，保证"当日盐"不是公开常量。
@@ -117,7 +187,8 @@ export function createAnalyticsRouter({
   applyPublicCors,
   resolveClient,
   countryFromRequest,
-  timezoneFromRequest
+  timezoneFromRequest,
+  visitorActivityForwarder = null
 }) {
   const rateWindows = new Map();
 
@@ -176,8 +247,9 @@ export function createAnalyticsRouter({
         ? anonymousVisitorId(ipInfo.ip, { day: anonymousDayKey() })
         : clean(payload.visitor_id, 64);
       const sessionId = anonymous ? '' : clean(payload.session_id, 64);
+      const targetPath = safePath(payload.path);
       await platformStore.recordVisit({
-        path: safePath(payload.path),
+        path: targetPath,
         host: clean(payload.host || req.headers.host, 200),
         referrer: safeReferrer(payload.referrer),
         ip: ipInfo.ip,
@@ -195,6 +267,13 @@ export function createAnalyticsRouter({
         isBot: parsed.isBot
       });
       json(res, 202, { ok: true });
+      // 埋点响应已经发出：转发是 fire-and-forget，超时/失败/未配置都不得影响它。
+      // 匿名上报的 visitorId 是服务端派生的 anon_*，与真实 id 一样进入访客画像。
+      if (visitorId) {
+        try {
+          visitorActivityForwarder?.forward?.({ visitorId, path: targetPath });
+        } catch {}
+      }
     } catch (error) {
       json(res, 400, { error: { message: error.message || '上报失败。' } });
     }

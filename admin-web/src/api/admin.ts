@@ -306,6 +306,15 @@ export const updateServicePolicy = (payload: Record<string, unknown>) =>
 export const fetchServiceQueue = () =>
   client.get(bridge('/api/admin/service-queue')).then((r) => r.data);
 
+// GET /api/admin/policy-alerts -> {alerts:[{conversation_id,kind:'takeover'|'sla_first_response'|'sla_idle',
+//   minutes?,visitor_name?,queue_position?,waiting_seconds?,assigned_agent_name?,status?}]}
+// 询盘页每 10 秒轮询一次，用于展示待接管 / 首响超时 / 待回复超时告警。
+// skipErrorMessage：告警接口失败必须静默降级，不能弹全局错误提示。
+export const fetchPolicyAlerts = () =>
+  client
+    .get(bridge('/api/admin/policy-alerts'), { skipErrorMessage: true })
+    .then((r) => r.data);
+
 // GET /api/admin/blacklist?kind=visitor|ip|account -> {entries:[...]}
 export const fetchBlacklist = (kind: string) =>
   client

@@ -1,5 +1,13 @@
 import axios from 'axios';
 
+// 允许单个请求声明「失败时不弹全局错误提示」，供需要静默降级的轮询接口使用
+// （例如询盘页的 /api/admin/policy-alerts：失败时只保留上一次徽标，不打扰客服）。
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    skipErrorMessage?: boolean;
+  }
+}
+
 // 统一后台与 admin-server 同源：Cookie 会话（2FA）由浏览器自动携带。
 const client = axios.create({
   baseURL: '',

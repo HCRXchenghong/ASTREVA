@@ -31,7 +31,7 @@ import { createAIProviderClient } from './modules/ai-provider-client.mjs';
 import { createWebsiteTranslationService } from './modules/website-translation-service.mjs';
 import { createWebsiteTranslationRouter } from './modules/website-translation-router.mjs';
 import { createWebsiteSeoService } from './modules/website-seo-service.mjs';
-import { createAnalyticsRouter, detectDanger } from './modules/analytics-router.mjs';
+import { createAnalyticsRouter, createVisitorActivityForwarder, detectDanger } from './modules/analytics-router.mjs';
 import { createSystemRouter } from './modules/system-router.mjs';
 import { sanitizeContentRichText, sanitizeHtml } from './modules/html-sanitize.mjs';
 import { createWebsiteSeoRouter } from './modules/website-seo-router.mjs';
@@ -1341,6 +1341,12 @@ function recordSystemEvent(event) {
   });
 }
 
+// 官网埋点 -> 客服引擎访客画像：服务间令牌未配置时整个转发静默跳过（见 createVisitorActivityForwarder）。
+const visitorActivityForwarder = createVisitorActivityForwarder({
+  apiUrl: SERVICEBRIDGE_API_URL,
+  token: process.env.INTERNAL_API_TOKEN || ''
+});
+
 const analyticsModule = createAnalyticsRouter({
   platformStore,
   bodyJson,
@@ -1349,7 +1355,8 @@ const analyticsModule = createAnalyticsRouter({
   applyPublicCors: analyticsCors,
   resolveClient: resolveAdminClient,
   countryFromRequest,
-  timezoneFromRequest: analyticsTimezone
+  timezoneFromRequest: analyticsTimezone,
+  visitorActivityForwarder
 });
 
 const systemModule = createSystemRouter({

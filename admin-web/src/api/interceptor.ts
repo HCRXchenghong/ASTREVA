@@ -21,7 +21,8 @@ client.interceptors.response.use(
       error?.response?.data?.message ||
       error?.message ||
       '请求失败';
-    if (status !== 401) {
+    // skipErrorMessage：页面自行静默降级（如告警轮询），不弹全局错误提示。
+    if (status !== 401 && !error?.config?.skipErrorMessage) {
       Message.error(message);
     }
     return Promise.reject(error);
