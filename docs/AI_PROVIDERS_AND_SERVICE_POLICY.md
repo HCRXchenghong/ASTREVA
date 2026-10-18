@@ -319,3 +319,48 @@ GET/POST  /api/agent/alert-channels                 自己的渠道（≤3，密
 - `knowledge_suggest_enabled`：**是否使用知识库辅助推荐**（客服可自行关闭）
 
 App 的「AI 建议」按钮同样按两者共同启用/禁用；控制台「客服账号 → 翻译偏好」可查看与重置这两项。
+
+---
+
+# 附录 B：开放 API 权限范围（批次 5）施工规格
+
+## B1 现状
+开放 API（`/open/v1/*`）现有端点：`GET /me`、`GET|POST /conversations`、`GET /conversations/{id}`、`GET|POST /conversations/{id}/messages`、`POST /conversations/{id}/close`、`GET /ws`。
+鉴权按应用 Key（只存 SHA-256）+ 每应用令牌桶限流；**目前没有权限范围概念**——一个有 Key 的应用能调用全部接口。
+
+## B2 权限范围定义
+| scope | 覆盖端点 |
+|---|---|
+| `me:read` | `GET /open/v1/me`（默认给所有应用，不可取消） |
+| `conversations:read` | `GET /open/v1/conversations`、`GET /open/v1/conversations/{id}` |
+| `conversations:create` | `POST /open/v1/conversations` |
+| `conversations:close` | `POST /open/v1/conversations/{id}/close` |
+| `messages:read` | `GET /open/v1/conversations/{id}/messages` |
+| `messages:write` | `POST /open/v1/conversations/{id}/messages` |
+| `events:subscribe` | `GET /open/v1/ws` |
+
+预置组合（控制台一键套用）：
+- **全功能**：全部 7 个
+- **只读订阅**：`conversations:read`、`messages:read`、`events:subscribe`
+- **仅创建与发消息**：`conversations:create`、`messages:write`
+- **客服机器人**：`conversations:read`、`messages:read`、`messages:write`、`conversations:close`
+
+## B3 数据与兼容
+- `api_apps` 增列 `scopes JSONB NOT NULL DEFAULT '[]'::jsonb`（`domain.APIApp.Scopes []string`）。
+- **兼容策略**：`scopes` 为空数组 = **等同于全部范围**（保持既有应用不受影响）；控制台在应用详情里提示"未限制（建议按需收窄）"。
+- 校验：保存时只接受上表内的 scope；`me:read` 自动补齐。
+
+## B4 执行点与错误
+- 在 `internal/openapi` 的每个 handler 入口统一走 `requireScope(app, "xxx")`；缺失时返回 **403** `{"error":"forbidden","message":"缺少权限范围 messages:write"}`，不泄露其他信息。
+- `GET /open/v1/me` 返回 `{app:{id,name}, scopes:[...]}`，便于对接方自检。
+- 每次因缺范围被拒都写审计（action `openapi.scope_denied`，含 app_id、scope、path），并计入系统日志。
+- 控制台侧：`GET/PATCH /api/admin/api-apps/{id}` 增加 `scopes`；新建应用时默认「全功能」并在界面显式提示。
+
+## B5 验收测试
+1. 每个端点：缺少对应 scope → 403 且带 scope 名；有 scope → 正常。
+2. 空 scopes 的旧应用 → 全部端点可用（兼容回归）。
+3. 四套预置组合逐一断言可访问/被拒的端点集合。
+4. `/me` 返回 scopes；保存非法 scope → 400。
+5. 缺范围被拒写审计（断言审计条数增加，且不包含请求体敏感内容）。
+6. 控制台：应用详情能看到/修改 scopes，预置一键套用，保存后立即生效（无需重启）。
+7. 真实 PG：`api_apps.scopes` JSONB 往返与默认值（扩展 `TestPostgres*`）。
