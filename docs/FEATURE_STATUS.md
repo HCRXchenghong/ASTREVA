@@ -121,3 +121,31 @@
 | App | `dart analyze`（含 tool/）No issues found；契约断言 76 + 画像断言 89 全通过 |
 | 前端契约 | `npm run cms:contract` 通过 |
 | 引擎端到端 | 真实 Go 引擎 + 真实 admin-server 解析客户端：供应商创建/掩码/一键取模型/绑定/禁用回退 5/5；知识库建库/导入/检索/设置/推荐发送 11 项 |
+
+---
+
+## 五、多节点部署与会话量增长时的演进方案（评估）
+
+### 1. 当前状态（单副本部署没有问题）
+| 机制 | 存放位置 | 多副本下的影响 |
+|---|---|---|
+| 知识库倒排索引 | 各进程内存（写失效 + TTL 60s） | 各节点各自缓存；A 节点改条目后 B 节点最多 60s 后生效（读一致性最终一致） |
+| AI 熔断状态 | 各进程内存 | 各节点独立计数：A 节点熔断不影响 B 节点（可用性更好，但"跳过故障供应商"不是全局一致的） |
+| 会话排队 / SLA 巡检 / 自动关闭 | 状态在 PostgreSQL + `sla_state` 字段，`StartPolicyLoop` 在每个副本都会跑 | **同一时刻可能有两个副本同时判定同一会话超时** → 理论上可能重复告警（现有 `sla_state` 是"先读后写"，不是原子抢占） |
+| 访问埋点匿名 UV | 当日盐 + 截断 IP（无状态） | 天然多节点一致 |
+
+### 2. 建议的演进顺序（按投入产出比）
+1. **把 SLA 状态改为原子抢占**（推荐优先做，改动小）：
+   新增存储方法 `ClaimConversationSLAState(conversationID, expect, next string) (bool, error)`，
+   Postgres 用 `UPDATE conversations SET sla_state=$3 WHERE id=$1 AND sla_state=$2 RETURNING id`，
+   只有抢占成功的副本才推送告警/派发渠道/自动关闭。这样多副本也不会重复告警。
+2. **巡检加分布式租约**：`StartPolicyLoop` 启动时尝试获取数据库租约（`INSERT ... ON CONFLICT` 或 `pg_advisory_lock`），只有一个副本真正执行巡检；其余副本跳过。适合副本数较多时。
+3. **熔断状态外置（可选）**：把每供应商失败计数与打开时间放进数据库或 Redis，实现跨节点共享；代价是每次调用多一次 I/O（建议加进程内 1–2s 微缓存）。单区域小规模部署可不做。
+4. **知识库索引外置（可选）**：条目量到数十万或跨节点强一致要求时，改用 PostgreSQL 全文/`pg_trgm` 倒排或外部检索引擎；当前内存倒排 + TTL 对中小规模足够。
+5. **告警接口增量化**：控制台每 10s 拉全量 `policy-alerts`（`AllConversations + QueueList`）。会话量到数万时改为：
+   - `GET /api/admin/policy-alerts?since=<RFC3339>&cursor=...` 只返回变化；
+   - 或在 `conversations` 上给 `(status, sla_state, updated_at)` 建索引，用"增量查询 + 前端合并"替代全量汇总；
+   - 或把告警改为服务端 WebSocket 推送（与客服 App 同一 hub）。
+
+### 3. 结论
+单副本部署（当前 compose 默认）上述机制都已正确；要横向扩容，**先做第 1 项（原子抢占）**，再按需做第 2/3/4/5 项。这部分我尚未实现（属于扩容阶段工作），列在此作为明确的技术路线，不是已完成项。
