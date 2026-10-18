@@ -30,6 +30,8 @@ import { createServiceBridgeProxy } from './modules/servicebridge-proxy.mjs';
 import { createWebsiteTranslationService } from './modules/website-translation-service.mjs';
 import { createWebsiteTranslationRouter } from './modules/website-translation-router.mjs';
 import { createWebsiteSeoService } from './modules/website-seo-service.mjs';
+import { createAnalyticsRouter, detectDanger } from './modules/analytics-router.mjs';
+import { createSystemRouter } from './modules/system-router.mjs';
 import { createWebsiteSeoRouter } from './modules/website-seo-router.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1234,6 +1236,69 @@ const handleMedia = createMediaRouter({
   auditEvent
 });
 
+// ===== 二期：访问统计、系统日志与健康度 =====
+function resolveAdminClient(req) {
+  const ip = requestIp(req) || '';
+  const forwarded = String(req.headers['x-forwarded-for'] || '').trim();
+  return { ip, source: forwarded ? 'proxy' : 'direct' };
+}
+
+function countryFromRequest(req) {
+  return String(req.headers['cf-ipcountry'] || req.headers['x-vercel-ip-country'] || req.headers['x-country-code'] || '').trim().toUpperCase().slice(0, 8);
+}
+
+function analyticsTimezone() {
+  return process.env.ADMIN_ANALYTICS_TIMEZONE || 'Asia/Shanghai';
+}
+
+function analyticsCors(req, res) {
+  const origin = String(req.headers.origin || '').replace(/\/$/, '');
+  if (!origin) return true;
+  if (!ADMIN_CORS_ALLOWED_ORIGINS.has(origin)) return false;
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  res.setHeader('Vary', 'Origin');
+  return true;
+}
+
+/** 写系统日志：失败不影响主流程。 */
+function recordSystemEvent(event) {
+  return platformStore.recordSystemEvent(event).catch((error) => {
+    console.error('[system-log]', error.message);
+    return null;
+  });
+}
+
+const analyticsModule = createAnalyticsRouter({
+  platformStore,
+  bodyJson,
+  json,
+  verifySession,
+  applyPublicCors: analyticsCors,
+  resolveClient: resolveAdminClient,
+  countryFromRequest,
+  timezoneFromRequest: analyticsTimezone
+});
+
+const systemModule = createSystemRouter({
+  platformStore,
+  json,
+  verifySession,
+  auditEvent,
+  storagePaths: [
+    { label: '上传目录', path: UPLOAD_DIR },
+    { label: '数据目录', path: DATA_DIR }
+  ],
+  serviceBridgeStatus: () => serviceBridgeProxy.adminJson('/api/admin/system-status', { signal: AbortSignal.timeout(4000) }),
+  rebuildStatus: () => publishService.statusPayload(),
+  storageHealth: () => mediaStore.health(),
+  aiCapability: () => mediaAiService.capability(),
+  translationSettings: () => translationService.publicSettings(),
+  eventRecorder: recordSystemEvent
+});
+
 const handlePublish = createPublishRouter({
   platformStore,
   publishService,
@@ -2350,8 +2415,9 @@ async function handleMediaRuntimeSettings(req, res, pathname) {
 }
 
 async function handleAdminApi(req, res, pathname) {
-  for (const handler of [leadsModule.handle, handleContent, handleWebsiteTranslation, handleWebsiteSeo, handleMedia, handlePublish, handleMediaRuntimeSettings]) {
-    if (await handler(req, res, pathname)) return true;
+  const adminUrl = new URL(req.url || '/', PUBLIC_ORIGIN);
+  for (const handler of [leadsModule.handle, handleContent, handleWebsiteTranslation, handleWebsiteSeo, handleMedia, handlePublish, handleMediaRuntimeSettings, analyticsModule.handleAdmin, systemModule.handle]) {
+    if (await handler(req, res, pathname, adminUrl)) return true;
   }
   if (pathname.startsWith('/site-admin-api/servicebridge/')) {
     await serviceBridgeProxy(req, res, pathname);
@@ -2384,6 +2450,12 @@ const server = http.createServer(async (req, res) => {
         send(res, 204, '');
         return;
       }
+    }
+
+    // 官网第一方访问埋点（公开、限流、来源白名单）。
+    if (pathname === '/site-admin-api/analytics/visit') {
+      await analyticsModule.handleBeacon(req, res);
+      return;
     }
 
     if (pathname.startsWith('/assets/')) {
@@ -2476,6 +2548,25 @@ const server = http.createServer(async (req, res) => {
     if (pathname.startsWith('/site-admin/')) {
       return serveAdminWeb(res);
     }
+    // 未知路径：命中危险特征就记一条 danger 日志，否则不落库以免噪声。
+    const danger = detectDanger(pathname, String(req.headers['user-agent'] || ''));
+    if (danger) {
+      const client = resolveAdminClient(req);
+      void recordSystemEvent({
+        category: 'security',
+        level: 'danger',
+        action: 'security.suspicious_request',
+        message: `${danger}：${pathname}`,
+        method: req.method || '',
+        path: pathname,
+        ip: client.ip,
+        ipSource: client.source,
+        country: countryFromRequest(req),
+        userAgent: String(req.headers['user-agent'] || ''),
+        statusCode: 404,
+        detail: { danger, query: url.search || '' }
+      });
+    }
     send(res, 404, 'not found');
   } catch (error) {
     console.error(error);
@@ -2495,4 +2586,11 @@ server.listen(PORT, HOST, () => {
   console.log(`Astreva admin server listening on http://${HOST}:${PORT}`);
   console.log(`Login: http://${HOST}:${PORT}/admin-2fa`);
   console.log(`Unified admin: http://${HOST}:${PORT}/site-admin/`);
+  void recordSystemEvent({
+    category: 'system',
+    level: 'info',
+    action: 'system.started',
+    message: `控制台服务已启动（${HOST}:${PORT}）`,
+    detail: { node: process.version, platform: process.platform, pid: process.pid }
+  });
 });

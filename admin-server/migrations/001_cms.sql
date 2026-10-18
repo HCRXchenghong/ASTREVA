@@ -129,3 +129,60 @@ CREATE TABLE IF NOT EXISTS site_runtime_settings (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ===== 二期：官网访问统计与系统日志 =====
+
+CREATE TABLE IF NOT EXISTS site_analytics_visits (
+  id BIGSERIAL PRIMARY KEY,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  path TEXT NOT NULL DEFAULT '',
+  host TEXT NOT NULL DEFAULT '',
+  referrer TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  ip_source TEXT NOT NULL DEFAULT '',
+  country TEXT NOT NULL DEFAULT '',
+  user_agent TEXT NOT NULL DEFAULT '',
+  browser TEXT NOT NULL DEFAULT '',
+  browser_version TEXT NOT NULL DEFAULT '',
+  os TEXT NOT NULL DEFAULT '',
+  device TEXT NOT NULL DEFAULT '',
+  visitor_id TEXT NOT NULL DEFAULT '',
+  session_id TEXT NOT NULL DEFAULT '',
+  event_type TEXT NOT NULL DEFAULT 'pageview',
+  is_bot BOOLEAN NOT NULL DEFAULT false
+);
+
+CREATE INDEX IF NOT EXISTS idx_site_analytics_visits_time ON site_analytics_visits(occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_site_analytics_visits_visitor ON site_analytics_visits(visitor_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_site_analytics_visits_path ON site_analytics_visits(path, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_site_analytics_visits_ip ON site_analytics_visits(ip, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS site_system_events (
+  id TEXT PRIMARY KEY,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  category TEXT NOT NULL DEFAULT 'system',
+  level TEXT NOT NULL DEFAULT 'info',
+  action TEXT NOT NULL DEFAULT '',
+  message TEXT NOT NULL DEFAULT '',
+  actor_kind TEXT NOT NULL DEFAULT '',
+  actor_id TEXT NOT NULL DEFAULT '',
+  actor_email TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  ip_source TEXT NOT NULL DEFAULT '',
+  country TEXT NOT NULL DEFAULT '',
+  method TEXT NOT NULL DEFAULT '',
+  path TEXT NOT NULL DEFAULT '',
+  status_code INTEGER,
+  user_agent TEXT NOT NULL DEFAULT '',
+  browser TEXT NOT NULL DEFAULT '',
+  os TEXT NOT NULL DEFAULT '',
+  device TEXT NOT NULL DEFAULT '',
+  request_id TEXT NOT NULL DEFAULT '',
+  detail JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_site_system_events_time ON site_system_events(occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_site_system_events_level ON site_system_events(level, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_site_system_events_category ON site_system_events(category, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_site_system_events_ip ON site_system_events(ip, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_site_system_events_action ON site_system_events(action, occurred_at DESC);

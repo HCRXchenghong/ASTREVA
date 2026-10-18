@@ -703,6 +703,378 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     return { verified, source, target, discarded };
   }
 
+
+  // ===== 二期：官网访问统计与系统日志 =====
+  const memoryVisits = [];
+  const memoryEvents = [];
+
+  function tzOffsetMs(date, tz) {
+    try {
+      const dtf = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, hour12: false,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+      const parts = Object.fromEntries(dtf.formatToParts(date).map((item) => [item.type, item.value]));
+      const asUTC = Date.UTC(
+        Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+        Number(parts.hour) % 24, Number(parts.minute), Number(parts.second)
+      );
+      return asUTC - date.getTime();
+    } catch {
+      return 0;
+    }
+  }
+
+  function zonedDayStart(base, tz) {
+    const dtf = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+    const [year, month, day] = dtf.format(base).split('-').map(Number);
+    const utcGuess = Date.UTC(year, month - 1, day, 0, 0, 0);
+    return new Date(utcGuess - tzOffsetMs(new Date(utcGuess), tz));
+  }
+
+  function validTimezone(tz) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: tz });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function recordVisit(visit) {
+    const row = {
+      path: String(visit.path || '').slice(0, 300),
+      host: String(visit.host || '').slice(0, 200),
+      referrer: String(visit.referrer || '').slice(0, 500),
+      ip: String(visit.ip || '').slice(0, 64),
+      ipSource: String(visit.ipSource || '').slice(0, 32),
+      country: String(visit.country || '').slice(0, 8),
+      userAgent: String(visit.userAgent || '').slice(0, 512),
+      browser: String(visit.browser || '').slice(0, 64),
+      browserVersion: String(visit.browserVersion || '').slice(0, 32),
+      os: String(visit.os || '').slice(0, 64),
+      device: String(visit.device || '').slice(0, 16),
+      visitorId: String(visit.visitorId || '').slice(0, 64),
+      sessionId: String(visit.sessionId || '').slice(0, 64),
+      eventType: ['pageview', 'chat_open', 'lead_submit'].includes(visit.eventType) ? visit.eventType : 'pageview',
+      isBot: Boolean(visit.isBot)
+    };
+    if (!usePostgres) {
+      memoryVisits.unshift({ id: memoryVisits.length + 1, occurredAt: new Date().toISOString(), ...row });
+      if (memoryVisits.length > 5000) memoryVisits.length = 5000;
+      return;
+    }
+    await query(
+      `INSERT INTO site_analytics_visits
+        (path, host, referrer, ip, ip_source, country, user_agent, browser, browser_version, os, device, visitor_id, session_id, event_type, is_bot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      [row.path, row.host, row.referrer, row.ip, row.ipSource, row.country, row.userAgent, row.browser,
+        row.browserVersion, row.os, row.device, row.visitorId, row.sessionId, row.eventType, row.isBot]
+    );
+  }
+
+  async function listVisits(options = {}) {
+    const limit = Math.min(Math.max(Number(options.limit) || 100, 1), 500);
+    const includeBots = Boolean(options.includeBots);
+    if (!usePostgres) {
+      let rows = memoryVisits.filter((item) => includeBots || !item.isBot);
+      if (options.ip) rows = rows.filter((item) => item.ip === options.ip);
+      if (options.visitorId) rows = rows.filter((item) => item.visitorId === options.visitorId);
+      if (options.path) rows = rows.filter((item) => item.path.includes(options.path));
+      return rows.slice(0, limit);
+    }
+    const clauses = [];
+    const params = [];
+    if (!includeBots) clauses.push('is_bot = false');
+    if (options.ip) { params.push(options.ip); clauses.push(`ip = $${params.length}`); }
+    if (options.visitorId) { params.push(options.visitorId); clauses.push(`visitor_id = $${params.length}`); }
+    if (options.path) { params.push(`%${options.path}%`); clauses.push(`path ILIKE $${params.length}`); }
+    if (options.since) { params.push(options.since); clauses.push(`occurred_at >= $${params.length}`); }
+    params.push(limit);
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const result = await query(
+      `SELECT id, occurred_at, path, host, referrer, ip, ip_source, country, user_agent, browser, browser_version,
+              os, device, visitor_id, session_id, event_type, is_bot
+       FROM site_analytics_visits ${where} ORDER BY occurred_at DESC LIMIT $${params.length}`,
+      params
+    );
+    return result.rows.map((row) => ({
+      id: Number(row.id),
+      occurredAt: toIso(row.occurred_at),
+      path: row.path,
+      host: row.host,
+      referrer: row.referrer,
+      ip: row.ip,
+      ipSource: row.ip_source,
+      country: row.country,
+      userAgent: row.user_agent,
+      browser: row.browser,
+      browserVersion: row.browser_version,
+      os: row.os,
+      device: row.device,
+      visitorId: row.visitor_id,
+      sessionId: row.session_id,
+      eventType: row.event_type,
+      isBot: row.is_bot
+    }));
+  }
+
+  async function visitById(id) {
+    const numeric = Number(id);
+    if (!Number.isFinite(numeric)) return null;
+    if (!usePostgres) return memoryVisits.find((item) => Number(item.id) === numeric) || null;
+    const result = await query(
+      `SELECT id, occurred_at, path, host, referrer, ip, ip_source, country, user_agent, browser, browser_version,
+              os, device, visitor_id, session_id, event_type, is_bot
+       FROM site_analytics_visits WHERE id = $1`,
+      [numeric]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      id: Number(row.id), occurredAt: toIso(row.occurred_at), path: row.path, host: row.host, referrer: row.referrer,
+      ip: row.ip, ipSource: row.ip_source, country: row.country, userAgent: row.user_agent, browser: row.browser,
+      browserVersion: row.browser_version, os: row.os, device: row.device, visitorId: row.visitor_id,
+      sessionId: row.session_id, eventType: row.event_type, isBot: row.is_bot
+    };
+  }
+
+  /** 官网数据看板用：今日/本月 PV、UV、询盘、会话打开与按日曲线。 */
+  async function analyticsSummary(options = {}) {
+    const tz = validTimezone(options.tz) ? options.tz : 'Asia/Shanghai';
+    const now = new Date();
+    const todayStart = zonedDayStart(now, tz);
+    const monthSource = /^\d{4}-\d{2}$/.test(String(options.month || '')) ? `${options.month}-01T00:00:00Z` : null;
+    const monthBase = monthSource ? new Date(monthSource) : now;
+    const monthStart = zonedDayStart(monthBase, tz);
+    const nextMonth = new Date(monthStart);
+    nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+    nextMonth.setUTCDate(1);
+    const monthEnd = zonedDayStart(nextMonth, tz);
+
+    if (!usePostgres) {
+      const inRange = (item, start, end) => {
+        const ts = new Date(item.occurredAt).getTime();
+        return ts >= start.getTime() && (!end || ts < end.getTime());
+      };
+      const visits = memoryVisits.filter((item) => !item.isBot);
+      const today = visits.filter((item) => inRange(item, todayStart));
+      const month = visits.filter((item) => inRange(item, monthStart, monthEnd));
+      const series = new Map();
+      for (const item of month) {
+        const day = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(item.occurredAt));
+        const entry = series.get(day) || { date: day, pv: 0, visitors: new Set() };
+        entry.pv += 1;
+        if (item.visitorId) entry.visitors.add(item.visitorId);
+        series.set(day, entry);
+      }
+      const leads = (await readLeads()).leads || [];
+      return {
+        range: { timezone: tz, todayStart: todayStart.toISOString(), monthStart: monthStart.toISOString(), monthEnd: monthEnd.toISOString() },
+        today: {
+          pv: today.length,
+          uv: new Set(today.map((item) => item.visitorId).filter(Boolean)).size,
+          chats: today.filter((item) => item.eventType === 'chat_open').length,
+          leads: leads.filter((lead) => new Date(lead.submittedAt).getTime() >= todayStart.getTime()).length
+        },
+        month: {
+          pv: month.length,
+          uv: new Set(month.map((item) => item.visitorId).filter(Boolean)).size,
+          chats: month.filter((item) => item.eventType === 'chat_open').length,
+          leads: leads.filter((lead) => {
+            const ts = new Date(lead.submittedAt).getTime();
+            return ts >= monthStart.getTime() && ts < monthEnd.getTime();
+          }).length
+        },
+        series: [...series.values()].sort((a, b) => a.date.localeCompare(b.date)).map((entry) => ({ date: entry.date, pv: entry.pv, uv: entry.visitors.size }))
+      };
+    }
+
+    const summary = await query(
+      `SELECT
+         count(*) FILTER (WHERE occurred_at >= $1 AND is_bot = false)::int AS pv_today,
+         count(DISTINCT visitor_id) FILTER (WHERE occurred_at >= $1 AND is_bot = false AND visitor_id <> '')::int AS uv_today,
+         count(*) FILTER (WHERE occurred_at >= $1 AND is_bot = false AND event_type = 'chat_open')::int AS chats_today,
+         count(*) FILTER (WHERE occurred_at >= $2 AND occurred_at < $3 AND is_bot = false)::int AS pv_month,
+         count(DISTINCT visitor_id) FILTER (WHERE occurred_at >= $2 AND occurred_at < $3 AND is_bot = false AND visitor_id <> '')::int AS uv_month,
+         count(*) FILTER (WHERE occurred_at >= $2 AND occurred_at < $3 AND is_bot = false AND event_type = 'chat_open')::int AS chats_month
+       FROM site_analytics_visits`,
+      [todayStart, monthStart, monthEnd]
+    );
+    const leadSummary = await query(
+      `SELECT
+         count(*) FILTER (WHERE submitted_at >= $1)::int AS leads_today,
+         count(*) FILTER (WHERE submitted_at >= $2 AND submitted_at < $3)::int AS leads_month
+       FROM site_leads`,
+      [todayStart, monthStart, monthEnd]
+    );
+    const seriesResult = await query(
+      `SELECT to_char(date_trunc('day', occurred_at AT TIME ZONE $4), 'YYYY-MM-DD') AS day,
+              count(*)::int AS pv,
+              count(DISTINCT visitor_id)::int AS uv
+       FROM site_analytics_visits
+       WHERE is_bot = false AND occurred_at >= $2 AND occurred_at < $3
+       GROUP BY 1 ORDER BY 1`,
+      [todayStart, monthStart, monthEnd, tz]
+    );
+    const row = summary.rows[0] || {};
+    const leadRow = leadSummary.rows[0] || {};
+    return {
+      range: { timezone: tz, todayStart: todayStart.toISOString(), monthStart: monthStart.toISOString(), monthEnd: monthEnd.toISOString() },
+      today: { pv: row.pv_today || 0, uv: row.uv_today || 0, chats: row.chats_today || 0, leads: leadRow.leads_today || 0 },
+      month: { pv: row.pv_month || 0, uv: row.uv_month || 0, chats: row.chats_month || 0, leads: leadRow.leads_month || 0 },
+      series: seriesResult.rows.map((item) => ({ date: item.day, pv: item.pv, uv: item.uv }))
+    };
+  }
+
+  async function recordSystemEvent(event = {}) {
+    const row = {
+      id: `evt_${crypto.randomUUID()}`,
+      occurredAt: new Date().toISOString(),
+      category: String(event.category || 'system').slice(0, 32),
+      level: ['info', 'warning', 'danger'].includes(event.level) ? event.level : 'info',
+      action: String(event.action || '').slice(0, 120),
+      message: String(event.message || '').slice(0, 500),
+      actorKind: String(event.actorKind || '').slice(0, 32),
+      actorId: String(event.actorId || '').slice(0, 64),
+      actorEmail: String(event.actorEmail || '').slice(0, 200),
+      ip: String(event.ip || '').slice(0, 64),
+      ipSource: String(event.ipSource || '').slice(0, 32),
+      country: String(event.country || '').slice(0, 8),
+      method: String(event.method || '').slice(0, 10),
+      path: String(event.path || '').slice(0, 500),
+      statusCode: Number.isFinite(Number(event.statusCode)) ? Number(event.statusCode) : null,
+      userAgent: String(event.userAgent || '').slice(0, 512),
+      browser: String(event.browser || '').slice(0, 64),
+      os: String(event.os || '').slice(0, 64),
+      device: String(event.device || '').slice(0, 16),
+      requestId: String(event.requestId || '').slice(0, 64),
+      detail: event.detail && typeof event.detail === 'object' ? event.detail : {}
+    };
+    if (!usePostgres) {
+      memoryEvents.unshift(row);
+      if (memoryEvents.length > 5000) memoryEvents.length = 5000;
+      return row;
+    }
+    await query(
+      `INSERT INTO site_system_events
+        (id, category, level, action, message, actor_kind, actor_id, actor_email, ip, ip_source, country,
+         method, path, status_code, user_agent, browser, os, device, request_id, detail)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb)`,
+      [row.id, row.category, row.level, row.action, row.message, row.actorKind, row.actorId, row.actorEmail,
+        row.ip, row.ipSource, row.country, row.method, row.path, row.statusCode, row.userAgent, row.browser,
+        row.os, row.device, row.requestId, JSON.stringify(row.detail)]
+    );
+    return row;
+  }
+
+  function eventRowToObject(row) {
+    return {
+      id: row.id,
+      occurredAt: toIso(row.occurred_at),
+      category: row.category,
+      level: row.level,
+      action: row.action,
+      message: row.message,
+      actorKind: row.actor_kind,
+      actorId: row.actor_id,
+      actorEmail: row.actor_email,
+      ip: row.ip,
+      ipSource: row.ip_source,
+      country: row.country,
+      method: row.method,
+      path: row.path,
+      statusCode: row.status_code,
+      userAgent: row.user_agent,
+      browser: row.browser,
+      os: row.os,
+      device: row.device,
+      requestId: row.request_id,
+      detail: row.detail || {}
+    };
+  }
+
+  async function listSystemEvents(options = {}) {
+    const limit = Math.min(Math.max(Number(options.limit) || 100, 1), 500);
+    if (!usePostgres) {
+      let rows = [...memoryEvents];
+      if (options.level) rows = rows.filter((item) => item.level === options.level);
+      if (options.category) rows = rows.filter((item) => item.category === options.category);
+      if (options.ip) rows = rows.filter((item) => item.ip === options.ip);
+      if (options.query) {
+        const needle = String(options.query).toLowerCase();
+        rows = rows.filter((item) => [item.action, item.message, item.path, item.actorEmail, item.ip].join(' ').toLowerCase().includes(needle));
+      }
+      return rows.slice(0, limit);
+    }
+    const clauses = [];
+    const params = [];
+    if (options.level) { params.push(options.level); clauses.push(`level = $${params.length}`); }
+    if (options.category) { params.push(options.category); clauses.push(`category = $${params.length}`); }
+    if (options.ip) { params.push(options.ip); clauses.push(`ip = $${params.length}`); }
+    if (options.since) { params.push(options.since); clauses.push(`occurred_at >= $${params.length}`); }
+    if (options.query) {
+      params.push(`%${options.query}%`);
+      const placeholder = `$${params.length}`;
+      clauses.push(`(action ILIKE ${placeholder} OR message ILIKE ${placeholder} OR path ILIKE ${placeholder} OR actor_email ILIKE ${placeholder} OR ip ILIKE ${placeholder})`);
+    }
+    params.push(limit);
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const result = await query(
+      `SELECT * FROM site_system_events ${where} ORDER BY occurred_at DESC LIMIT $${params.length}`,
+      params
+    );
+    return result.rows.map(eventRowToObject);
+  }
+
+  async function systemEventById(id) {
+    if (!usePostgres) return memoryEvents.find((item) => item.id === id) || null;
+    const result = await query('SELECT * FROM site_system_events WHERE id = $1', [id]);
+    return result.rows[0] ? eventRowToObject(result.rows[0]) : null;
+  }
+
+  async function purgeSystemEvents(options = {}) {
+    const eventDays = Math.max(Number(options.eventDays) || 180, 7);
+    const visitDays = Math.max(Number(options.visitDays) || 30, 1);
+    if (!usePostgres) {
+      const now = Date.now();
+      const keep = (days) => now - days * 86400000;
+      let removedEvents = 0;
+      let removedVisits = 0;
+      for (let i = memoryEvents.length - 1; i >= 0; i -= 1) {
+        if (new Date(memoryEvents[i].occurredAt).getTime() < keep(eventDays)) { memoryEvents.splice(i, 1); removedEvents += 1; }
+      }
+      for (let i = memoryVisits.length - 1; i >= 0; i -= 1) {
+        if (new Date(memoryVisits[i].occurredAt).getTime() < keep(visitDays)) { memoryVisits.splice(i, 1); removedVisits += 1; }
+      }
+      return { removedEvents, removedVisits };
+    }
+    const events = await query(`DELETE FROM site_system_events WHERE occurred_at < now() - ($1 || ' days')::interval`, [eventDays]);
+    const visits = await query(`DELETE FROM site_analytics_visits WHERE occurred_at < now() - ($1 || ' days')::interval`, [visitDays]);
+    return { removedEvents: events.rowCount || 0, removedVisits: visits.rowCount || 0 };
+  }
+
+  async function dbHealth() {
+    if (!usePostgres) return { driver: 'json', sizeBytes: 0, connections: 0, maxConnections: 0 };
+    try {
+      const result = await query(
+        `SELECT pg_database_size(current_database())::bigint AS size_bytes,
+                (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database())::int AS connections,
+                (SELECT setting::int FROM pg_settings WHERE name = 'max_connections') AS max_connections`
+      );
+      const row = result.rows[0] || {};
+      return {
+        driver: 'postgres',
+        sizeBytes: Number(row.size_bytes || 0),
+        connections: Number(row.connections || 0),
+        maxConnections: Number(row.max_connections || 0)
+      };
+    } catch (error) {
+      return { driver: 'postgres', sizeBytes: 0, connections: 0, maxConnections: 0, error: error.message };
+    }
+  }
+
   return {
     driver,
     init,
@@ -738,6 +1110,15 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     completePublish,
     settleLatestPublish,
     listPublishJobs,
+    recordVisit,
+    listVisits,
+    visitById,
+    analyticsSummary,
+    recordSystemEvent,
+    listSystemEvents,
+    systemEventById,
+    purgeSystemEvents,
+    dbHealth,
     migrateLegacyJson,
     legacyMediaDirectoryExists: () => existsSync(files.uploadDir)
   };
