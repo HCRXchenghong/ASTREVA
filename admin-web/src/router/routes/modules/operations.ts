@@ -21,6 +21,12 @@ export default {
       meta: { title: '询盘管理', locale: '询盘管理', requiresAuth: true },
     },
     {
+      path: 'profiles',
+      name: 'VisitorProfiles',
+      component: () => import('@/views/operations/profiles.vue'),
+      meta: { title: '访客画像', locale: '访客画像', requiresAuth: true },
+    },
+    {
       path: 'leads',
       name: 'Leads',
       component: () => import('@/views/operations/leads.vue'),

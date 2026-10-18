@@ -420,3 +420,45 @@ export const purgeSystemEvents = (payload: Record<string, unknown> = {}) =>
   client
     .post('/site-admin-api/system/events/purge', payload)
     .then((r) => r.data);
+
+// ---------- 访客画像（P5） ----------
+// 契约冻结：GET/PATCH /api/admin/visitor-profile/settings -> {settings:{...}}；
+// PATCH 为局部更新，third_party_key 不传=不改、传 ""=清除。
+export const fetchVisitorProfileSettings = () =>
+  client
+    .get(bridge('/api/admin/visitor-profile/settings'))
+    .then((r) => r.data);
+export const updateVisitorProfileSettings = (
+  payload: Record<string, unknown>
+) =>
+  client
+    .patch(bridge('/api/admin/visitor-profile/settings'), payload)
+    .then((r) => r.data);
+
+// GET /api/admin/visitor-profiles?q=&country=&tag=&limit=&offset=
+//   -> {profiles:[{visitor_id,country,region,city,timezone,nationality_guess,
+//        nationality_confidence,nationality_basis,dialect,summary,tags,
+//        interests,visits,last_path,last_seen_at,ip_last}], total}
+export const fetchVisitorProfiles = (params: Record<string, unknown> = {}) =>
+  client
+    .get(bridge('/api/admin/visitor-profiles'), { params })
+    .then((r) => r.data);
+
+// GET /api/admin/visitor-profiles/{visitor_id}
+//   -> {profile:{...,evidence:[{message_id,text,created_at}],
+//        conversations:[{conversation_id,status,created_at,last_message_at}]}}
+export const fetchVisitorProfile = (visitorId: string) =>
+  client
+    .get(bridge(`/api/admin/visitor-profiles/${encodeURIComponent(visitorId)}`))
+    .then((r) => r.data);
+
+// POST /api/admin/visitor-profiles/{visitor_id}/refresh -> {profile:{...}}
+export const refreshVisitorProfile = (visitorId: string) =>
+  client
+    .post(
+      bridge(
+        `/api/admin/visitor-profiles/${encodeURIComponent(visitorId)}/refresh`
+      ),
+      {}
+    )
+    .then((r) => r.data);

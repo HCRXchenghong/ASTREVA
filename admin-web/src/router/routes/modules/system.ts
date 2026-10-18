@@ -54,6 +54,12 @@ export default {
       meta: { title: '推送设置', locale: '推送设置', requiresAuth: true },
     },
     {
+      path: 'profile',
+      name: 'SystemProfile',
+      component: () => import('@/views/system/profile.vue'),
+      meta: { title: '访客画像', locale: '访客画像', requiresAuth: true },
+    },
+    {
       path: 'alerts',
       name: 'SystemAlerts',
       component: () => import('@/views/system/alerts.vue'),
