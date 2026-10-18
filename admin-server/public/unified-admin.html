@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ASTREVA 统一管理后台</title>
+  <style>
+    :root {
+      --navy: #07345f;
+      --navy-deep: #042744;
+      --blue: #0878dc;
+      --cyan: #18b7d8;
+      --ink: #142033;
+      --muted: #68778c;
+      --line: #dbe5ee;
+      --paper: #fff;
+      --wash: #f2f6f9;
+      --green: #16835c;
+      --red: #b42318;
+      --amber: #9b6100;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; overflow: hidden; color: var(--ink); background: var(--wash); font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .app { height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
+    .sidebar { position: relative; min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding: 24px 16px; color: #fff; background: radial-gradient(circle at 16% 5%, rgba(24,183,216,.38), transparent 19rem), linear-gradient(160deg, var(--navy), var(--navy-deep)); }
+    .sidebar::after { content: ""; position: absolute; width: 280px; height: 280px; left: 86px; bottom: -150px; border: 1px solid rgba(255,255,255,.14); border-radius: 50%; box-shadow: 0 0 0 38px rgba(255,255,255,.025), 0 0 0 76px rgba(255,255,255,.018); }
+    .brand { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; padding: 2px 10px 26px; border-bottom: 1px solid rgba(255,255,255,.14); }
+    .brand img { width: 46px; height: 46px; object-fit: contain; filter: drop-shadow(0 8px 20px rgba(0,0,0,.2)); }
+    .brand strong { display: block; font-size: 20px; letter-spacing: .04em; }
+    .brand small { color: rgba(255,255,255,.64); letter-spacing: .12em; }
+    .nav { position: relative; z-index: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: 10px; margin-top: 28px; padding: 0 2px 58px 0; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.34) transparent; }
+    .nav::-webkit-scrollbar { width: 7px; } .nav::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(255,255,255,.34); }
+    .nav button { height: 58px; display: flex; align-items: center; gap: 14px; border: 0; border-radius: 12px; padding: 0 16px; color: rgba(255,255,255,.74); background: transparent; font-weight: 800; text-align: left; }
+    .nav button:hover { color: #fff; background: rgba(255,255,255,.09); }
+    .nav button.active { color: #fff; background: linear-gradient(135deg, #0c82e7, #0967ba); box-shadow: 0 15px 28px rgba(0,18,44,.26); }
+    .icon { width: 28px; font-size: 21px; text-align: center; }
+    .version { position: absolute; z-index: 1; left: 28px; bottom: 26px; color: rgba(255,255,255,.52); font-size: 12px; }
+    .main { min-width: 0; min-height: 0; height: 100vh; overflow: hidden; display: grid; grid-template-rows: 76px minmax(0, 1fr); }
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 0 30px; background: rgba(255,255,255,.96); border-bottom: 1px solid var(--line); }
+    .heading strong { display: block; font-size: 22px; }
+    .heading span { color: var(--muted); font-size: 13px; }
+    .top-actions { display: flex; align-items: center; gap: 12px; }
+    .engine { display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--green); background: #eaf8f2; border-radius: 999px; font-size: 13px; font-weight: 800; }
+    .engine::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .engine.down { color: var(--red); background: #fff0ef; }
+    .btn { min-height: 40px; border: 1px solid #cbd8e5; border-radius: 9px; padding: 0 14px; color: var(--ink); background: #fff; font-weight: 800; }
+    .btn:hover { border-color: var(--blue); color: var(--blue); }
+    .btn.primary { color: #fff; border-color: var(--blue); background: var(--blue); }
+    .btn.danger { color: var(--red); border-color: #f2c8c4; }
+    .content { min-height: 0; height: 100%; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 28px 30px 48px; scrollbar-gutter: stable; }
+    .content.content-mode { overflow: hidden; padding: 0; }
+    .view { display: none; min-height: 0; }
+    .view.active { display: block; }
+    .content-frame { display: block; width: 100%; height: calc(100vh - 76px); border: 0; background: #fff; }
+    .hero { display: flex; justify-content: space-between; gap: 22px; align-items: end; margin-bottom: 24px; }
+    .hero h1 { margin: 0 0 7px; font-size: 30px; }
+    .hero p { margin: 0; color: var(--muted); }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 16px; margin-bottom: 22px; }
+    .stat { position: relative; min-height: 130px; overflow: hidden; padding: 21px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); box-shadow: 0 8px 28px rgba(18,44,70,.05); }
+    .stat::after { content: ""; position: absolute; width: 86px; height: 86px; right: -30px; bottom: -34px; border-radius: 50%; background: color-mix(in srgb, var(--accent, var(--blue)) 14%, transparent); }
+    .stat small { color: var(--muted); font-weight: 700; }
+    .stat strong { display: block; margin-top: 13px; color: var(--accent, var(--blue)); font-size: 34px; }
+    .panel { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); box-shadow: 0 8px 28px rgba(18,44,70,.05); }
+    .panel-head { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+    .panel-head h2 { margin: 0; font-size: 19px; }
+    .panel-body { padding: 20px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 20px; }
+    .table-wrap { overflow: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 15px 18px; border-bottom: 1px solid #edf1f5; text-align: left; vertical-align: middle; }
+    th { color: var(--muted); background: #f8fafc; font-size: 12px; letter-spacing: .04em; white-space: nowrap; }
+    td { font-size: 14px; }
+    tbody tr:hover { background: #fbfdff; }
+    .badge { display: inline-flex; align-items: center; min-height: 26px; border-radius: 999px; padding: 3px 9px; color: #175a91; background: #e9f4ff; font-size: 12px; font-weight: 800; }
+    .badge.online, .badge.assigned { color: var(--green); background: #e9f8f1; }
+    .badge.busy, .badge.waiting, .badge.human_requested { color: var(--amber); background: #fff4dc; }
+    .badge.offline, .badge.closed { color: var(--muted); background: #eef1f4; }
+    .badge.disabled { color: var(--red); background: #fff0ef; }
+    .row-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .row-actions button { min-height: 32px; border: 1px solid #d6e0e9; border-radius: 7px; padding: 0 9px; color: #23405d; background: #fff; font-size: 12px; font-weight: 800; }
+    .row-actions button:hover { border-color: var(--blue); color: var(--blue); }
+    tbody tr.rating-neutral { background: #fffaf0; }
+    tbody tr.rating-bad { background: #fff3f2; }
+    #agentRatingsDialog { width: min(1020px, calc(100vw - 40px)); }
+    .dialog-section { margin-bottom: 20px; }
+    .dialog-section:last-child { margin-bottom: 0; }
+    .dialog-section-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+    .dialog-section-head h3 { margin: 0; font-size: 16px; }
+    .agent-detail-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; overflow: hidden; margin: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--line); }
+    .agent-detail-fact { min-width: 0; padding: 13px 15px; background: #f8fafc; }
+    .agent-detail-fact dt { margin-bottom: 6px; color: var(--muted); font-size: 12px; font-weight: 800; }
+    .agent-detail-fact dd { overflow-wrap: anywhere; margin: 0; color: var(--ink); font-size: 14px; font-weight: 800; }
+    .rating-conversation { color: #425b73; font-size: 12px; overflow-wrap: anywhere; }
+    .rating-comment { min-width: 220px; max-width: 440px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+    .rating-comment.negative { padding: 9px 11px; border-left: 3px solid var(--red); border-radius: 7px; color: #721c15; background: #fff0ef; font-weight: 700; }
+    .rating-comment.empty { color: var(--muted); font-style: italic; font-weight: 400; }
+    .workspace-shell { min-height: 610px; height: calc(100vh - 300px); display: grid; grid-template-columns: minmax(260px, 29%) minmax(360px, 1fr) minmax(240px, 27%); overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 8px 28px rgba(18,44,70,.05); }
+    .workspace-sidebar, .workspace-chat, .workspace-detail { min-width: 0; min-height: 0; }
+    .workspace-sidebar { display: grid; grid-template-rows: auto minmax(0,1fr); border-right: 1px solid var(--line); background: #f7f9fb; }
+    .workspace-search { padding: 14px; border-bottom: 1px solid var(--line); }
+    .conversation-list { overflow-y: auto; }
+    .conversation-item { width: 100%; min-height: 82px; display: grid; grid-template-columns: 42px minmax(0,1fr) auto; gap: 10px; align-items: center; border: 0; border-bottom: 1px solid #e8edf2; padding: 12px 14px; color: var(--ink); background: transparent; text-align: left; }
+    .conversation-item:hover { background: #edf3f8; }
+    .conversation-item.active { background: #dcecf8; }
+    .conversation-avatar { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 8px; color: #fff; background: linear-gradient(145deg, #15945e, #0878dc); font-weight: 900; }
+    .conversation-copy { min-width: 0; }
+    .conversation-copy strong, .conversation-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conversation-copy small { margin-top: 7px; color: var(--muted); }
+    .conversation-meta { align-self: stretch; display: grid; justify-items: end; align-content: space-between; color: var(--muted); font-size: 11px; }
+    .unread-dot { min-width: 20px; height: 20px; display: grid; place-items: center; border-radius: 999px; padding: 0 5px; color: #fff; background: #e34d3d; font-weight: 900; }
+    .workspace-chat { display: grid; grid-template-rows: 64px minmax(0,1fr) auto; background: #f3f3f3; }
+    .workspace-chat-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid #dfe4e8; background: #f7f7f7; }
+    .workspace-chat-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .workspace-chat-actions { display: flex; gap: 8px; }
+    .workspace-chat-actions button { min-height: 34px; padding: 0 10px; }
+    .workspace-messages { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 17px; padding: 20px; }
+    .workspace-message { max-width: 76%; display: grid; gap: 5px; align-self: flex-start; }
+    .workspace-message.agent, .workspace-message.ai { align-self: flex-end; justify-items: end; }
+    .workspace-message.system { max-width: 90%; align-self: center; justify-items: center; }
+    .workspace-message .bubble { padding: 10px 13px; border-radius: 5px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.08); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .workspace-message.agent .bubble { background: #95ec69; }
+    .workspace-message.ai .bubble { background: #dff3ff; }
+    .workspace-message.system .bubble { padding: 5px 9px; color: #777; background: rgba(0,0,0,.07); box-shadow: none; font-size: 12px; }
+    .workspace-message small { color: #8a939c; font-size: 11px; }
+    .workspace-message .message-original { margin-top: 6px; display: grid; gap: 5px; }
+    .workspace-message .view-original-btn { justify-self: start; border: none; background: none; padding: 0; color: #0878dc; font-size: 11px; cursor: pointer; }
+    .workspace-message .view-original-btn:hover { text-decoration: underline; }
+    .workspace-message .original-text { color: #5c6670; font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px dashed rgba(0,0,0,.15); padding-top: 5px; }
+    .workspace-readonly { padding: 11px 18px; border-top: 1px solid #dfe4e8; color: #78838e; background: #fafafa; font-size: 12px; }
+    .workspace-detail { overflow-y: auto; padding: 19px; border-left: 1px solid var(--line); }
+    .workspace-detail h3 { margin: 0 0 16px; font-size: 16px; }
+    .visitor-facts { display: grid; gap: 0; margin: 0; }
+    .visitor-facts div { padding: 12px 0; border-bottom: 1px solid #edf1f5; }
+    .visitor-facts dt { color: var(--muted); font-size: 12px; }
+    .visitor-facts dd { margin: 5px 0 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 800; }
+    .group-picker { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
+    .group-picker .btn { min-height: 42px; }
+    .audit-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(130px, 180px)); gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+    .audit-row { cursor: pointer; }
+    .risk { display: inline-flex; border-radius: 999px; padding: 4px 9px; font-size: 12px; font-weight: 900; }
+    .risk.high { color: var(--red); background: #fff0ef; }
+    .risk.medium { color: var(--amber); background: #fff4dc; }
+    .risk.low { color: var(--green); background: #e9f8f1; }
+    .audit-detail { display: grid; grid-template-columns: 140px minmax(0,1fr); margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .audit-detail dt, .audit-detail dd { margin: 0; padding: 11px 13px; border-bottom: 1px solid var(--line); }
+    .audit-detail dt { color: var(--muted); background: #f8fafc; font-weight: 800; }
+    .audit-detail dd { overflow-wrap: anywhere; white-space: pre-wrap; }
+    .empty { padding: 48px 18px; color: var(--muted); text-align: center; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+    label { display: grid; gap: 8px; color: #34465a; font-size: 13px; font-weight: 800; }
+    input, select, textarea { width: 100%; border: 1px solid #cfdbe6; border-radius: 9px; padding: 11px 12px; color: var(--ink); background: #fff; outline: none; }
+    input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(8,120,220,.12); }
+    textarea { min-height: 100px; resize: vertical; }
+    .wide { grid-column: 1 / -1; }
+    .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+    .notice { display: none; position: fixed; z-index: 20; right: 28px; bottom: 26px; max-width: 430px; padding: 14px 18px; border-radius: 11px; color: #fff; background: var(--navy); box-shadow: 0 16px 42px rgba(2,25,50,.28); font-weight: 700; }
+    .notice.show { display: block; animation: rise .24s ease-out; }
+    .notice.error { background: var(--red); }
+    dialog { width: min(620px, calc(100vw - 40px)); border: 0; border-radius: 18px; padding: 0; color: var(--ink); box-shadow: 0 30px 90px rgba(0,22,48,.28); }
+    dialog::backdrop { background: rgba(3,24,44,.46); backdrop-filter: blur(3px); }
+    .dialog-head { display: flex; justify-content: space-between; align-items: center; padding: 20px 22px; border-bottom: 1px solid var(--line); }
+    .dialog-head h2 { margin: 0; font-size: 20px; }
+    .dialog-body { max-height: 70vh; overflow: auto; padding: 22px; }
+    .api-key-box code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; background: #eef4fb; border: 1px solid var(--line); border-radius: 7px; padding: 2px 7px; color: #123; word-break: break-all; }
+    .api-key-box { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 14px 16px; border-radius: 12px; background: #f2f7fe; border: 1px dashed #9cc3ee; margin: 14px 0; }
+    .api-key-warning { margin: 0; padding: 10px 14px; border-radius: 10px; background: #fff6e8; border: 1px solid #f4d9a8; color: #8a5a12; font-weight: 600; font-size: 13px; }
+    @keyframes rise { from { transform: translateY(10px); opacity: 0; } }
+    @media (max-width: 1180px) { .workspace-shell { grid-template-columns: 280px minmax(360px,1fr); } .workspace-detail { display: none; } .cards { grid-template-columns: repeat(2, 1fr); } .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 760px) { .app { grid-template-columns: 82px minmax(0,1fr); } .sidebar { padding: 18px 10px; } .brand { padding: 0 6px 20px; justify-content: center; } .brand img { width: 44px; } .brand div, .nav span:not(.icon), .version { display: none; } .nav button { justify-content: center; padding: 0; } .content { padding: 20px 16px 40px; } .topbar { padding: 0 16px; } .heading span, .engine { display: none; } .cards, .form-grid, .agent-detail-facts, .audit-toolbar { grid-template-columns: 1fr; } .hero { align-items: start; flex-direction: column; } .workspace-shell { height: auto; min-height: 740px; grid-template-columns: 1fr; grid-template-rows: 260px 480px; } .workspace-sidebar { border-right: 0; border-bottom: 1px solid var(--line); } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><img src="/assets/astreva-logo-transparent.png" alt="ASTREVA"><div><strong>ASTREVA</strong><small>CONTROL CENTER</small></div></div>
+      <nav class="nav">
+        <button data-view="content"><span class="icon">▤</span><span>内容管理</span></button>
+        <button data-view="translations"><span class="icon">文</span><span>网站翻译</span></button>
+        <button data-view="media"><span class="icon">▦</span><span>R2 素材库</span></button>
+        <button data-view="customers"><span class="icon">♙</span><span>客服管理</span></button>
+        <button class="active" data-view="workspace"><span class="icon">◫</span><span>工作台</span></button>
+        <button data-view="settings"><span class="icon">⚙</span><span>系统设置</span></button>
+        <button data-view="keywords"><span class="icon">⌘</span><span>关键词</span></button>
+        <button data-view="audit"><span class="icon">◷</span><span>审计日志</span></button>
+        <button data-view="releases"><span class="icon">⇪</span><span>App 版本</span></button>
+        <button data-view="api"><span class="icon">⇄</span><span>API 管理</span></button>
+      </nav>
+      <div class="version">Unified Console 1.0</div>
+    </aside>
+    <section class="main">
+      <header class="topbar">
+        <div class="heading"><strong id="pageTitle">工作台</strong><span id="pageSubtitle">会话运行状态与服务质量概览</span></div>
+        <div class="top-actions"><span class="engine" id="engineState">客服引擎检查中</span><button class="btn" id="refresh">刷新</button><button class="btn" id="logout">退出</button></div>
+      </header>
+      <main class="content" id="contentRoot">
+        <section class="view" id="view-content"><iframe class="content-frame" src="/site-admin/content/?embed=1" title="官网内容管理"></iframe></section>
+        <section class="view" id="view-translations"><iframe class="content-frame" src="/site-admin/translations?embed=1" title="网站翻译管理"></iframe></section>
+        <section class="view" id="view-media"><iframe class="content-frame" src="/site-admin/media?embed=1" title="R2 媒体素材管理"></iframe></section>
+        <section class="view" id="view-customers">
+          <div class="hero"><div><h1>客服管理</h1><p>创建 App 登录账号、设置分组与并发上限，并安全地重置密码。</p></div><button class="btn primary" id="createAgent">新增客服账号</button></div>
+          <div class="panel"><div class="panel-head"><h2>客服账号</h2><span id="agentCount" class="badge">0 个账号</span></div><div class="table-wrap"><table><thead><tr><th>账号 / 姓名</th><th>分组</th><th>状态</th><th>当前会话</th><th>并发上限</th><th>真实好评率</th><th>展示好评率</th><th>操作</th></tr></thead><tbody id="agentRows"></tbody></table></div></div>
+        </section>
+        <section class="view active" id="view-workspace">
+          <div class="hero"><div><h1>客服工作台</h1><p>微信电脑端式会话监管台；管理员只读查看消息，可转接或结束会话。</p></div><button class="btn" id="exportConversations">导出会话 CSV</button></div>
+          <div class="cards" id="stats"></div>
+          <div class="workspace-shell">
+            <section class="workspace-sidebar"><div class="workspace-search"><input id="workspaceConversationSearch" type="search" placeholder="搜索访客、来源、客服或消息"><span id="conversationCount" class="badge">0 条</span></div><div id="workspaceConversationList" class="conversation-list"></div></section>
+            <section class="workspace-chat"><header class="workspace-chat-head"><strong id="workspaceChatTitle">请选择一条会话</strong><div id="workspaceChatActions" class="workspace-chat-actions"></div></header><div id="workspaceMessageList" class="workspace-messages"><div class="empty">从左侧选择会话查看消息</div></div><footer class="workspace-readonly">管理员监管模式：不会以客服身份发送消息，也不会改变人工、关键词或 AI 的接待优先级。</footer></section>
+            <aside class="workspace-detail"><h3>会话详情</h3><dl id="workspaceVisitorFacts" class="visitor-facts"><div><dt>提示</dt><dd>选择会话后显示访客与接待信息</dd></div></dl></aside>
+          </div>
+        </section>
+        <section class="view" id="view-keywords">
+          <div class="hero"><div><h1>关键词规则</h1><p>配置访客消息关键词的自动回复与快捷回复。</p></div><button class="btn primary" id="createKeyword">新增规则</button></div>
+          <div class="panel"><div class="panel-head"><h2>规则列表</h2><span id="keywordCount" class="badge">0 条</span></div><div class="table-wrap"><table><thead><tr><th>关键词</th><th>匹配方式</th><th>回复内容</th><th>状态</th><th>优先级</th><th>快捷回复</th><th>操作</th></tr></thead><tbody id="keywordRows"></tbody></table></div></div>
+        </section>
+        <section class="view" id="view-audit">
+          <div class="hero"><div><h1>审计日志</h1><p>合并官网后台与客服系统操作，支持风险分级、检索和完整上下文追溯。</p></div><button class="btn" id="exportAudit">导出当前结果 CSV</button></div>
+          <div class="cards" id="auditStats"></div>
+          <div class="panel"><div class="panel-head"><h2>操作记录</h2><span id="auditCount" class="badge">0 条</span></div><div class="audit-toolbar"><input id="auditSearch" type="search" placeholder="搜索动作、对象、操作者、IP"><select id="auditSource"><option value="">全部来源</option><option value="servicebridge">客服系统</option><option value="site-admin">官网后台</option></select><select id="auditActor"><option value="">全部操作者</option><option value="admin">管理员</option><option value="agent">客服</option><option value="system">系统</option></select><select id="auditRisk"><option value="">全部风险</option><option value="high">高风险</option><option value="medium">中风险</option><option value="low">低风险</option></select></div><div class="table-wrap"><table><thead><tr><th>时间</th><th>来源</th><th>风险</th><th>操作者</th><th>动作</th><th>对象</th><th>IP</th></tr></thead><tbody id="auditRows"></tbody></table></div></div>
+        </section>
+        <section class="view" id="view-releases">
+          <div class="hero"><div><h1>App 版本管理</h1><p>上传 Android/iOS 安装包，控制强制更新与发布状态。</p></div></div>
+          <div class="grid">
+            <section class="panel"><div class="panel-head"><h2>上传新版本</h2></div><div class="panel-body"><form id="releaseForm" class="form-grid">
+              <label>平台<select name="platform" required><option value="android">Android</option><option value="ios">iOS</option></select></label>
+              <label>版本号（如 1.2.0）<input name="version_name" required></label>
+              <label>版本代码（整数，递增）<input name="version_code" type="number" min="1" required></label>
+              <label>安装包文件<input name="file" type="file" accept=".apk,.ipa" required></label>
+              <label class="wide">更新说明<textarea name="release_notes" rows="3"></textarea></label>
+              <label class="wide"><input type="checkbox" name="force_update" style="width:auto;margin-right:8px">强制更新（低于此版本的 App 必须升级后才能使用）</label>
+              <div class="form-actions wide"><button class="btn primary">上传并发布</button></div>
+            </form></div></section>
+            <section class="panel"><div class="panel-head"><h2>版本列表</h2><span id="releaseCount" class="badge">0 个版本</span></div><div class="table-wrap"><table><thead><tr><th>版本</th><th>平台</th><th>大小</th><th>更新类型</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="releaseRows"></tbody></table></div></section>
+          </div>
+        </section>
+        <section class="view" id="view-api">
+          <div class="hero"><div><h1>API 管理</h1><p>授权第三方平台接入客服引擎：创建会话、收发消息，并实时接收 AI 与人工客服的回复。</p></div><div style="display:flex;gap:10px;flex-shrink:0"><button class="btn" id="openApiDocs">接入说明</button><button class="btn primary" id="createApiApp">新增授权</button></div></div>
+          <div class="panel"><div class="panel-head"><h2>授权平台</h2><span id="apiAppCount" class="badge">0 个平台</span></div><div class="table-wrap"><table><thead><tr><th>平台名称</th><th>Key 前缀</th><th>状态</th><th>限速/分钟</th><th>累计调用</th><th>最近使用</th><th>备注</th><th>操作</th></tr></thead><tbody id="apiAppRows"></tbody></table></div></div>
+        </section>
+        <section class="view" id="view-settings"><iframe class="content-frame" src="/site-admin/settings?embed=1" title="系统设置"></iframe></section>
+      </main>
+    </section>
+  </div>
+  <dialog id="apiAppDialog"><div class="dialog-head"><h2 id="apiAppDialogTitle">新增 API 授权</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><form id="apiAppForm" class="form-grid"><input name="id" type="hidden"><label>平台名称<input name="name" required maxlength="64" placeholder="例如：Shopify 独立站 / 企业官网"></label><label>限速（次/分钟，0=默认）<input name="rate_limit" type="number" min="0" max="100000" value="0"></label><label class="wide">备注<textarea name="note" rows="2" maxlength="128" placeholder="接入方、用途、联系人等"></textarea></label><label class="wide" style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="enabled" checked style="width:auto">启用授权（关闭后该平台的 Key 立即失效）</label><div class="form-actions wide"><button type="button" class="btn" data-close>取消</button><button class="btn primary">保存授权</button></div></form></div></dialog>
+  <dialog id="apiKeyDialog"><div class="dialog-head"><h2>API Key 已生成</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><p class="api-key-warning">出于安全考虑，完整 Key 只显示这一次，关闭后系统只保存哈希，请立即复制并妥善保存。</p><div class="api-key-box"><code id="apiKeyValue"></code><button class="btn" id="copyApiKey" type="button">复制</button></div><div class="form-actions"><button class="btn primary" data-close type="button">我已妥善保存</button></div></dialog>
+  <dialog id="agentDialog"><div class="dialog-head"><h2 id="agentDialogTitle">新增客服账号</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><form id="agentForm" class="form-grid"><input name="id" type="hidden"><label>登录账号<input name="account" autocomplete="off" required></label><label>客服姓名<input name="name" required></label><label>分组<span class="group-picker"><select id="agentGroupSelect" name="group"><option value="">未分组</option></select><button class="btn" id="addAgentGroup" type="button">添加</button></span></label><label>最大并发会话<input name="max_conversations" type="number" min="1" value="10" required></label><label class="wide" id="passwordField">初始密码<input name="password" type="password" minlength="10" autocomplete="new-password"><span>至少 10 位，创建后客服可在 App 内修改。</span></label><div class="form-actions wide"><button type="button" class="btn" data-close>取消</button><button class="btn primary">保存客服</button></div></form></div></dialog>
+  <dialog id="keywordDialog"><div class="dialog-head"><h2 id="keywordDialogTitle">新增关键词规则</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><form id="keywordForm" class="form-grid"><input name="id" type="hidden"><label>关键词<input name="keyword" required></label><label>匹配方式<select name="match_type"><option value="contains">包含</option><option value="exact">完全匹配</option><option value="prefix">前缀匹配</option></select></label><label>动作<select name="action"><option value="text">发送文本</option><option value="telephone">发送电话</option><option value="whatsapp">发送 WhatsApp</option><option value="telegram">发送 Telegram</option><option value="handoff">转人工</option></select></label><label>优先级<input name="priority" type="number" value="50"></label><label class="wide">回复内容<textarea name="reply" rows="3"></textarea></label><label class="wide">快捷回复按钮文字<textarea name="quick_reply_text" rows="2"></textarea></label><label><input type="checkbox" name="enabled" checked style="width:auto;margin-right:8px">启用规则</label><label><input type="checkbox" name="show_in_quick_replies" style="width:auto;margin-right:8px">显示为快捷回复</label><div class="form-actions wide"><button type="button" class="btn" data-close>取消</button><button class="btn primary">保存规则</button></div></form></div></dialog>
+  <dialog id="ratingDialog"><div class="dialog-head"><h2 id="ratingDialogTitle">设置好评率</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><form id="ratingForm" class="form-grid"><input name="id" type="hidden"><p class="wide" id="ratingRealInfo"></p><label class="wide">展示好评率（0-100）<input name="satisfaction_rate" type="number" min="0" max="100" step="0.1" required><span>设置后客服 App 和后台展示此比例，真实好评率仍会同时显示。</span></label><div class="form-actions wide"><button type="button" class="btn" data-close>取消</button><button class="btn primary">保存</button></div></form></div></dialog>
+  <dialog id="agentRatingsDialog" aria-labelledby="agentRatingDialogTitle"><div class="dialog-head"><h2 id="agentRatingDialogTitle">客服详情</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><section class="dialog-section" aria-labelledby="agentFactsTitle"><div class="dialog-section-head"><h3 id="agentFactsTitle">客服资料</h3></div><dl class="agent-detail-facts" id="agentDetailFacts"></dl></section><section class="dialog-section" aria-labelledby="agentRatingSummaryTitle"><div class="dialog-section-head"><h3 id="agentRatingSummaryTitle">评价概览</h3></div><div class="cards" id="agentRatingSummary"></div></section><section class="dialog-section" aria-labelledby="agentRatingRecordsTitle"><div class="dialog-section-head"><h3 id="agentRatingRecordsTitle">该客服的评价记录</h3><span id="agentRatingRecordCount" class="badge">0 条</span></div><div class="table-wrap"><table><thead><tr><th>会话</th><th>评分</th><th>标签</th><th>评价文字</th><th>时间</th></tr></thead><tbody id="agentRatingRowsDialog"></tbody></table></div></section></div></dialog>
+  <dialog id="auditDialog" aria-labelledby="auditDialogTitle"><div class="dialog-head"><h2 id="auditDialogTitle">审计详情</h2><button class="btn" data-close>关闭</button></div><div class="dialog-body"><dl id="auditDetail" class="audit-detail"></dl></div></dialog>
+  <div class="notice" id="notice"></div>
+  <script src="/site-admin-assets/unified-admin.js"></script>
+</body>
+</html>

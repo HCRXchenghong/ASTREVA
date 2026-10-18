@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>网站翻译管理</title>
+  <link rel="stylesheet" href="/site-admin-assets/translation-admin.css">
+  <style>
+    .tprog{position:relative;height:18px;border-radius:9px;background:#e5edf6;overflow:hidden;margin-top:10px;border:1px solid #d3e0ef}
+    .tprog-fill{height:100%;background:linear-gradient(90deg,#0a66c2,#2f8ae0);transition:width .4s ease;border-radius:9px}
+    .tprog-text{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#0b3d66}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div><span class="eyebrow">WEBSITE LOCALIZATION</span><h1>网站翻译</h1><p>后台只维护中文；每次保存官网内容后，系统会把同一修订版自动翻译为英语和阿拉伯语。</p></div>
+      <button class="button" id="refresh" type="button">刷新状态</button>
+    </header>
+
+    <section class="locale-grid" id="localeGrid" aria-label="三语版本状态"></section>
+
+    <section class="panel">
+      <div class="panel-head"><div><h2>自动翻译上游</h2><p>Key 由后台加密保存，页面和接口都不会回显明文。</p></div><span class="secure">加密存储</span></div>
+      <form id="settingsForm" class="form-grid">
+        <label class="check wide"><input name="enabled" type="checkbox">中文保存后自动翻译</label>
+        <label>API 类型<select name="apiType" required><option value="chat_completions">Chat Completions</option><option value="responses">Responses API</option><option value="anthropic_messages">Anthropic Messages</option></select></label>
+        <label>上游地址<input name="baseUrl" type="url" required placeholder="https://api.openai.com/v1"></label>
+        <label class="wide">API Key<input name="apiKey" type="password" autocomplete="new-password" placeholder="留空表示保留现有 Key"><small id="keyState">未配置</small></label>
+        <div class="model-row wide">
+          <label>翻译模型<select name="model" id="modelSelect" required><option value="">请先获取模型</option></select></label>
+          <button class="button" id="loadModels" type="button">从上游获取模型</button>
+        </div>
+        <label>每批文案数<input name="batchSize" type="number" min="5" max="100" required></label>
+        <label>超时（秒）<input name="timeoutSeconds" type="number" min="10" max="600" required></label>
+        <div class="actions wide"><button class="button primary" type="submit">保存翻译配置</button><button class="button danger" id="clearKey" type="button">清除 Key</button></div>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><div><h2>翻译任务</h2><p>重译会以当前中文修订版为准覆盖对应译文，不会改动中文。</p></div></div>
+      <div class="task-actions"><button class="button primary" data-retranslate="all">重新翻译英语 + 阿拉伯语</button><button class="button" data-retranslate="en">只重译英语</button><button class="button" data-retranslate="ar">只重译阿拉伯语</button></div>
+    </section>
+  </main>
+  <div class="notice" id="notice" role="status"></div>
+  <script src="/site-admin-assets/translation-admin.js"></script>
+</body>
+</html>

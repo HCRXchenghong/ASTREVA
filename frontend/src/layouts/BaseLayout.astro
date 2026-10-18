@@ -1,0 +1,163 @@
+---
+import '../styles/global.css';
+import Navbar from '../components/Navbar';
+import ChatWidget from '../components/ChatWidget';
+import CookieConsent from '../components/CookieConsent';
+import LanguageController from '../components/LanguageController.astro';
+import { PUBLIC_CONTENT_API_URL } from '../lib/content';
+import { absoluteAssetUrl, absoluteUrl, organizationJsonLd, pageDescription, pageTitle, websiteJsonLd } from '../lib/seo';
+import type { SEO, SiteContent } from '../lib/types';
+
+type Props = {
+  content: SiteContent;
+  seo?: SEO;
+  path: string;
+  jsonLd?: unknown[];
+};
+
+const { content, seo, path, jsonLd = [] } = Astro.props;
+const title = pageTitle(seo, content.site);
+const description = pageDescription(seo, content.site);
+const canonical = absoluteUrl(path);
+const imageSource = seo?.image || content.site.defaultSeo.image || content.site.logoUrl;
+const image = absoluteAssetUrl(imageSource);
+const keywords = seo?.keywords || content.site.defaultSeo.keywords;
+const localeMap: Record<string, string> = { 'zh-CN': 'zh_CN', en: 'en_US', ar: 'ar_SA' };
+const ogLocale = localeMap[content.site.locale] || 'zh_CN';
+const alternateLocales = Object.values(localeMap).filter((locale) => locale !== ogLocale);
+const verification = content.site.searchVerification || {};
+const isLogoImage = Boolean(image && imageSource === content.site.logoUrl);
+const structuredData = [organizationJsonLd(content.site), websiteJsonLd(content.site), ...jsonLd];
+const footer = content.site.footer;
+---
+
+<!doctype html>
+<html lang={content.site.locale}>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script is:inline>
+      (() => {
+        const root = document.documentElement;
+        const supported = new Set(['zh-CN', 'en', 'ar']);
+        let savedLocale = null;
+
+        try {
+          savedLocale = localStorage.getItem('astreva-site-locale');
+        } catch {}
+
+        root.dataset.astrevaLocalePending = '';
+        if (supported.has(savedLocale)) {
+          root.lang = savedLocale;
+          root.dir = savedLocale === 'ar' ? 'rtl' : 'ltr';
+        }
+
+        window.setTimeout(() => root.removeAttribute('data-astreva-locale-pending'), 5000);
+      })();
+    </script>
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="bingbot" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="baiduspider" content="index, follow" />
+    <meta name="theme-color" content="#0a4d8c" />
+    {verification.google && <meta name="google-site-verification" content={verification.google} />}
+    {verification.bing && <meta name="msvalidate.01" content={verification.bing} />}
+    {verification.baidu && <meta name="baidu-site-verification" content={verification.baidu} />}
+    {verification.so360 && <meta name="360-site-verification" content={verification.so360} />}
+    {verification.sogou && <meta name="sogou_site_verification" content={verification.sogou} />}
+    {verification.yandex && <meta name="yandex-verification" content={verification.yandex} />}
+    {content.site.logoUrl && <link rel="icon" href={content.site.logoUrl} />}
+    {content.site.logoUrl && <link rel="apple-touch-icon" href={content.site.logoUrl} />}
+    {keywords && <meta name="keywords" content={keywords} />}
+    <link rel="canonical" href={canonical} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={content.site.brandName} />
+    <meta property="og:locale" content={ogLocale} data-astreva-og-locale />
+    {alternateLocales.map((locale) => <meta property="og:locale:alternate" content={locale} />)}
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    {image && <meta property="og:image" content={image} />}
+    {image && new URL(image).protocol === 'https:' && <meta property="og:image:secure_url" content={image} />}
+    {image && <meta property="og:image:alt" content={`${title} - ${content.site.brandName}`} />}
+    {isLogoImage && <meta property="og:image:width" content="512" />}
+    {isLogoImage && <meta property="og:image:height" content="512" />}
+    {isLogoImage && <meta property="og:image:type" content="image/png" />}
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    {image && <meta name="twitter:image" content={image} />}
+    {image && <meta name="twitter:image:alt" content={`${title} - ${content.site.brandName}`} />}
+    {structuredData.map((item) => (
+      <script type="application/ld+json" set:html={JSON.stringify(item)} />
+    ))}
+  </head>
+  <body>
+    <LanguageController content={content} apiBase={PUBLIC_CONTENT_API_URL} />
+    <div class="min-h-screen bg-white font-sans selection:bg-blue-200 selection:text-blue-900">
+      <Navbar
+        client:only="react"
+        site={content.site}
+        categories={content.categories}
+        products={content.products}
+        currentPath={path}
+      />
+      <main>
+        <slot />
+      </main>
+      <footer id="site-footer" class="bg-slate-900 text-white pt-16 pb-8 scroll-mt-24">
+        <div class="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
+          <div>
+            <div class="flex items-center gap-2 mb-6">
+              {content.site.logoUrl ? (
+                <img src={content.site.logoUrl} alt={footer.logoAlt} class="w-10 h-10 rounded-full object-cover bg-white shadow-sm ring-1 ring-blue-400/30" />
+              ) : (
+                <span role="img" aria-label={footer.logoAlt} class="grid h-10 w-10 place-items-center rounded-full bg-white text-sm font-black text-[#0a4d8c] shadow-sm ring-1 ring-blue-400/30">{content.site.brandName.slice(0, 1)}</span>
+              )}
+              <span class="text-2xl font-bold tracking-wide">{content.site.brandName}</span>
+            </div>
+            <p class="text-gray-400 text-sm mb-6 leading-relaxed">
+              {footer.description}
+            </p>
+          </div>
+          <div>
+            <h4 class="text-lg font-semibold mb-6">{footer.quickLinksTitle}</h4>
+            <ul class="space-y-3 text-gray-400 text-sm">
+              {footer.quickLinks.filter((link) => link.href !== '/projects/').map((link) => <li><a href={link.href} class="hover:text-blue-400 transition-colors">{link.label}</a></li>)}
+            </ul>
+          </div>
+          <div>
+            <h4 class="text-lg font-semibold mb-6">{footer.supportTitle}</h4>
+            <ul class="space-y-3 text-gray-400 text-sm">
+              {footer.supportLinks.map((link) => <li><a href={link.href} class="hover:text-blue-400 transition-colors">{link.label}</a></li>)}
+            </ul>
+          </div>
+          <div>
+            <h4 class="text-lg font-semibold mb-6">{footer.socialTitle}</h4>
+            <div class="flex flex-wrap gap-4">
+              {Object.entries(content.site.socialLinks).filter(([, url]) => Boolean(url)).map(([name, url]) => (
+                <a href={url as string} class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center hover:bg-blue-600 transition-colors uppercase text-xs font-bold" aria-label={name}>
+                  {content.site.socialIcons?.[name] || name.slice(0, 1)}
+                </a>
+              ))}
+              {Object.values(content.site.socialLinks).filter(Boolean).length === 0 && (
+                <span class="text-gray-500 text-sm">{footer.socialEmptyText}</span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div class="max-w-7xl mx-auto px-6 pt-8 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-gray-500">
+          <p>{content.site.copyright}</p>
+          <div class="flex gap-6">
+            <a href="/privacy/" class="hover:text-gray-300 transition-colors">{footer.privacyLabel}</a>
+            <a href="/agreement/" class="hover:text-gray-300 transition-colors">{footer.agreementLabel}</a>
+          </div>
+        </div>
+      </footer>
+      <ChatWidget client:only="react" serviceBridgeUrl={content.site.serviceBridgeUrl} chat={content.site.chat} />
+      <CookieConsent client:only="react" cookie={content.site.cookie} />
+    </div>
+  </body>
+</html>

@@ -1,0 +1,40 @@
+{
+  "name": "astreva-independent-site",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1115.0",
+    "@aws-sdk/s3-request-presigner": "3.1115.0",
+    "bcryptjs": "2.4.3",
+    "formidable": "2.1.5",
+    "pg": "8.16.3",
+    "qrcode": "1.5.4",
+    "sharp": "0.35.3",
+    "typescript": "6.0.3"
+  },
+  "overrides": {
+    "vite": "8.2.2"
+  },
+  "scripts": {
+    "dev:frontend": "npm --workspace frontend run dev",
+    "cms:contract": "node scripts/check-cms-content-contract.mjs",
+    "build:frontend": "npm run cms:contract && npm --workspace frontend run build",
+    "preview:frontend": "npm --workspace frontend run preview",
+    "dev:admin": "node admin-server/server.mjs",
+    "dev:cms": "npm run dev:admin",
+    "dev:backend": "npm run dev:admin",
+    "cms:cutover": "node admin-server/scripts/cutover-legacy-storage.mjs",
+    "cms:migrate-external-media": "node admin-server/scripts/migrate-external-media.mjs",
+    "test:admin": "node --test admin-server/**/*.test.mjs",
+    "build": "npm run build:frontend",
+    "rebuild:webhook": "node scripts/rebuild-webhook.mjs",
+    "servicebridge:backend": "cd servicebridge/backend && go run ./cmd/server",
+    "servicebridge:web": "cd servicebridge/apps/user-web && python3 -m http.server 5173"
+  },
+  "devDependencies": {
+    "playwright-core": "1.62.1"
+  }
+}

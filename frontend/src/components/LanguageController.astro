@@ -1,0 +1,326 @@
+---
+import type { SiteContent } from '../lib/types';
+
+type Props = { content: SiteContent; apiBase: string };
+const { content, apiBase } = Astro.props;
+const bootstrap = JSON.stringify({ source: content, apiBase }).replace(/</g, '\\u003c');
+const localization = content.site.localization;
+---
+
+<div class="site-language-control" id="astreva-language-control" dir="ltr">
+  <span id="astreva-language-state" aria-live="polite"></span>
+</div>
+<script id="astreva-language-bootstrap" type="application/json" set:html={bootstrap}></script>
+<script is:inline>
+  (() => {
+    const supported = new Set(['zh-CN', 'en', 'ar']);
+    const storageKey = 'astreva-site-locale';
+    const control = document.querySelector('#astreva-language-control');
+    const stateLabel = document.querySelector('#astreva-language-state');
+    const bootstrap = JSON.parse(document.querySelector('#astreva-language-bootstrap').textContent || '{}');
+    const sourceContent = bootstrap.source;
+    const apiBase = String(bootstrap.apiBase || '').replace(/\/$/, '');
+    const localeCache = new Map([['zh-CN', sourceContent]]);
+    const textSources = new WeakMap();
+    const textNodes = new Set();
+    const attributeSources = new WeakMap();
+    const attributeElements = new Set();
+    const translatedAttributes = ['alt', 'title', 'placeholder', 'aria-label', 'content'];
+    let currentLocale = 'zh-CN';
+    let currentDictionary = new Map();
+    let currentTemplateRules = [];
+    let applying = false;
+
+    function storedLocale() {
+      try { return localStorage.getItem(storageKey); }
+      catch { return null; }
+    }
+
+    function storeLocale(locale) {
+      try { localStorage.setItem(storageKey, locale); }
+      catch {}
+    }
+
+    function revealDocument() {
+      document.documentElement.removeAttribute('data-astreva-locale-pending');
+    }
+
+    function leafValues(value, path = '', output = new Map()) {
+      if (Array.isArray(value)) value.forEach((item, index) => leafValues(item, path ? `${path}.${index}` : String(index), output));
+      else if (value && typeof value === 'object') Object.entries(value).forEach(([key, item]) => leafValues(item, path ? `${path}.${key}` : key, output));
+      else if (typeof value === 'string') output.set(path, value);
+      return output;
+    }
+
+    function normalizeTranslatedContent(value, locale) {
+      const translated = String(value);
+      if (locale === 'zh-CN') return translated;
+      return translated
+        .replaceAll('\u661f\u6e21ASTREVA', 'ASTREVA')
+        .replaceAll('\u661f\u6e21 ASTREVA', 'ASTREVA');
+    }
+
+    function htmlTextSegments(value) {
+      if (!/<[a-z][\s\S]*>/i.test(value)) return [];
+      const document = new DOMParser().parseFromString(value, 'text/html');
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      const segments = [];
+      let node;
+      while ((node = walker.nextNode())) {
+        const text = String(node.nodeValue || '').trim();
+        if (text) segments.push(text);
+      }
+      return segments;
+    }
+
+    function dictionaryFor(target) {
+      const source = leafValues(sourceContent);
+      const translated = leafValues(target);
+      const dictionary = new Map();
+      for (const [path, value] of source) {
+        const rawNext = translated.get(path);
+        const next = rawNext == null ? null : normalizeTranslatedContent(rawNext, target.site.locale);
+        if (next == null || next === value) continue;
+        dictionary.set(value, next);
+
+        const sourceLines = value.split('\n');
+        const translatedLines = next.split('\n');
+        if (sourceLines.length > 1 && sourceLines.length === translatedLines.length) {
+          sourceLines.forEach((line, index) => {
+            if (line && line !== translatedLines[index]) dictionary.set(line, translatedLines[index]);
+          });
+        }
+
+        const sourceSegments = htmlTextSegments(value);
+        const translatedSegments = htmlTextSegments(next);
+        if (sourceSegments.length && sourceSegments.length === translatedSegments.length) {
+          sourceSegments.forEach((segment, index) => {
+            if (segment !== translatedSegments[index]) dictionary.set(segment, translatedSegments[index]);
+          });
+        }
+      }
+      dictionary.set('\u76fe', '🛡');
+      dictionary.set('\u5de5', '🔧');
+      dictionary.set('\u6ef4', '💧');
+      return dictionary;
+    }
+
+    function escapePattern(value) {
+      return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function templateRulesFor(dictionary) {
+      const rules = [];
+      for (const [source, target] of dictionary) {
+        const placeholders = [];
+        let pattern = '^';
+        let offset = 0;
+        for (const match of source.matchAll(/\{([^{}]+)\}/g)) {
+          pattern += escapePattern(source.slice(offset, match.index)) + '(.+?)';
+          placeholders.push(match[1]);
+          offset = match.index + match[0].length;
+        }
+        if (!placeholders.length) continue;
+        pattern += escapePattern(source.slice(offset)) + '$';
+        rules.push({ pattern: new RegExp(pattern), placeholders, target });
+      }
+      return rules;
+    }
+
+    function excluded(element) {
+      return !element || Boolean(element.closest('#astreva-language-control,[data-lang-switch-root],script,style,noscript,code,pre'));
+    }
+
+    function textExcluded(element) {
+      return excluded(element) || Boolean(element.closest('textarea,select'));
+    }
+
+    function translatedAffixedValue(value) {
+      for (const [source, translated] of currentDictionary) {
+        if (!source || source.includes('<')) continue;
+        if (value.startsWith(source)) {
+          const suffix = value.slice(source.length);
+          if (suffix && /^[\s\p{P}\p{S}]+$/u.test(suffix)) return translated + suffix.replaceAll('：', ':');
+        }
+        if (value.endsWith(source)) {
+          const prefix = value.slice(0, -source.length);
+          if (prefix && /^[\s\p{P}\p{S}]+$/u.test(prefix)) return prefix.replaceAll('：', ':') + translated;
+        }
+      }
+      return null;
+    }
+
+    function translatedValue(source) {
+      const trimmed = String(source || '').trim();
+      if (!trimmed) return source;
+      let translated = currentDictionary.get(trimmed);
+      if (translated == null) {
+        for (const rule of currentTemplateRules) {
+          const match = trimmed.match(rule.pattern);
+          if (!match) continue;
+          translated = rule.target;
+          rule.placeholders.forEach((placeholder, index) => {
+            const value = match[index + 1];
+            const replacement = currentDictionary.get(value) || value;
+            translated = translated.split(`{${placeholder}}`).join(replacement);
+          });
+          break;
+        }
+      }
+      if (translated == null) translated = translatedAffixedValue(trimmed);
+      return translated == null ? source : String(source).replace(trimmed, translated);
+    }
+
+    function trackElement(element) {
+      if (excluded(element)) return;
+      let sources = attributeSources.get(element);
+      if (!sources) {
+        sources = new Map();
+        attributeSources.set(element, sources);
+        attributeElements.add(element);
+      }
+      for (const name of translatedAttributes) {
+        if (!element.hasAttribute?.(name)) continue;
+        const observed = element.getAttribute(name);
+        if (!sources.has(name)) sources.set(name, observed);
+        else {
+          const source = sources.get(name);
+          const expected = currentLocale === 'zh-CN' ? source : translatedValue(source);
+          if (observed !== expected) sources.set(name, observed);
+        }
+        const next = currentLocale === 'zh-CN' ? sources.get(name) : translatedValue(sources.get(name));
+        if (element.getAttribute(name) !== next) element.setAttribute(name, next);
+      }
+    }
+
+    function trackText(node) {
+      if (textExcluded(node.parentElement)) return;
+      if (!textSources.has(node)) {
+        textSources.set(node, node.nodeValue || '');
+        textNodes.add(node);
+      } else {
+        const source = textSources.get(node) || '';
+        const expected = currentLocale === 'zh-CN' ? source : translatedValue(source);
+        if (node.nodeValue !== expected) textSources.set(node, node.nodeValue || '');
+      }
+      const source = textSources.get(node);
+      const next = currentLocale === 'zh-CN' ? source : translatedValue(source);
+      if (node.nodeValue !== next) node.nodeValue = next;
+    }
+
+    function scan(root = document.documentElement) {
+      applying = true;
+      try {
+        if (root.nodeType === Node.TEXT_NODE) trackText(root);
+        else if (root.nodeType === Node.ELEMENT_NODE) {
+          trackElement(root);
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+          let node;
+          while ((node = walker.nextNode())) node.nodeType === Node.TEXT_NODE ? trackText(node) : trackElement(node);
+        }
+      } finally { applying = false; }
+    }
+
+    function applyTracked() {
+      applying = true;
+      try {
+        for (const node of textNodes) {
+          if (!node.isConnected) { textNodes.delete(node); continue; }
+          const source = textSources.get(node) || '';
+          node.nodeValue = currentLocale === 'zh-CN' ? source : translatedValue(source);
+        }
+        for (const element of attributeElements) {
+          if (!element.isConnected) { attributeElements.delete(element); continue; }
+          const sources = attributeSources.get(element);
+          for (const [name, source] of sources || []) element.setAttribute(name, currentLocale === 'zh-CN' ? source : translatedValue(source));
+        }
+      } finally { applying = false; }
+    }
+
+    function setDocumentLocale(locale) {
+      document.documentElement.lang = locale;
+      document.documentElement.dir = locale === 'ar' ? 'rtl' : 'ltr';
+      const ogLocale = { 'zh-CN': 'zh_CN', en: 'en_US', ar: 'ar_SA' }[locale] || 'zh_CN';
+      document.querySelector('[data-astreva-og-locale]')?.setAttribute('content', ogLocale);
+      window.dispatchEvent(new CustomEvent('astreva:locale', { detail: locale }));
+      control.dataset.locale = locale;
+    }
+
+    async function contentFor(locale) {
+      if (localeCache.has(locale)) return localeCache.get(locale);
+      const response = await fetch(`${apiBase}/site-admin-api/public-content?locale=${encodeURIComponent(locale)}`, { credentials: 'omit' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error?.message || sourceContent.site.localization.unavailableText);
+      localeCache.set(locale, payload.data);
+      return payload.data;
+    }
+
+    async function switchLocale(locale, manual = false) {
+      if (!supported.has(locale)) locale = 'zh-CN';
+      stateLabel.textContent = sourceContent.site.localization.switchingText;
+      stateLabel.className = '';
+      try {
+        const target = await contentFor(locale);
+        currentLocale = locale;
+        currentDictionary = locale === 'zh-CN' ? new Map() : dictionaryFor(target);
+        currentTemplateRules = locale === 'zh-CN' ? [] : templateRulesFor(currentDictionary);
+        setDocumentLocale(locale);
+        applyTracked();
+        scan(document.documentElement);
+        if (manual) storeLocale(locale);
+        stateLabel.textContent = '';
+      } catch (error) {
+        currentLocale = 'zh-CN';
+        currentDictionary = new Map();
+        currentTemplateRules = [];
+        setDocumentLocale('zh-CN');
+        applyTracked();
+        stateLabel.textContent = sourceContent.site.localization.unavailableText;
+        stateLabel.className = 'error';
+        stateLabel.title = error?.message || String(error);
+      } finally {
+        revealDocument();
+      }
+    }
+
+    const observer = new MutationObserver((mutations) => {
+      if (applying) return;
+      for (const mutation of mutations) {
+        if (mutation.type === 'characterData') trackText(mutation.target);
+        if (mutation.type === 'attributes') trackElement(mutation.target);
+        mutation.addedNodes?.forEach((node) => scan(node));
+      }
+    });
+    scan(document.documentElement);
+    observer.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: translatedAttributes
+    });
+    window.AstrevaLanguage = {
+      switch: (locale) => switchLocale(locale, true),
+      get: () => currentLocale
+    };
+
+    const saved = storedLocale();
+    if (supported.has(saved)) switchLocale(saved, false);
+    else fetch(`${apiBase}/site-admin-api/public-locale`, { credentials: 'omit' })
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload) => switchLocale(payload?.data?.locale || 'zh-CN', false))
+      .catch(() => switchLocale('zh-CN', false));
+  })();
+</script>
+
+<style is:global>
+  .site-language-control{position:fixed;z-index:45;top:106px;right:18px;display:flex;align-items:center;gap:8px;padding:8px 12px;border:2px solid #0a66c2;border-radius:999px;background:#fff;box-shadow:0 12px 32px rgba(10,77,140,.25),0 2px 6px rgba(15,23,42,.10);animation:astreva-lang-pop .45s ease .25s both}
+  @keyframes astreva-lang-pop{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+  .site-language-control{pointer-events:none;top:106px;right:18px;display:block;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;animation:none}
+  .site-language-control span{display:none;font-size:12px;font-weight:700;color:#0a4d8c;background:rgba(255,255,255,.97);border:1px solid #0a66c2;padding:4px 12px;border-radius:999px;box-shadow:0 8px 24px rgba(10,77,140,.25)}
+  .site-language-control span:not(:empty){display:inline-block}
+  .site-language-control span.error{color:#b42318}
+  html[dir="rtl"] body{direction:rtl;text-align:right}
+  html[dir="rtl"] .site-language-control{direction:ltr}
+  @media(max-width:767px){.site-language-control{top:104px;right:12px}}
+</style>

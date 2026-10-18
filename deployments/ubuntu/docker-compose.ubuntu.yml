@@ -1,0 +1,341 @@
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      frontend:
+        condition: service_started
+      admin-server:
+        condition: service_started
+      servicebridge-user-web:
+        condition: service_started
+      servicebridge-backend-1:
+        condition: service_started
+      servicebridge-backend-2:
+        condition: service_started
+    networks:
+      - astreva
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../../servicebridge/backend/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - astreva
+
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - astreva
+
+  servicebridge-backend-1:
+    build:
+      context: ../../
+      dockerfile: deployments/ubuntu/servicebridge-backend.Dockerfile
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: ":8080"
+      APP_ENV: "production"
+      STORE_DRIVER: "postgres"
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_ADDR: ${REDIS_ADDR}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD}
+      AGENT_BOOTSTRAP_PASSWORD: ${AGENT_BOOTSTRAP_PASSWORD}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS}
+      SECURITY_HEADERS: ${SECURITY_HEADERS}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED}
+      RATE_LIMIT_RPS: ${RATE_LIMIT_RPS}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST}
+      METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+      OPENAI_MODEL: ${OPENAI_MODEL}
+      OPENAI_API_TYPE: ${OPENAI_API_TYPE}
+      UPLOAD_DRIVER: ${UPLOAD_DRIVER}
+      UPLOAD_DIR: "/uploads"
+      UPLOAD_PUBLIC_BASE_URL: ${UPLOAD_PUBLIC_BASE_URL}
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_REGION: ${S3_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_SESSION_TOKEN: ${S3_SESSION_TOKEN}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE}
+      S3_KEY_PREFIX: ${S3_KEY_PREFIX}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL}
+      NODE_ID: "servicebridge-backend-1"
+    volumes:
+      - servicebridge-uploads:/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - astreva
+
+  servicebridge-backend-2:
+    build:
+      context: ../../
+      dockerfile: deployments/ubuntu/servicebridge-backend.Dockerfile
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: ":8080"
+      APP_ENV: "production"
+      STORE_DRIVER: "postgres"
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_ADDR: ${REDIS_ADDR}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD}
+      AGENT_BOOTSTRAP_PASSWORD: ${AGENT_BOOTSTRAP_PASSWORD}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS}
+      SECURITY_HEADERS: ${SECURITY_HEADERS}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED}
+      RATE_LIMIT_RPS: ${RATE_LIMIT_RPS}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST}
+      METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+      OPENAI_MODEL: ${OPENAI_MODEL}
+      OPENAI_API_TYPE: ${OPENAI_API_TYPE}
+      UPLOAD_DRIVER: ${UPLOAD_DRIVER}
+      UPLOAD_DIR: "/uploads"
+      UPLOAD_PUBLIC_BASE_URL: ${UPLOAD_PUBLIC_BASE_URL}
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_REGION: ${S3_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_SESSION_TOKEN: ${S3_SESSION_TOKEN}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE}
+      S3_KEY_PREFIX: ${S3_KEY_PREFIX}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL}
+      NODE_ID: "servicebridge-backend-2"
+    volumes:
+      - servicebridge-uploads:/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - astreva
+
+  servicebridge-user-web:
+    build:
+      context: ../../
+      dockerfile: deployments/ubuntu/servicebridge-user-web.Dockerfile
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --spider http://127.0.0.1/index.html"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - astreva
+
+  admin-server:
+    build:
+      context: ../../
+      dockerfile: deployments/ubuntu/admin-server.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      servicebridge-backend-1:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "1337"
+      PUBLIC_ADMIN_ORIGIN: "https://${ADMIN_DOMAIN}"
+      PUBLIC_SITE_URL: "https://${SITE_DOMAIN}"
+      ADMIN_CORS_ALLOWED_ORIGINS: "https://${SITE_DOMAIN}"
+      ADMIN_TRUST_PROXY: "true"
+      PUBLIC_SERVICEBRIDGE_URL: "https://${SERVICE_DOMAIN}"
+      PUBLIC_ADMIN_URL: "https://${ADMIN_DOMAIN}"
+      SERVICEBRIDGE_API_URL: "http://servicebridge-backend-1:8080"
+      SERVICEBRIDGE_ADMIN_ACCOUNT: ${SERVICEBRIDGE_ADMIN_ACCOUNT:-superadmin}
+      SERVICEBRIDGE_ADMIN_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD}
+      CMS_STORE_DRIVER: "postgres"
+      DATABASE_URL: ${DATABASE_URL}
+      CMS_DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY}
+      ADMIN_METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN}
+      ADMIN_MEDIA_DRIVER: ${ADMIN_MEDIA_DRIVER:-s3}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_REGION: ${S3_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_SESSION_TOKEN: ${S3_SESSION_TOKEN}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL}
+      ADMIN_S3_KEY_PREFIX: ${ADMIN_S3_KEY_PREFIX:-site-admin}
+      ADMIN_S3_SERVER_SIDE_ENCRYPTION: ${ADMIN_S3_SERVER_SIDE_ENCRYPTION}
+      ADMIN_UPLOAD_MAX_BYTES: ${ADMIN_UPLOAD_MAX_BYTES:-209715200}
+      ADMIN_IMAGE_VARIANT_WIDTHS: ${ADMIN_IMAGE_VARIANT_WIDTHS:-400,800,1200,1600}
+      ADMIN_IMAGE_WEBP_QUALITY: ${ADMIN_IMAGE_WEBP_QUALITY:-82}
+      ADMIN_IMAGE_MAX_PIXELS: ${ADMIN_IMAGE_MAX_PIXELS:-80000000}
+      ADMIN_OPENAI_IMAGE_API_KEY: ${ADMIN_OPENAI_IMAGE_API_KEY:-}
+      ADMIN_OPENAI_IMAGE_BASE_URL: ${ADMIN_OPENAI_IMAGE_BASE_URL:-https://api.openai.com/v1}
+      ADMIN_OPENAI_IMAGE_MODEL: ${ADMIN_OPENAI_IMAGE_MODEL:-gpt-image-1}
+      ADMIN_AI_IMAGE_MODELS: ${ADMIN_AI_IMAGE_MODELS:-gpt-image-1,dall-e-3,dall-e-2}
+      ADMIN_AI_ALLOWED_HOSTS: ${ADMIN_AI_ALLOWED_HOSTS:-api.openai.com}
+      ADMIN_AI_IMAGE_DOWNLOAD_HOSTS: ${ADMIN_AI_IMAGE_DOWNLOAD_HOSTS:-api.openai.com,oaidalleapiprodscus.blob.core.windows.net}
+      FRONTEND_REBUILD_WEBHOOK_URL: "http://rebuild-webhook:${REBUILD_WEBHOOK_PORT}/rebuild"
+      ADMIN_2FA_SESSION_SECRET: ${ADMIN_2FA_SESSION_SECRET}
+      ADMIN_2FA_ISSUER: ${ADMIN_2FA_ISSUER}
+      ADMIN_2FA_SESSION_TTL_MS: ${ADMIN_2FA_SESSION_TTL_MS}
+      REBUILD_WEBHOOK_SECRET: ${REBUILD_WEBHOOK_SECRET}
+    volumes:
+      - admin-data:/app/data
+      - admin-uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:1337/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - astreva
+
+  rebuild-webhook:
+    build:
+      context: ../../
+      dockerfile: deployments/ubuntu/rebuild-webhook.Dockerfile
+    restart: unless-stopped
+    environment:
+      REBUILD_WEBHOOK_PORT: ${REBUILD_WEBHOOK_PORT}
+      REBUILD_WEBHOOK_SECRET: ${REBUILD_WEBHOOK_SECRET}
+      FALLBACK_CONTENT_URL: "http://admin-server:1337/site-admin-api/public-fallback-content"
+      PUBLISH_DIR: "/published"
+      PUBLIC_SITE_URL: "https://${SITE_DOMAIN}"
+      PUBLIC_SERVICEBRIDGE_URL: "https://${SERVICE_DOMAIN}"
+      PUBLIC_ADMIN_URL: "https://${ADMIN_DOMAIN}"
+      PUBLIC_LEADS_ENDPOINT: "/site-admin-api/leads"
+      CONTENT_API_URL: "http://admin-server:1337"
+    volumes:
+      - rebuild-webhook-home:/root
+      - frontend-published:/published
+    depends_on:
+      admin-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:${REBUILD_WEBHOOK_PORT}/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - astreva
+
+  frontend:
+    build:
+      context: ../../
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      rebuild-webhook:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - frontend-published:/usr/share/nginx/site:ro
+    networks:
+      - astreva
+
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    restart: unless-stopped
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "${MINIO_HOST_PORT:-127.0.0.1:9100}:9000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - astreva
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb -p local/astreva-site-media || true &&
+        mc anonymous set download local/astreva-site-media &&
+        echo "minio bucket ready"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    networks:
+      - astreva
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  servicebridge-uploads:
+  admin-data:
+  admin-uploads:
+  caddy-data:
+  caddy-config:
+  rebuild-webhook-home:
+  frontend-published:
+
+networks:
+  astreva:
+    name: astreva-ubuntu
