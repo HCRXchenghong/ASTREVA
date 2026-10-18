@@ -139,7 +139,7 @@ DELETE /api/admin/ai-providers/{id}
 POST   /api/admin/ai-providers/{id}/models  一键获取模型（写回 models）；上游失败 502
 POST   /api/admin/ai-providers/{id}/test    → {ok,latency_ms,message,models_count}
 GET    /api/admin/ai-providers/{id}/secret  → 解密配置（仅服务间调用，供 admin-server 读取）
-GET    /api/admin/ai-bindings               → {"bindings":{capability:{provider_id,model,params}}}
+GET    /api/admin/ai-bindings               → {"bindings":[{capability,provider_id,model,params}]}   # 数组（以真实实现为准；控制台前端兼容数组与对象映射）
 PUT    /api/admin/ai-bindings               body {"bindings":[{capability,provider_id,model,params}]}
 GET    /api/admin/agents/{id}/preferences   管理员查看某客服翻译偏好
 PATCH  /api/admin/agents/{id}/preferences   管理员重置/修改

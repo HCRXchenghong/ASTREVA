@@ -160,6 +160,50 @@ export const probeAiCache = (models: string[]) =>
 export const fetchSystemStatus = () =>
   client.get(bridge('/api/admin/system-status')).then((r) => r.data);
 
+// ---------- AI 多供应商 / 能力绑定 / 客服翻译偏好 ----------
+// 供应商密钥只回显末四位（api_key_masked）；PATCH 时 api_key 不传=不改，传 ""=清除。
+export const fetchAiProviders = () =>
+  client.get(bridge('/api/admin/ai-providers')).then((r) => r.data);
+export const createAiProvider = (payload: Record<string, unknown>) =>
+  client.post(bridge('/api/admin/ai-providers'), payload).then((r) => r.data);
+export const updateAiProvider = (id: string, payload: Record<string, unknown>) =>
+  client
+    .patch(bridge(`/api/admin/ai-providers/${encodeURIComponent(id)}`), payload)
+    .then((r) => r.data);
+export const deleteAiProvider = (id: string) =>
+  client.delete(bridge(`/api/admin/ai-providers/${encodeURIComponent(id)}`));
+export const fetchAiProviderModels = (id: string) =>
+  client
+    .post(
+      bridge(`/api/admin/ai-providers/${encodeURIComponent(id)}/models`),
+      {}
+    )
+    .then((r) => r.data);
+export const testAiProvider = (id: string) =>
+  client
+    .post(bridge(`/api/admin/ai-providers/${encodeURIComponent(id)}/test`), {})
+    .then((r) => r.data);
+export const fetchAiBindings = () =>
+  client.get(bridge('/api/admin/ai-bindings')).then((r) => r.data);
+export const updateAiBindings = (bindings: Array<Record<string, unknown>>) =>
+  client
+    .put(bridge('/api/admin/ai-bindings'), { bindings })
+    .then((r) => r.data);
+export const fetchAgentPreferences = (id: string) =>
+  client
+    .get(bridge(`/api/admin/agents/${encodeURIComponent(id)}/preferences`))
+    .then((r) => r.data);
+export const updateAgentPreferences = (
+  id: string,
+  payload: Record<string, unknown>
+) =>
+  client
+    .patch(
+      bridge(`/api/admin/agents/${encodeURIComponent(id)}/preferences`),
+      payload
+    )
+    .then((r) => r.data);
+
 export const fetchPushSettings = () =>
   client.get(bridge('/api/admin/push-settings')).then((r) => r.data);
 export const updatePushSettings = (payload: Record<string, unknown>) =>

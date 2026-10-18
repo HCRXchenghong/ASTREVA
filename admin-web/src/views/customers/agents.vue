@@ -33,6 +33,7 @@
           <template #cell="{ record }">
             <a-space wrap>
               <a-link @click="openEditor(record)">编辑</a-link>
+              <a-link @click="openPreferences(record)">翻译偏好</a-link>
               <a-link @click="openRating(record)">好评率</a-link>
               <a-link @click="openDetail(record)">详情</a-link>
               <a-link @click="onResetPassword(record)">重置密码</a-link>
@@ -76,6 +77,42 @@
       </a-form>
     </a-modal>
 
+    <a-modal
+      v-model:visible="prefVisible"
+      :title="`翻译偏好：${prefAgent?.name || ''}`"
+      :ok-loading="prefSaving"
+      @ok="savePreferences"
+    >
+      <a-alert class="pref-tip" type="info">
+        这些开关决定该客服收发消息时的翻译与 AI 辅助行为；客服本人也可在客服 App 的「我的偏好」里自行修改。
+      </a-alert>
+      <a-spin :loading="prefLoading" class="pref-body">
+        <a-form :model="prefs" layout="vertical">
+          <a-form-item label="访客消息自动译成中文">
+            <a-switch v-model="prefs.auto_translate_incoming" />
+          </a-form-item>
+          <a-form-item label="我的消息自动译成访客语言">
+            <a-switch v-model="prefs.auto_translate_outgoing" />
+          </a-form-item>
+          <a-form-item label="发送前确认 / 编辑译文">
+            <a-switch v-model="prefs.review_translation_before_send" />
+          </a-form-item>
+          <a-form-item label="翻译方言模式">
+            <a-radio-group v-model="prefs.translation_dialect_mode" type="button">
+              <a-radio value="standard">标准语</a-radio>
+              <a-radio value="dialect">跟随访客方言</a-radio>
+            </a-radio-group>
+          </a-form-item>
+          <a-form-item label="AI 推荐发送内容">
+            <a-switch v-model="prefs.ai_suggest_replies" />
+          </a-form-item>
+        </a-form>
+        <a-button size="small" :loading="prefSaving" @click="resetPreferences">
+          恢复默认
+        </a-button>
+      </a-spin>
+    </a-modal>
+
     <a-drawer v-model:visible="detailVisible" :width="520" title="客服详情">
       <a-descriptions :column="1" bordered>
         <a-descriptions-item label="账号">{{ detail?.agent?.account }}</a-descriptions-item>
@@ -107,6 +144,7 @@
     clearAgentManualRating,
     deleteAgent,
     disableAgent,
+    fetchAgentPreferences,
     fetchAgentRatings,
     fetchAgents,
     fetchRatingSummaries,
@@ -114,7 +152,17 @@
     resetAgentRatings,
     setAgentManualRating,
     updateAgent,
+    updateAgentPreferences,
   } from '@/api/admin';
+
+  // 翻译偏好默认值：5 项开关全开 + 标准语（与服务端 WithDefaults 一致）。
+  const DEFAULT_PREFS = {
+    auto_translate_incoming: true,
+    auto_translate_outgoing: true,
+    review_translation_before_send: true,
+    translation_dialect_mode: 'standard',
+    ai_suggest_replies: true,
+  } as const;
 
   const agents = ref<any[]>([]);
   const loading = ref(false);
@@ -122,9 +170,14 @@
   const editorVisible = ref(false);
   const ratingVisible = ref(false);
   const detailVisible = ref(false);
+  const prefVisible = ref(false);
+  const prefLoading = ref(false);
+  const prefSaving = ref(false);
+  const prefAgent = ref<any>(null);
   const ratingValue = ref(100);
   const ratingAgent = ref<any>(null);
   const detail = ref<any>(null);
+  const prefs = reactive({ ...DEFAULT_PREFS });
   const form = reactive({
     id: '',
     account: '',
@@ -240,6 +293,66 @@
     detailVisible.value = true;
   }
 
+  function applyPreferences(value: any) {
+    Object.assign(prefs, {
+      auto_translate_incoming: value?.auto_translate_incoming ?? true,
+      auto_translate_outgoing: value?.auto_translate_outgoing ?? true,
+      review_translation_before_send:
+        value?.review_translation_before_send ?? true,
+      translation_dialect_mode:
+        value?.translation_dialect_mode === 'dialect' ? 'dialect' : 'standard',
+      ai_suggest_replies: value?.ai_suggest_replies ?? true,
+    });
+  }
+
+  async function openPreferences(record: any) {
+    prefAgent.value = record;
+    applyPreferences(DEFAULT_PREFS);
+    prefVisible.value = true;
+    prefLoading.value = true;
+    try {
+      const payload = await fetchAgentPreferences(record.id);
+      applyPreferences(payload?.preferences);
+    } catch {
+      // 失败提示由 axios 拦截器统一给出，这里保持默认值，避免未捕获的 Promise。
+      applyPreferences(DEFAULT_PREFS);
+    } finally {
+      prefLoading.value = false;
+    }
+  }
+
+  // 局部 PATCH：这里一次提交全部 5 项，恢复默认也走同一条路径。
+  async function persistPreferences() {
+    if (!prefAgent.value) return false;
+    prefSaving.value = true;
+    try {
+      const result = await updateAgentPreferences(prefAgent.value.id, {
+        auto_translate_incoming: prefs.auto_translate_incoming,
+        auto_translate_outgoing: prefs.auto_translate_outgoing,
+        review_translation_before_send: prefs.review_translation_before_send,
+        translation_dialect_mode: prefs.translation_dialect_mode,
+        ai_suggest_replies: prefs.ai_suggest_replies,
+      });
+      if (result?.preferences) applyPreferences(result.preferences);
+      return true;
+    } finally {
+      prefSaving.value = false;
+    }
+  }
+
+  async function savePreferences() {
+    if (!(await persistPreferences())) return;
+    prefVisible.value = false;
+    Message.success('翻译偏好已保存');
+  }
+
+  async function resetPreferences() {
+    applyPreferences(DEFAULT_PREFS);
+    if (await persistPreferences()) {
+      Message.success('已恢复默认翻译偏好');
+    }
+  }
+
   function onResetPassword(record: any) {
     Modal.confirm({
       title: '重置密码',
@@ -282,5 +395,12 @@
 <style scoped>
   .rating-table {
     margin-top: 16px;
+  }
+  .pref-tip {
+    margin-bottom: 12px;
+  }
+  .pref-body {
+    display: block;
+    min-height: 80px;
   }
 </style>
