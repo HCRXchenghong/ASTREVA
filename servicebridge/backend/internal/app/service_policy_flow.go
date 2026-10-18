@@ -218,8 +218,8 @@ func (s *Service) selectQueueTarget(group string) (domain.Agent, bool) {
 // notifyPopup 表示"本次入队"是否要补发接管提示（新建会话已在创建时推过，避免重复）。
 func (s *Service) handleUnassignedConversation(conversation domain.Conversation, notifyPopup bool) {
 	policy := s.store.ServicePolicy()
-	entry, queued := s.enqueueIfNeeded(conversation)
-	if queued && notifyPopup {
+	entry, queued, newlyQueued := s.enqueueIfNeeded(conversation)
+	if newlyQueued && notifyPopup {
 		// 会话重新进入排队（例如客服离线释放后）时也要让在线客服看到接管提示。
 		s.notifyTakeoverRequest(conversation, entry.EnqueuedAt)
 	}
@@ -252,16 +252,16 @@ func (s *Service) unattendedEligible(conversation domain.Conversation) bool {
 }
 
 // enqueueIfNeeded 在排队开关打开且会话尚未在队列时入队，并向访客推送排队位置。
-// 第二个返回值表示"本次调用后该会话是否已在队列中"：用于判断"未入队成功"是否需要兜底，
-// 已入队的会话在营业恢复前不会被重复推送位置。
-func (s *Service) enqueueIfNeeded(conversation domain.Conversation) (domain.QueuedConversation, bool) {
+// 后两个返回值分别是"本次调用后该会话是否已在队列中"（用于判断"未入队成功"要不要兜底）
+// 与"本次是否新入队"（用于只在进入队列的那一刻补发接管提示）。
+func (s *Service) enqueueIfNeeded(conversation domain.Conversation) (domain.QueuedConversation, bool, bool) {
 	policy := s.store.ServicePolicy()
 	if !policy.QueueEnabled {
-		return domain.QueuedConversation{}, false
+		return domain.QueuedConversation{}, false, false
 	}
 	for _, existing := range s.store.QueueList() {
 		if existing.ConversationID == conversation.ID {
-			return existing, true
+			return existing, true, false
 		}
 	}
 	reason := domain.QueueReasonOffline
@@ -276,10 +276,10 @@ func (s *Service) enqueueIfNeeded(conversation domain.Conversation) (domain.Queu
 	})
 	if err != nil {
 		s.logger.Warn("会话入队失败", "conversation_id", conversation.ID, "error", err)
-		return domain.QueuedConversation{}, false
+		return domain.QueuedConversation{}, false, false
 	}
 	s.pushQueuePosition(entry)
-	return entry, true
+	return entry, true, true
 }
 
 // pushQueuePosition 向访客推送"排队中，前方 N 位"。

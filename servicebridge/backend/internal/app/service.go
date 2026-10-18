@@ -241,7 +241,7 @@ func (s *Service) CreateVisitorConversation(ip, source, lang, ipSource, remark s
 	s.notifyTakeoverRequest(session.Conversation, session.Conversation.CreatedAt)
 	if session.Conversation.AssignedAgentID == "" {
 		// 分配失败（无在线客服/并发已满）：按策略入队，并在需要时补发无人值守兜底。
-		s.handleUnassignedConversation(session.Conversation)
+		s.handleUnassignedConversation(session.Conversation, false)
 	}
 	return session, nil
 }
@@ -281,7 +281,7 @@ func (s *Service) SetAgentStatus(agentID string, status domain.AgentStatus) (dom
 				"访客「"+visitorDisplayName(conversation)+"」已分配给您。", conversation.ID)
 		} else if status == domain.AgentOffline && conversation.FirstResponseAt == nil {
 			// 离线释放：会话尚未被人工真正回复过，重新入队而不是丢弃。
-			s.handleUnassignedConversation(conversation)
+			s.handleUnassignedConversation(conversation, true)
 		}
 		s.hub.SendToVisitor(conversation.ID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
 		s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: conversation})
@@ -435,7 +435,7 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 	}
 	// 仍未分配客服：按策略入队并（必要时）补发无人值守兜底话术。
 	if result.Conversation.AssignedAgentID == "" && result.Conversation.Status != domain.ConversationClosed {
-		s.handleUnassignedConversation(result.Conversation)
+		s.handleUnassignedConversation(result.Conversation, false)
 	}
 	if result.NeedAI {
 		// 访客端显示"AI 正在回复"输入指示，AI 消息送达或生成结束时关闭。

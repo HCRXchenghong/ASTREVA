@@ -635,6 +635,68 @@ func TestBlacklistBlocksCreationAndMessages(t *testing.T) {
 	}
 }
 
+// TestOfflineReleaseReenqueueSendsTakeoverRequest 覆盖"会话重新进入排队时"的接管提示：
+// 客服离线释放后会话重新入队，在线的其他客服应收到 conversation.takeover_request。
+func TestOfflineReleaseReenqueueSendsTakeoverRequest(t *testing.T) {
+	service, st, recorder := newFlowService(t)
+	policy := domain.DefaultServicePolicy()
+	policy.QueueEnabled = true
+	policy.TakeoverPopupEnabled = true
+	if _, err := st.UpdateServicePolicy(policy); err != nil {
+		t.Fatalf("update service policy: %v", err)
+	}
+	agentA := createFlowAgent(t, st, "reenq_a", 5)
+	if _, _, err := st.SetAgentStatus(agentA.ID, domain.AgentOnline); err != nil {
+		t.Fatalf("set agent A online: %v", err)
+	}
+	// A 在线时创建第一个会话 → 分配给 A。
+	first, err := service.CreateVisitorConversation("203.0.113.111", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if got := flowConversation(t, st, first.Conversation.ID).AssignedAgentID; got != agentA.ID {
+		t.Fatalf("第一个会话应分配给 A：%q", got)
+	}
+	// B 上线后并发为 0，第二个会话会分配给 B（让它占满并发，无法承接离线释放）。
+	agentB := createFlowAgent(t, st, "reenq_b", 1)
+	if _, _, err := st.SetAgentStatus(agentB.ID, domain.AgentOnline); err != nil {
+		t.Fatalf("set agent B online: %v", err)
+	}
+	second, err := service.CreateVisitorConversation("203.0.113.112", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if got := flowConversation(t, st, second.Conversation.ID).AssignedAgentID; got != agentB.ID {
+		t.Fatalf("第二个会话应分配给并发更少的 B：%q", got)
+	}
+
+	recorder.reset()
+	if _, err := service.SetAgentStatus(agentA.ID, domain.AgentOffline); err != nil {
+		t.Fatalf("set agent A offline: %v", err)
+	}
+	if got := flowConversation(t, st, first.Conversation.ID).AssignedAgentID; got != "" {
+		t.Fatalf("离线后应释放会话：%q", got)
+	}
+	found := false
+	for _, entry := range st.QueueList() {
+		if entry.ConversationID == first.Conversation.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("离线释放的会话应重新入队：%+v", st.QueueList())
+	}
+	requests := recorder.byEvent("conversation.takeover_request")
+	if len(requests) == 0 {
+		t.Fatal("会话重新进入排队时应向在线客服推送接管提示")
+	}
+	for _, request := range requests {
+		if request.key != agentB.ID {
+			t.Fatalf("接管提示应只推给在线客服 B：%q", request.key)
+		}
+	}
+}
+
 // TestAgentAlertDispatchOnAssignAndVisitorMessage 覆盖提醒渠道派发：
 // 分配/访客消息触发派发、渠道为空不调用、发送失败不影响主流程。
 func TestAgentAlertDispatchOnAssignAndVisitorMessage(t *testing.T) {
