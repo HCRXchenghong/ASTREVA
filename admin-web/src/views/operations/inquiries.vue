@@ -113,6 +113,7 @@
 
 <script lang="ts" setup>
   import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+  import { useRoute } from 'vue-router';
   import { Message, Modal } from '@arco-design/web-vue';
   import {
     closeConversation,
@@ -354,8 +355,17 @@
     await load();
   }
 
+  const route = useRoute();
+
   onMounted(async () => {
     await load();
+    // 支持从「排队队列」等页面深链：/operations/inquiries?conversation=<id>
+    const deepLinkId = typeof route.query.conversation === 'string' ? route.query.conversation.trim() : '';
+    if (deepLinkId) {
+      await selectConversation(deepLinkId).catch(() => {
+        Message.warning('未能加载指定会话，可能已结束或无权访问');
+      });
+    }
     timer = window.setInterval(() => {
       load().catch(() => {});
       loadMessages().catch(() => {});

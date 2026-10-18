@@ -34,6 +34,7 @@
             <a-space wrap>
               <a-link @click="openEditor(record)">编辑</a-link>
               <a-link @click="openPreferences(record)">翻译偏好</a-link>
+              <a-link @click="openAlertChannels(record)">提醒渠道</a-link>
               <a-link @click="openRating(record)">好评率</a-link>
               <a-link @click="openDetail(record)">详情</a-link>
               <a-link @click="onResetPassword(record)">重置密码</a-link>
@@ -138,6 +139,128 @@
       </a-spin>
     </a-modal>
 
+    <a-modal
+      v-model:visible="alertVisible"
+      :title="`提醒渠道：${alertAgent?.name || ''}`"
+      :footer="false"
+      width="760px"
+    >
+      <a-alert class="alert-tip" type="info">
+        新会话 / 排队超时 / 被转接等事件会推送到该客服已启用的渠道；每个客服最多 {{ alertMaxChannels }} 个提醒渠道。
+      </a-alert>
+      <a-alert
+        v-if="alertAtCap"
+        class="alert-tip"
+        type="warning"
+        show-icon
+        data-testid="alert-cap-tip"
+      >
+        已达到 {{ alertMaxChannels }} 个上限，请先删除已有渠道后再新增。
+      </a-alert>
+      <a-spin :loading="alertLoading" style="width: 100%">
+        <a-table
+          :data="alertChannels"
+          :pagination="false"
+          row-key="id"
+          size="small"
+          data-testid="alert-channel-table"
+        >
+          <template #columns>
+            <a-table-column title="类型" :width="110">
+              <template #cell="{ record }">
+                <a-tag :color="channelColor(record.kind)">{{ channelLabel(record.kind) }}</a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="配置（掩码）">
+              <template #cell="{ record }">{{ channelMasked(record) }}</template>
+            </a-table-column>
+            <a-table-column title="启用" :width="90">
+              <template #cell="{ record }">
+                <a-switch
+                  :model-value="Boolean(record.enabled)"
+                  :data-testid="`alert-channel-toggle-${record.id}`"
+                  @change="(value: boolean | string | number) => toggleAlertChannel(record, Boolean(value))"
+                />
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" :width="140">
+              <template #cell="{ record }">
+                <a-space>
+                  <a-link
+                    :data-testid="`alert-channel-edit-${record.id}`"
+                    @click="startEditAlertChannel(record)"
+                  >
+                    编辑
+                  </a-link>
+                  <a-link
+                    status="danger"
+                    :data-testid="`alert-channel-delete-${record.id}`"
+                    @click="removeAlertChannel(record)"
+                  >
+                    删除
+                  </a-link>
+                </a-space>
+              </template>
+            </a-table-column>
+          </template>
+          <template #empty>
+            <a-empty description="还没有提醒渠道" />
+          </template>
+        </a-table>
+
+        <a-divider class="alert-divider" orientation="left">
+          {{ alertEditingId ? '编辑渠道' : '新增渠道' }}
+        </a-divider>
+        <a-form layout="vertical">
+          <a-form-item label="渠道类型">
+            <a-select
+              v-model="alertDraft.kind"
+              :options="channelKindOptions"
+              :disabled="Boolean(alertEditingId)"
+              data-testid="alert-channel-kind"
+              style="width: 220px"
+            />
+          </a-form-item>
+          <a-form-item
+            v-for="field in alertFields"
+            :key="field.key"
+            :label="field.label"
+          >
+            <a-input-password
+              v-if="field.secret"
+              v-model="alertConfig[field.key]"
+              :placeholder="alertEditingId ? '留空不修改' : field.placeholder"
+              :input-attrs="{ 'data-testid': `alert-channel-${field.key}` }"
+            />
+            <a-input
+              v-else
+              v-model="alertConfig[field.key]"
+              :placeholder="field.placeholder"
+              :input-attrs="{ 'data-testid': `alert-channel-${field.key}` }"
+            />
+          </a-form-item>
+          <a-space wrap>
+            <a-button
+              type="primary"
+              :loading="alertSaving"
+              :disabled="alertAtCap && !alertEditingId"
+              data-testid="alert-channel-add"
+              @click="saveAlertChannel"
+            >
+              {{ alertEditingId ? '保存修改' : '新增渠道' }}
+            </a-button>
+            <a-button :loading="alertTesting" data-testid="alert-channel-test" @click="testAlertChannelDraft">
+              发送测试
+            </a-button>
+            <a-button v-if="alertEditingId" @click="cancelEditAlertChannel">取消编辑</a-button>
+            <a-typography-text v-if="alertAtCap && !alertEditingId" type="secondary">
+              已达上限，请先删除后再新增。
+            </a-typography-text>
+          </a-space>
+        </a-form>
+      </a-spin>
+    </a-modal>
+
     <a-drawer v-model:visible="detailVisible" :width="520" title="客服详情">
       <a-descriptions :column="1" bordered>
         <a-descriptions-item label="账号">{{ detail?.agent?.account }}</a-descriptions-item>
@@ -167,8 +290,11 @@
   import {
     createAgent,
     clearAgentManualRating,
+    createAgentAlertChannel,
     deleteAgent,
+    deleteAgentAlertChannel,
     disableAgent,
+    fetchAgentAlertChannels,
     fetchAgentPreferences,
     fetchAgentRatings,
     fetchAgents,
@@ -177,7 +303,9 @@
     resetAgentPassword,
     resetAgentRatings,
     setAgentManualRating,
+    testAlertChannel,
     updateAgent,
+    updateAgentAlertChannel,
     updateAgentPreferences,
   } from '@/api/admin';
 
@@ -410,6 +538,237 @@
     }
   }
 
+  // ---------- 提醒渠道（SMTP / Telegram / Bark / 邮箱） ----------
+  // 契约冻结：每客服上限 3 个；渠道 config 字段 telegram→token+chat_id、bark→key+server?、email→address。
+  const MAX_ALERT_CHANNELS = 3;
+  const CHANNEL_KINDS = [
+    { label: 'Telegram', value: 'telegram' },
+    { label: 'Bark', value: 'bark' },
+    { label: '邮箱', value: 'email' },
+  ];
+  const CHANNEL_FIELDS: Record<
+    string,
+    Array<{ key: string; label: string; secret?: boolean; placeholder: string }>
+  > = {
+    telegram: [
+      { key: 'token', label: 'Bot Token', secret: true, placeholder: '例如：123456:ABC-DEF...' },
+      { key: 'chat_id', label: 'Chat ID', placeholder: '例如：-1001234567890' },
+    ],
+    bark: [
+      { key: 'key', label: 'Bark Key', secret: true, placeholder: '例如：abcdEFGH1234' },
+      { key: 'server', label: '服务器地址（可选）', placeholder: '默认 https://api.day.app' },
+    ],
+    email: [
+      { key: 'address', label: '收件邮箱', placeholder: '例如：agent@example.com' },
+    ],
+  };
+  const REQUIRED_CHANNEL_FIELDS: Record<string, string[]> = {
+    telegram: ['token', 'chat_id'],
+    bark: ['key'],
+    email: ['address'],
+  };
+  const EMPTY_CHANNEL_CONFIG = {
+    token: '',
+    chat_id: '',
+    key: '',
+    server: '',
+    address: '',
+  };
+
+  const alertVisible = ref(false);
+  const alertLoading = ref(false);
+  const alertSaving = ref(false);
+  const alertTesting = ref(false);
+  const alertAgent = ref<any>(null);
+  const alertChannels = ref<any[]>([]);
+  const alertEditingId = ref('');
+  // 上限默认 3，服务端返回 max_channels 时以其为准。
+  const alertMaxChannels = ref(MAX_ALERT_CHANNELS);
+  const alertDraft = reactive({ kind: 'telegram' });
+  const alertConfig = reactive({ ...EMPTY_CHANNEL_CONFIG });
+  const alertFields = computed(() => CHANNEL_FIELDS[alertDraft.kind] || []);
+  const alertAtCap = computed(
+    () => alertChannels.value.length >= alertMaxChannels.value
+  );
+
+  function channelLabel(kind: string) {
+    return CHANNEL_KINDS.find((item) => item.value === kind)?.label || kind;
+  }
+  function channelColor(kind: string) {
+    return (
+      { telegram: 'arcoblue', bark: 'orange', email: 'green' }[kind] || 'gray'
+    );
+  }
+  // 响应可能给 masked 字符串（冻结契约）或 config_masked 映射（当前实现），两种都兼容。
+  function channelMasked(record: any) {
+    const plain = String(record?.masked ?? '').trim();
+    if (plain) return plain;
+    const masked = record?.config_masked;
+    if (masked && typeof masked === 'object') {
+      const parts = Object.entries(masked)
+        .filter(([, value]) => String(value ?? '').length)
+        .map(([key, value]) => `${key}=${value}`);
+      if (parts.length) return parts.join(' · ');
+    }
+    return '-';
+  }
+  // 密钥永不回显：编辑时全部字段清空，留空即不修改。
+  function resetAlertDraft(kind = 'telegram') {
+    alertEditingId.value = '';
+    alertDraft.kind = kind;
+    Object.assign(alertConfig, EMPTY_CHANNEL_CONFIG);
+  }
+  function draftConfig() {
+    const config: Record<string, string> = {};
+    for (const field of alertFields.value) {
+      const value = String(alertConfig[field.key] ?? '').trim();
+      if (value) config[field.key] = value;
+    }
+    return config;
+  }
+  function missingChannelFields() {
+    return (REQUIRED_CHANNEL_FIELDS[alertDraft.kind] || []).filter(
+      (key) => !String(alertConfig[key] ?? '').trim()
+    );
+  }
+
+  async function loadAlertChannels() {
+    if (!alertAgent.value) return;
+    alertLoading.value = true;
+    try {
+      const payload = await fetchAgentAlertChannels(alertAgent.value.id);
+      alertChannels.value = Array.isArray(payload?.channels)
+        ? payload.channels
+        : [];
+      const max = Number(payload?.max_channels);
+      if (Number.isFinite(max) && max > 0) {
+        alertMaxChannels.value = Math.trunc(max);
+      }
+    } catch {
+      // 失败提示由 axios 拦截器统一给出，这里保持空列表，避免未捕获的 Promise。
+      alertChannels.value = [];
+    } finally {
+      alertLoading.value = false;
+    }
+  }
+
+  async function openAlertChannels(record: any) {
+    alertAgent.value = record;
+    alertChannels.value = [];
+    resetAlertDraft('telegram');
+    alertVisible.value = true;
+    await loadAlertChannels();
+  }
+
+  async function saveAlertChannel() {
+    if (!alertAgent.value) return;
+    const config = draftConfig();
+    if (alertEditingId.value) {
+      if (!Object.keys(config).length) {
+        Message.warning('请至少填写一项要修改的配置');
+        return;
+      }
+      alertSaving.value = true;
+      try {
+        await updateAgentAlertChannel(
+          alertAgent.value.id,
+          alertEditingId.value,
+          { config }
+        );
+        Message.success('提醒渠道已更新');
+        resetAlertDraft();
+        await loadAlertChannels();
+      } finally {
+        alertSaving.value = false;
+      }
+      return;
+    }
+    if (alertAtCap.value) {
+      Message.warning(
+        `每个客服最多 ${alertMaxChannels.value} 个提醒渠道，请先删除后再新增`
+      );
+      return;
+    }
+    if (missingChannelFields().length) {
+      Message.warning('请填写完整的渠道配置');
+      return;
+    }
+    alertSaving.value = true;
+    try {
+      await createAgentAlertChannel(alertAgent.value.id, {
+        kind: alertDraft.kind,
+        config,
+      });
+      Message.success('提醒渠道已新增');
+      resetAlertDraft();
+      await loadAlertChannels();
+    } finally {
+      alertSaving.value = false;
+    }
+  }
+
+  function startEditAlertChannel(record: any) {
+    alertEditingId.value = String(record?.id || '');
+    alertDraft.kind = record?.kind || 'telegram';
+    Object.assign(alertConfig, EMPTY_CHANNEL_CONFIG);
+    Message.info('密钥不会回显，留空表示不修改');
+  }
+
+  function cancelEditAlertChannel() {
+    resetAlertDraft();
+  }
+
+  async function toggleAlertChannel(record: any, enabled: boolean) {
+    if (!alertAgent.value) return;
+    try {
+      await updateAgentAlertChannel(alertAgent.value.id, record.id, {
+        enabled,
+      });
+    } finally {
+      // 成功或失败都以服务端状态为准回填开关。
+      await loadAlertChannels();
+    }
+  }
+
+  function removeAlertChannel(record: any) {
+    if (!alertAgent.value) return;
+    Modal.confirm({
+      title: '删除提醒渠道',
+      content: `确定删除该 ${channelLabel(record.kind)} 提醒渠道？`,
+      onOk: async () => {
+        try {
+          await deleteAgentAlertChannel(alertAgent.value.id, record.id);
+          if (alertEditingId.value === String(record.id)) resetAlertDraft();
+          Message.success('提醒渠道已删除');
+          await loadAlertChannels();
+        } catch {
+          // 失败提示由拦截器给出，保持弹窗状态即可。
+        }
+      },
+    });
+  }
+
+  async function testAlertChannelDraft() {
+    if (missingChannelFields().length) {
+      Message.warning('请先填写完整的渠道配置再发送测试');
+      return;
+    }
+    alertTesting.value = true;
+    try {
+      const result = await testAlertChannel({
+        kind: alertDraft.kind,
+        config: draftConfig(),
+      });
+      const text = result?.message || (result?.ok ? '测试消息已发送' : '测试失败');
+      if (result?.ok) Message.success(text);
+      else Message.error(text);
+    } catch {
+      // 失败提示由拦截器给出。
+    } finally {
+      alertTesting.value = false;
+    }
+  }
+
   function onResetPassword(record: any) {
     Modal.confirm({
       title: '重置密码',
@@ -469,5 +828,13 @@
     display: block;
     margin-top: 4px;
     font-size: 12px;
+  }
+  .alert-tip {
+    margin-bottom: 12px;
+  }
+  .alert-divider {
+    margin: 16px 0 12px;
+    font-size: 12px;
+    color: var(--color-text-3);
   }
 </style>

@@ -53,5 +53,11 @@ export default {
       component: () => import('@/views/system/push.vue'),
       meta: { title: '推送设置', locale: '推送设置', requiresAuth: true },
     },
+    {
+      path: 'alerts',
+      name: 'SystemAlerts',
+      component: () => import('@/views/system/alerts.vue'),
+      meta: { title: '提醒设置', locale: '提醒设置', requiresAuth: true },
+    },
   ],
 };

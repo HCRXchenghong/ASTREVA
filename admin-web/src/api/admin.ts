@@ -294,6 +294,77 @@ export const testPushSettings = () =>
     .post(bridge('/api/admin/push-settings/test'), {})
     .then((r) => r.data);
 
+// ---------- 客服策略 / 排队队列 / 黑名单 ----------
+// 契约冻结：GET/PATCH /api/admin/service-policy，响应形状 {policy:{...10 个字段}}；
+// PATCH 提交完整策略对象（后端返回保存后的 policy，前端按返回值回填）。
+export const fetchServicePolicy = () =>
+  client.get(bridge('/api/admin/service-policy')).then((r) => r.data);
+export const updateServicePolicy = (payload: Record<string, unknown>) =>
+  client.patch(bridge('/api/admin/service-policy'), payload).then((r) => r.data);
+
+// GET /api/admin/service-queue -> {queue:[{conversation_id,group_name,priority,enqueued_at,waiting_seconds,visitor_name?}]}
+export const fetchServiceQueue = () =>
+  client.get(bridge('/api/admin/service-queue')).then((r) => r.data);
+
+// GET /api/admin/blacklist?kind=visitor|ip|account -> {entries:[...]}
+export const fetchBlacklist = (kind: string) =>
+  client
+    .get(bridge('/api/admin/blacklist'), { params: { kind } })
+    .then((r) => r.data);
+export const createBlacklistEntry = (payload: Record<string, unknown>) =>
+  client.post(bridge('/api/admin/blacklist'), payload).then((r) => r.data);
+export const deleteBlacklistEntry = (id: string) =>
+  client.delete(bridge(`/api/admin/blacklist/${encodeURIComponent(id)}`));
+
+// ---------- 提醒：SMTP / 客服提醒渠道 ----------
+// 契约冻结：GET 回 password_masked；PATCH 时 password 不传=不改，传 ""=清除。
+export const fetchAlertSmtp = () =>
+  client.get(bridge('/api/admin/alert-smtp')).then((r) => r.data);
+export const updateAlertSmtp = (payload: Record<string, unknown>) =>
+  client.patch(bridge('/api/admin/alert-smtp'), payload).then((r) => r.data);
+
+// 渠道 config：telegram→token+chat_id；bark→key+server?；email→address。每客服上限 3 个。
+export const fetchAgentAlertChannels = (id: string) =>
+  client
+    .get(bridge(`/api/admin/agents/${encodeURIComponent(id)}/alert-channels`))
+    .then((r) => r.data);
+export const createAgentAlertChannel = (
+  id: string,
+  payload: Record<string, unknown>
+) =>
+  client
+    .post(
+      bridge(`/api/admin/agents/${encodeURIComponent(id)}/alert-channels`),
+      payload
+    )
+    .then((r) => r.data);
+export const updateAgentAlertChannel = (
+  id: string,
+  channelId: string,
+  payload: Record<string, unknown>
+) =>
+  client
+    .patch(
+      bridge(
+        `/api/admin/agents/${encodeURIComponent(id)}/alert-channels/${encodeURIComponent(channelId)}`
+      ),
+      payload
+    )
+    .then((r) => r.data);
+export const deleteAgentAlertChannel = (id: string, channelId: string) =>
+  client.delete(
+    bridge(
+      `/api/admin/agents/${encodeURIComponent(id)}/alert-channels/${encodeURIComponent(channelId)}`
+    )
+  );
+export const testAlertChannel = (payload: {
+  kind: string;
+  config: Record<string, unknown>;
+}) =>
+  client
+    .post(bridge('/api/admin/alert-channels/test'), payload)
+    .then((r) => r.data);
+
 // ---------- 站点后台：bootstrap（含咨询单）/ 发布状态 ----------
 export const fetchBootstrap = () =>
   client.get('/site-admin-api/bootstrap').then((r) => r.data);

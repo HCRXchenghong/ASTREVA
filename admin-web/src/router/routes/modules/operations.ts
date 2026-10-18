@@ -44,5 +44,23 @@ export default {
       component: () => import('@/views/operations/keywords.vue'),
       meta: { title: '关键词规则', locale: '关键词规则', requiresAuth: true },
     },
+    {
+      path: 'policy',
+      name: 'ServicePolicy',
+      component: () => import('@/views/operations/policy.vue'),
+      meta: { title: '客服策略', locale: '客服策略', requiresAuth: true },
+    },
+    {
+      path: 'queue',
+      name: 'ServiceQueue',
+      component: () => import('@/views/operations/queue.vue'),
+      meta: { title: '排队队列', locale: '排队队列', requiresAuth: true },
+    },
+    {
+      path: 'blacklist',
+      name: 'Blacklist',
+      component: () => import('@/views/operations/blacklist.vue'),
+      meta: { title: '黑名单', locale: '黑名单', requiresAuth: true },
+    },
   ],
 };
