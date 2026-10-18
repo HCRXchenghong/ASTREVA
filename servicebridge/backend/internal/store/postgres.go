@@ -206,6 +206,17 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 			CONSTRAINT ai_knowledge_settings_singleton CHECK (id=1),
 			CONSTRAINT ai_knowledge_settings_unknown_action_check CHECK (unknown_action IN ('refuse','handoff'))
 		)`,
+		// AI 频率/次数/单次字数限额：单例表，未写入时由 AILimits() 返回 DefaultAILimits()。
+		`CREATE TABLE IF NOT EXISTS ai_limits (
+			id SMALLINT PRIMARY KEY DEFAULT 1, enabled BOOLEAN NOT NULL DEFAULT true,
+			visitor_messages_per_minute INTEGER NOT NULL DEFAULT 20,
+			visitor_messages_per_day INTEGER NOT NULL DEFAULT 300,
+			ai_calls_per_conversation_day INTEGER NOT NULL DEFAULT 60,
+			ai_reply_max_chars INTEGER NOT NULL DEFAULT 1200,
+			exceed_message TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT ai_limits_singleton CHECK (id=1)
+		)`,
 		`CREATE TABLE IF NOT EXISTS business_hours (
 			id SMALLINT PRIMARY KEY DEFAULT 1, timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai', start_time TEXT NOT NULL DEFAULT '09:00',
 			end_time TEXT NOT NULL DEFAULT '18:00', enabled BOOLEAN NOT NULL DEFAULT true,

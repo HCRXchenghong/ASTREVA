@@ -353,8 +353,8 @@ func TestSuggestReplyDisabledDoesNotCallUpstream(t *testing.T) {
 	if len(result.Suggestions) != 0 {
 		t.Fatalf("关闭推荐后应返回空数组：%+v", result.Suggestions)
 	}
-	if result.Reason != "" {
-		t.Fatalf("关闭推荐不应带 reason，实际 %q", result.Reason)
+	if result.Reason != "disabled_by_preference" {
+		t.Fatalf("关闭推荐应返回 disabled_by_preference，实际 %q", result.Reason)
 	}
 	time.Sleep(150 * time.Millisecond)
 	if atomic.LoadInt32(boundCalls) != 0 || atomic.LoadInt32(globalCalls) != 0 {

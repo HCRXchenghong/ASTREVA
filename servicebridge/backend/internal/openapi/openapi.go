@@ -236,8 +236,15 @@ func mapStoreError(w http.ResponseWriter, err error) {
 		status = http.StatusConflict
 	case errors.Is(err, store.ErrInvalidInput):
 		status = http.StatusBadRequest
+	case errors.Is(err, store.ErrRateLimited):
+		status = http.StatusTooManyRequests
 	}
-	writeOpenError(w, status, err.Error())
+	message := err.Error()
+	// 限额错误对外只下发已按访客语言翻译的提示，不暴露内部维度与计数。
+	if limitMessage := store.RateLimitMessage(err); limitMessage != "" {
+		message = limitMessage
+	}
+	writeOpenError(w, status, message)
 }
 
 // applyOpenCORS 允许第三方平台浏览器侧直接调用开放接口（Key 鉴权，不依赖 Cookie）。

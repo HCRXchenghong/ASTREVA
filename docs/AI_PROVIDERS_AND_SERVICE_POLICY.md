@@ -294,3 +294,28 @@ GET/POST  /api/agent/alert-channels                 自己的渠道（≤3，密
 - **提醒渠道**：1–3 个上限（第 4 个 400）、密钥掩码、发送失败重试、渠道停用后不推送。
 - **Postgres**：新表建表/读写/级联清理 + 单例约束（真实容器跑 `TestPostgres*`）。
 - **控制台/App**：策略页、排队页、黑名单页、渠道配置页与 App 接管弹窗/围观按钮的 Playwright/组件验证，console error=0。
+
+## 九、限额与推荐发送的最终语义（已实现）
+
+### AI 限额（`ai_limits` 单例）
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | true | 关闭时全部不限制 |
+| `visitor_messages_per_minute` | 20 | 访客消息频率（滑动 60 秒窗口，按 会话+访客ID+IP），**0=不限制** |
+| `visitor_messages_per_day` | 300 | 滚动 24 小时窗口 |
+| `ai_calls_per_conversation_day` | 60 | 每会话每天 AI 调用次数 |
+| `ai_reply_max_chars` | 1200 | AI 单次回复字数上限（按句末标点截断，找不到标点硬截断补省略号） |
+| `exceed_message` | 空（内置中文兜底） | 超限提示，按访客语言自动翻译后下发 |
+
+行为要点：
+- **频率超限**：该条访客消息**不落库、不触发关键词/AI**，接口返回 429（开放 API 同样映射），访客收到提示文案，并写 `ai.limit_exceeded` 审计。
+- **AI 调用达上限**：不请求上游，直接落库并回复提示文案（中文原文直接作为中文译文，避免二次翻译）。
+- 被拒请求也计入窗口（防抖动）；进程重启窗口重建（审计独立落库）。
+- 管理员接口 `GET/PATCH /api/admin/ai-limits`：越界（负数或超上限 600/20000/2000/20000）返回 **400**，不静默改写。
+
+### AI 推荐发送的开关语义（重要）
+`POST /api/agent/suggest-reply` 由**两个开关共同门控**，任一关闭都不生成候选、不调用上游，并返回 `reason:"disabled_by_preference"`：
+- `ai_suggest_replies`：**AI 推荐发送总开关**（客服可自行关闭）
+- `knowledge_suggest_enabled`：**是否使用知识库辅助推荐**（客服可自行关闭）
+
+App 的「AI 建议」按钮同样按两者共同启用/禁用；控制台「客服账号 → 翻译偏好」可查看与重置这两项。

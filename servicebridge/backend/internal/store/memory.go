@@ -22,6 +22,8 @@ var (
 	ErrForbidden          = errors.New("forbidden")
 	ErrConflict           = errors.New("conflict")
 	ErrInvalidInput       = errors.New("invalid input")
+	// ErrRateLimited 表示请求触发了 AI 频率/次数限额，调用方应把错误转成访客可见提示。
+	ErrRateLimited = errors.New("rate limited")
 )
 
 var _ Store = (*MemoryStore)(nil)
@@ -56,6 +58,8 @@ type MemoryStore struct {
 	knowledgeBases    map[string]*domain.KnowledgeBase
 	knowledgeEntries  map[string]*domain.KnowledgeEntry
 	knowledgeSettings domain.KnowledgeSettings
+
+	aiLimits domain.AILimits
 }
 
 type Options struct {
@@ -90,6 +94,8 @@ func NewMemoryStore(options Options) *MemoryStore {
 		knowledgeEntries: map[string]*domain.KnowledgeEntry{},
 		// 知识库默认开启，但没有任何知识库时 AI 行为与未接入知识库时完全一致。
 		knowledgeSettings: domain.DefaultKnowledgeSettings(),
+		// AI 限额默认开启但阈值宽松，与改造前（无限制）的实际体验保持一致。
+		aiLimits: domain.DefaultAILimits(),
 		contacts: domain.ContactSettings{
 			// 联系方式与欢迎语默认全部为空：真实内容必须由管理员在后台配置，
 			// 与 PostgreSQL 未配置时的行为保持一致。

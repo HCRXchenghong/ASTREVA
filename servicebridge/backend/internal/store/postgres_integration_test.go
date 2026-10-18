@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -455,5 +456,100 @@ func TestPostgresAIProvidersAndBindings(t *testing.T) {
 	}
 	if err := st.DeleteAIProvider(provider.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("重复删除应返回 ErrNotFound，实际 %v", err)
+	}
+}
+
+// TestPostgresAILimits 是 AI 限额的真实 PostgreSQL 集成测试：
+// 验证 ensureCoreTables 能建 ai_limits 表、未写入时回退默认值、
+// 单例写入/读回，以及存储层对负数与超上限的收敛与超长文案的拒绝。
+func TestPostgresAILimits(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	// 清空单例行，验证"从未写入 -> DefaultAILimits()"的回退路径；
+	// DELETE 本身也证明 ensureCoreTables 确实创建了 ai_limits 表。
+	if _, err := st.pool.Exec(ctx, `DELETE FROM ai_limits`); err != nil {
+		t.Fatalf("清空 ai_limits 失败（表缺失时必然失败）：%v", err)
+	}
+	defaults := st.AILimits()
+	want := domain.DefaultAILimits()
+	if defaults.Enabled != want.Enabled ||
+		defaults.VisitorMessagesPerMinute != want.VisitorMessagesPerMinute ||
+		defaults.VisitorMessagesPerDay != want.VisitorMessagesPerDay ||
+		defaults.AICallsPerConversationDay != want.AICallsPerConversationDay ||
+		defaults.AIReplyMaxChars != want.AIReplyMaxChars ||
+		defaults.ExceedMessage != want.ExceedMessage {
+		t.Fatalf("未写入时的默认限额不符：got=%+v want=%+v", defaults, want)
+	}
+
+	// 单例写入 + 读回。
+	custom := domain.AILimits{
+		Enabled:                   false,
+		VisitorMessagesPerMinute:  7,
+		VisitorMessagesPerDay:     70,
+		AICallsPerConversationDay: 9,
+		AIReplyMaxChars:           80,
+		ExceedMessage:             "请稍后再试。",
+	}
+	updated, err := st.UpdateAILimits(custom)
+	if err != nil {
+		t.Fatalf("写入限额失败：%v", err)
+	}
+	if updated.Enabled || updated.VisitorMessagesPerMinute != 7 || updated.VisitorMessagesPerDay != 70 ||
+		updated.AICallsPerConversationDay != 9 || updated.AIReplyMaxChars != 80 ||
+		updated.ExceedMessage != "请稍后再试。" {
+		t.Fatalf("限额读回不符：%+v", updated)
+	}
+	if updated.UpdatedAt == nil {
+		t.Fatal("限额 updated_at 未写入")
+	}
+	again := st.AILimits()
+	if again.Enabled || again.VisitorMessagesPerMinute != 7 || again.ExceedMessage != "请稍后再试。" {
+		t.Fatalf("限额未持久化：%+v", again)
+	}
+
+	// 负数归零、超上限收敛（存储层保持健壮，HTTP 层另行返回 400）。
+	normalized, err := st.UpdateAILimits(domain.AILimits{
+		Enabled:                   true,
+		VisitorMessagesPerMinute:  -5,
+		VisitorMessagesPerDay:     999999,
+		AICallsPerConversationDay: 999999,
+		AIReplyMaxChars:           999999,
+		ExceedMessage:             "  提示  ",
+	})
+	if err != nil {
+		t.Fatalf("写入越界限额失败：%v", err)
+	}
+	if normalized.VisitorMessagesPerMinute != 0 ||
+		normalized.VisitorMessagesPerDay != domain.AILimitMaxPerDay ||
+		normalized.AICallsPerConversationDay != domain.AILimitMaxAICalls ||
+		normalized.AIReplyMaxChars != domain.AILimitMaxReplyChars {
+		t.Fatalf("越界值未按预期收敛：%+v", normalized)
+	}
+	if normalized.ExceedMessage != "提示" {
+		t.Fatalf("提示文案未去空白：%q", normalized.ExceedMessage)
+	}
+
+	// 超长提示文案应返回 ErrInvalidInput。
+	if _, err := st.UpdateAILimits(domain.AILimits{ExceedMessage: strings.Repeat("a", 1001)}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("超长提示文案应返回 ErrInvalidInput，实际 %v", err)
+	}
+
+	// 恢复默认，避免复用同一个测试库时影响其它用例。
+	if _, err := st.UpdateAILimits(domain.DefaultAILimits()); err != nil {
+		t.Fatalf("恢复默认限额失败：%v", err)
 	}
 }

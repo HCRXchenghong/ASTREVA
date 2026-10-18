@@ -102,6 +102,12 @@ type Store interface {
 	KnowledgeSettings() domain.KnowledgeSettings
 	UpdateKnowledgeSettings(next domain.KnowledgeSettings) (domain.KnowledgeSettings, error)
 
+	// ===== AI 限额 =====
+	// AILimits 读取 AI 频率/次数/单次字数限额（单例表 ai_limits，未写入时返回默认值）。
+	AILimits() domain.AILimits
+	// UpdateAILimits 覆盖保存限额配置；负数归零、超上限收敛，updated_at 由存储层写入。
+	UpdateAILimits(next domain.AILimits) (domain.AILimits, error)
+
 	// RequestHumanHandoff 静默转人工：会话状态置为 human_requested 并分配客服，
 	// 不产生任何消息，供 AI 知识库未命中（unknown_action=handoff）时复用既有转人工逻辑。
 	RequestHumanHandoff(conversationID string) (domain.Conversation, error)

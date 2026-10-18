@@ -1696,7 +1696,7 @@ class _ChatPageState extends State<ChatPage> {
   /// 只生成候选、不发送任何消息；客服点「使用」后仅填入输入框。
   Future<void> _requestSuggestions() async {
     if (_closed || _suggesting) return;
-    if (!_preferences.knowledgeSuggestEnabled) {
+    if (!_preferences.aiSuggestReplies || !_preferences.knowledgeSuggestEnabled) {
       // 正常情况下按钮已禁用，这里兜底避免偏好刚被关闭时的竞态。
       _showMessage(context, '已在偏好中关闭 AI 推荐');
       return;
@@ -2005,10 +2005,10 @@ class _ChatPageState extends State<ChatPage> {
                       IconButton(
                         onPressed: closed || _suggesting
                             ? null
-                            : (_preferences.knowledgeSuggestEnabled
+                            : ((_preferences.knowledgeSuggestEnabled && _preferences.aiSuggestReplies)
                                   ? _requestSuggestions
                                   : null),
-                        tooltip: _preferences.knowledgeSuggestEnabled
+                        tooltip: (_preferences.knowledgeSuggestEnabled && _preferences.aiSuggestReplies)
                             ? 'AI 建议'
                             : '已在偏好中关闭 AI 推荐',
                         icon: _suggesting

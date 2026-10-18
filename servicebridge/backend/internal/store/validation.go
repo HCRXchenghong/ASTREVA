@@ -473,6 +473,19 @@ func normalizeKnowledgeSettings(next domain.KnowledgeSettings) (domain.Knowledge
 	return out, nil
 }
 
+// normalizeAILimits 归一化并校验 AI 限额配置。
+// 数值按 domain.NormalizeAILimits 做负数归零与上限收敛（存储层保持健壮），
+// 提示文案额外做长度校验，避免超长文本反复落库/翻译。
+func normalizeAILimits(next domain.AILimits) (domain.AILimits, error) {
+	out := domain.NormalizeAILimits(next)
+	exceed, err := cleanOptionalText(out.ExceedMessage, maxKeywordReplyRunes)
+	if err != nil {
+		return domain.AILimits{}, err
+	}
+	out.ExceedMessage = exceed
+	return out, nil
+}
+
 // cleanKnowledgeBaseIDs 清洗客服限定的知识库 ID 列表：去空、去重、限长。
 func cleanKnowledgeBaseIDs(ids []string) []string {
 	if len(ids) == 0 {

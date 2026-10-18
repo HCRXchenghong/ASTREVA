@@ -1853,6 +1853,69 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		writeJSON(w, http.StatusOK, updated)
 	})
 
+	// AI 频率/次数/单次字数限额：GET 返回单例配置，PATCH 支持指针语义的局部更新。
+	// 越界值（负数或超过上限）返回 400，由管理员显式修正，避免"看起来保存成功但被静默收敛"。
+	mux.HandleFunc("GET /api/admin/ai-limits", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"limits": service.Store().AILimits()})
+	})
+
+	mux.HandleFunc("PATCH /api/admin/ai-limits", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req aiLimitsPatchRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		next := service.Store().AILimits()
+		if req.Enabled != nil {
+			next.Enabled = *req.Enabled
+		}
+		if req.VisitorMessagesPerMinute != nil {
+			if err := validateAILimitRange("visitor_messages_per_minute", *req.VisitorMessagesPerMinute, domain.AILimitMaxPerMinute); err != nil {
+				writeError(w, err)
+				return
+			}
+			next.VisitorMessagesPerMinute = *req.VisitorMessagesPerMinute
+		}
+		if req.VisitorMessagesPerDay != nil {
+			if err := validateAILimitRange("visitor_messages_per_day", *req.VisitorMessagesPerDay, domain.AILimitMaxPerDay); err != nil {
+				writeError(w, err)
+				return
+			}
+			next.VisitorMessagesPerDay = *req.VisitorMessagesPerDay
+		}
+		if req.AICallsPerConversationDay != nil {
+			if err := validateAILimitRange("ai_calls_per_conversation_day", *req.AICallsPerConversationDay, domain.AILimitMaxAICalls); err != nil {
+				writeError(w, err)
+				return
+			}
+			next.AICallsPerConversationDay = *req.AICallsPerConversationDay
+		}
+		if req.AIReplyMaxChars != nil {
+			if err := validateAILimitRange("ai_reply_max_chars", *req.AIReplyMaxChars, domain.AILimitMaxReplyChars); err != nil {
+				writeError(w, err)
+				return
+			}
+			next.AIReplyMaxChars = *req.AIReplyMaxChars
+		}
+		if req.ExceedMessage != nil {
+			next.ExceedMessage = *req.ExceedMessage
+		}
+		updated, err := service.Store().UpdateAILimits(next)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "ai_limits.update", "ai_limits", "1", "更新 AI 限额配置")
+		writeJSON(w, http.StatusOK, map[string]any{"limits": updated})
+	})
+
 	// 管理员查看/重置某客服的偏好，复用客服自助接口的存储方法。
 	mux.HandleFunc("GET /api/admin/agents/{id}/preferences", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(service, r) {
@@ -2287,6 +2350,27 @@ type knowledgeSettingsPatchRequest struct {
 	Enabled        *bool    `json:"enabled"`
 }
 
+// aiLimitsPatchRequest 是 AI 限额局部更新请求：指针语义，nil 表示不修改。
+type aiLimitsPatchRequest struct {
+	Enabled                   *bool   `json:"enabled"`
+	VisitorMessagesPerMinute  *int    `json:"visitor_messages_per_minute"`
+	VisitorMessagesPerDay     *int    `json:"visitor_messages_per_day"`
+	AICallsPerConversationDay *int    `json:"ai_calls_per_conversation_day"`
+	AIReplyMaxChars           *int    `json:"ai_reply_max_chars"`
+	ExceedMessage             *string `json:"exceed_message"`
+}
+
+// validateAILimitRange 校验单个限额字段：负数为非法，超过上限同样拒绝（HTTP 层选择 400 而非静默收敛）。
+func validateAILimitRange(name string, value, max int) error {
+	if value < 0 {
+		return fmt.Errorf("%w: %s 不能为负数", store.ErrInvalidInput, name)
+	}
+	if value > max {
+		return fmt.Errorf("%w: %s 不能超过 %d", store.ErrInvalidInput, name, max)
+	}
+	return nil
+}
+
 // resolveAgentKnowledgeBaseIDs 清洗并校验客服限定的知识库 ID：去空去重，且必须真实存在。
 func resolveAgentKnowledgeBaseIDs(service *app.Service, ids []string) ([]string, error) {
 	out := make([]string, 0, len(ids))
@@ -2553,8 +2637,16 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrInvalidInput):
 		status = http.StatusBadRequest
 		code = "invalid_input"
+	case errors.Is(err, store.ErrRateLimited):
+		status = http.StatusTooManyRequests
+		code = "rate_limited"
 	}
-	writeJSON(w, status, map[string]any{"error": code, "message": err.Error()})
+	message := err.Error()
+	// 限额错误的内部文本只有维度/计数；面向访客的提示必须使用业务文案。
+	if limitMessage := store.RateLimitMessage(err); limitMessage != "" {
+		message = limitMessage
+	}
+	writeJSON(w, status, map[string]any{"error": code, "message": message})
 }
 
 func canAccessConversation(service *app.Service, r *http.Request, conversationID string) bool {

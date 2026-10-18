@@ -27,6 +27,12 @@ type Service struct {
 	notifier notify.Notifier
 
 	websocketAllowedOrigins map[string]bool
+
+	// limitTracker 是进程内的滑动窗口计数器（访客消息频率 + AI 调用次数）。
+	// 限额计数不落库，重启后窗口重建；审计事件独立落库。
+	limitTracker *limitTracker
+	// limitTexts 缓存超限提示的译文，避免刷屏式请求反复调用翻译上游。
+	limitTexts *limitTextTranslator
 }
 
 func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Service {
@@ -37,6 +43,8 @@ func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Serv
 		logger:                  logger,
 		notifier:                notify.DisabledNotifier{},
 		websocketAllowedOrigins: map[string]bool{"*": true},
+		limitTracker:            newLimitTracker(),
+		limitTexts:              newLimitTextTranslator(),
 	}
 }
 
@@ -316,6 +324,11 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 	if !ok {
 		return store.MessageResult{}, store.ErrNotFound
 	}
+	// 频率限额：必须在任何落库、翻译与 AI/关键词触发之前拦截。
+	// 超限只返回带访客文案的业务错误，由 HTTP/WS 层转成访客可见提示。
+	if err := s.checkVisitorMessageLimit(conversation); err != nil {
+		return store.MessageResult{}, err
+	}
 	visitorLang := ai.NormalizeLang(conversation.VisitorLang, ai.LangZh)
 	language := s.resolveConversationLanguage(conversation, content, messageType)
 	visitorLang = language.ReplyLang
@@ -413,6 +426,10 @@ func (s *Service) generateAIReply(conversationID, currentMsgID, userText string,
 	var reply string
 	var knowledgeEntryIDs []string
 	handoffRequested := false
+	// limitExceeded 表示本次未调用上游、直接回复超限提示；
+	// limitExceededChinese 保存提示的中文原文，供非中文访客的译文落库复用。
+	limitExceeded := false
+	limitExceededChinese := ""
 	switch {
 	case search.Active && len(search.Hits) == 0:
 		// 库外问题：不调用 AI 自由作答，按配置拒答或静默转人工。
@@ -431,6 +448,22 @@ func (s *Service) generateAIReply(conversationID, currentMsgID, userText string,
 			}
 		}
 	case settingsErr == nil:
+		// AI 每日调用次数：在真正调用上游之前检查；达到上限后不调用上游，
+		// 直接落库一条超限提示并记审计，保证访客仍能收到明确反馈。
+		limits := s.store.AILimits()
+		if limits.Enabled && limits.AICallsPerConversationDay > 0 {
+			_, aiCallCount := s.limitTracker.aiCalls.record(conversationID)
+			if aiCallCount > limits.AICallsPerConversationDay {
+				reply = s.limitExceedText(visitorLang, limits.ExceedMessage)
+				limitExceededChinese = domain.LimitExceedMessageText(limits.ExceedMessage)
+				limitExceeded = true
+				if conversation, ok := s.store.Conversation(conversationID); ok {
+					s.recordLimitExceeded(conversation, domain.AILimitDimensionAICalls,
+						aiCallCount, limits.AICallsPerConversationDay)
+				}
+				break
+			}
+		}
 		if len(search.Hits) > 0 {
 			// 命中知识：把资料注入 system prompt，并要求只依据资料回答。
 			settings.SystemPrompt = knowledge.BuildKnowledgePrompt(settings.SystemPrompt, search.Hits, search.ByID)
@@ -446,8 +479,17 @@ func (s *Service) generateAIReply(conversationID, currentMsgID, userText string,
 	default:
 		reply = aiBusyText(visitorLang)
 	}
+	// 单次回复字数：在翻译与落库之前截断，保证访客与客服看到同一份内容。
+	// 截断优先保留完整句子，找不到句末标点时硬截断并补省略号。
+	if maxChars := s.aiReplyCharLimit(); maxChars > 0 {
+		reply = truncateAIReply(reply, maxChars)
+	}
 	translations := map[string]string{}
-	if visitorLang != ai.LangZh && ai.DetectLang(reply) != ai.LangZh {
+	switch {
+	case limitExceeded && visitorLang != ai.LangZh:
+		// 超限提示的中文原文已知，直接作为中文译文落库，避免再调用一次翻译上游。
+		translations[ai.LangZh] = limitExceededChinese
+	case visitorLang != ai.LangZh && ai.DetectLang(reply) != ai.LangZh:
 		// AI 回复的中文译文属于 translation 能力，单独解析其绑定。
 		translateSettings, translateSettingsErr := s.aiSettingsForCapability(domain.AICapabilityTranslation)
 		if translateSettingsErr != nil {
@@ -883,6 +925,13 @@ func errorEvent(err error) realtime.Event {
 	}
 	if errors.Is(err, store.ErrNotFound) {
 		status = "not_found"
+	}
+	if errors.Is(err, store.ErrRateLimited) {
+		// 限额错误必须把面向访客的文案原样下发，不能只给内部维度信息。
+		status = "rate_limited"
+		if limitMessage := store.RateLimitMessage(err); limitMessage != "" {
+			message = limitMessage
+		}
 	}
 	return realtime.Event{Event: "error", Data: map[string]string{"code": status, "message": message}}
 }

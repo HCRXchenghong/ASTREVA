@@ -150,8 +150,11 @@ func (s *Service) SuggestReply(ctx context.Context, agentID, conversationID stri
 		return SuggestReplyResult{}, store.ErrForbidden
 	}
 	preferences := s.agentPreferences(agentID)
-	if !prefBool(preferences.KnowledgeSuggestEnabled) {
-		return SuggestReplyResult{Suggestions: []ReplySuggestion{}}, nil
+	// 两个开关共同门控：ai_suggest_replies 是"AI 推荐发送"总开关，
+	// knowledge_suggest_enabled 是"是否用知识库辅助推荐"。任一关闭都不生成候选，
+	// 且不调用上游（避免客服关掉后仍产生费用与上下文外泄）。
+	if !prefBool(preferences.AISuggestReplies) || !prefBool(preferences.KnowledgeSuggestEnabled) {
+		return SuggestReplyResult{Suggestions: []ReplySuggestion{}, Reason: "disabled_by_preference"}, nil
 	}
 	query := s.suggestQuery(conversationID)
 	if query == "" {
