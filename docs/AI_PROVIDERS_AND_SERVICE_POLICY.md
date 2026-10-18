@@ -128,3 +128,34 @@ conversations 扩展        sla_first_response_at, last_agent_reply_at, sla_stat
 - 集成测试：控制台接口鉴权与审计；AI 接管 vs 未接管的知识约束回答；推荐发送在客服关闭后不产生。
 - UI：控制台「AI 管理 → 模型供应商 / 知识库 / 限额」「系统 → 安全策略」「客服账号 → 提醒渠道」，App 的「接管弹窗 / 只读围观 / 推荐发送」。
 - 全量：`scripts/verify-all.sh` 全绿。
+
+## 六、批次 3 第一阶段的接口契约（已冻结，实现与 UI 均以此为准）
+
+```
+GET    /api/admin/ai-providers              → {"providers":[{id,name,kind,api_type,base_url,api_key_masked,models,default_model,timeout_ms,allowed_hosts,enabled,sort_order}]}
+POST   /api/admin/ai-providers              body 含 api_key（仅写入）
+PATCH  /api/admin/ai-providers/{id}         局部；api_key 不传=不改，传 ""=清除
+DELETE /api/admin/ai-providers/{id}
+POST   /api/admin/ai-providers/{id}/models  一键获取模型（写回 models）；上游失败 502
+POST   /api/admin/ai-providers/{id}/test    → {ok,latency_ms,message,models_count}
+GET    /api/admin/ai-providers/{id}/secret  → 解密配置（仅服务间调用，供 admin-server 读取）
+GET    /api/admin/ai-bindings               → {"bindings":{capability:{provider_id,model,params}}}
+PUT    /api/admin/ai-bindings               body {"bindings":[{capability,provider_id,model,params}]}
+GET    /api/admin/agents/{id}/preferences   管理员查看某客服翻译偏好
+PATCH  /api/admin/agents/{id}/preferences   管理员重置/修改
+```
+
+生效范围（本阶段）：`reception`（接待 AI）、`translation`（翻译与译文预览）由客服引擎按能力绑定解析上游，未绑定或供应商被禁用时**原样回退**到既有 `ai_settings`；`detection` 绑定只落库（语言检测仍为本地脚本+词表，不消耗上游）；`seo` 与 `image` 的绑定先落库，**admin-server 侧下轮通过 `/secret` 接口接入**（官网 SEO 生成、AI 生图、网站翻译目前仍用各自配置，行为不变）。
+
+安全要点：
+- API Key 使用 AES-256-GCM 加密入库，列表/详情只回末四位掩码，明文永不进日志。
+- `allowed_hosts` 非空时，调用前必须校验目标主机，防 SSRF；为空表示不限制（默认）。
+- `/secret` 属服务间接口，仅管理员会话可访问，调用方为受信后端（admin-server），需在审计中可追。
+
+## 七、下一阶段（本文件已列出、尚未实现）
+
+1. 知识库（多库 + 检索 + 客服推荐发送 + AI 接管按库回答 + 库外拒答 + 按客服关闭）。
+2. 限额（访客每分钟/每天消息数、AI 每日调用数、AI 单次回复字数、超限三语文案）。
+3. 客服策略（排队与技能组、SLA、超时关闭、优先级、无人值守兜底、黑名单、接管弹窗与只读围观、1–3 个提醒渠道）。
+4. 开放 API 权限范围（scopes）。
+5. 客户画像（GeoLite2 + 后台可配第三方 IP 库 + 双端展示）。
