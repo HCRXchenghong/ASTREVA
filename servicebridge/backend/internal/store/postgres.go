@@ -27,7 +27,7 @@ const (
 	adminColumns        = `id, account, name, password_hash, created_at`
 	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), COALESCE(device_platform, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate, COALESCE(preferences::text, '{}')`
 	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, COALESCE(detected_lang, ''), COALESCE(reply_lang_override, ''), reply_lang_override_at, COALESCE(language_stats::text, '{}'), last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
-	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id, COALESCE(detected_lang, ''), COALESCE(author_lang, ''), COALESCE(translation_status, '')`
+	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id, COALESCE(detected_lang, ''), COALESCE(author_lang, ''), COALESCE(translation_status, ''), COALESCE(knowledge_entry_ids::text, '[]')`
 	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
 	auditColumns        = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
 	aiProviderColumns   = `id, name, kind, api_type, base_url, api_key_ciphertext, COALESCE(models::text, '[]'), default_model, timeout_ms, allowed_hosts, enabled, sort_order, created_at, updated_at`
@@ -182,6 +182,30 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 			CONSTRAINT ai_bindings_capability_check CHECK (capability IN ('reception','translation','detection','seo','image'))
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_bindings_provider ON ai_bindings(provider_id)`,
+		// ===== AI 知识库（多库、两种用途、库外拒答）=====
+		`CREATE TABLE IF NOT EXISTS ai_knowledge_bases (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+			enabled BOOLEAN NOT NULL DEFAULT true, sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_knowledge_bases_enabled_sort ON ai_knowledge_bases(enabled, sort_order, created_at)`,
+		`CREATE TABLE IF NOT EXISTS ai_knowledge_entries (
+			id TEXT PRIMARY KEY, base_id TEXT NOT NULL REFERENCES ai_knowledge_bases(id) ON DELETE CASCADE,
+			title TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, keywords JSONB NOT NULL DEFAULT '[]'::jsonb,
+			category TEXT NOT NULL DEFAULT '', priority INTEGER NOT NULL DEFAULT 0, enabled BOOLEAN NOT NULL DEFAULT true,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_knowledge_entries_base ON ai_knowledge_entries(base_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_knowledge_entries_enabled ON ai_knowledge_entries(enabled)`,
+		// 库外行为配置：单例表，未写入时由 KnowledgeSettings() 返回默认值。
+		`CREATE TABLE IF NOT EXISTS ai_knowledge_settings (
+			id SMALLINT PRIMARY KEY DEFAULT 1, unknown_action TEXT NOT NULL DEFAULT 'handoff',
+			refuse_reply TEXT NOT NULL DEFAULT '', score_threshold NUMERIC(4,3) NOT NULL DEFAULT 0.35,
+			max_entries INTEGER NOT NULL DEFAULT 3, enabled BOOLEAN NOT NULL DEFAULT true,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT ai_knowledge_settings_singleton CHECK (id=1),
+			CONSTRAINT ai_knowledge_settings_unknown_action_check CHECK (unknown_action IN ('refuse','handoff'))
+		)`,
 		`CREATE TABLE IF NOT EXISTS business_hours (
 			id SMALLINT PRIMARY KEY DEFAULT 1, timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai', start_time TEXT NOT NULL DEFAULT '09:00',
 			end_time TEXT NOT NULL DEFAULT '18:00', enabled BOOLEAN NOT NULL DEFAULT true,
@@ -204,6 +228,7 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS detected_lang TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS author_lang TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS translation_status TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS knowledge_entry_ids JSONB NOT NULL DEFAULT '[]'::jsonb`,
 		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'::jsonb`,
 	}
 	for _, statement := range statements {
@@ -734,6 +759,11 @@ func (s *PostgresStore) AddVisitorMessage(conversationID, clientMsgID, content s
 }
 
 func (s *PostgresStore) AddAIMessage(conversationID, content string, translations map[string]string) (domain.Message, domain.Conversation, error) {
+	return s.AddAIMessageWithKnowledge(conversationID, content, translations, nil)
+}
+
+// AddAIMessageWithKnowledge 落库一条 AI 消息，并记录本次回答依据的知识条目 ID。
+func (s *PostgresStore) AddAIMessageWithKnowledge(conversationID, content string, translations map[string]string, knowledgeEntryIDs []string) (domain.Message, domain.Conversation, error) {
 	ctx, cancel := dbContext()
 	defer cancel()
 
@@ -757,7 +787,7 @@ func (s *PostgresStore) AddAIMessage(conversationID, content string, translation
 				return err
 			}
 		}
-		msg, err = s.createMessageTx(ctx, tx, conversationID, "", domain.SenderAI, "ai", domain.MessageAIText, content, translations)
+		msg, err = s.createMessageWithKnowledgeTx(ctx, tx, conversationID, "", domain.SenderAI, "ai", domain.MessageAIText, content, translations, knowledgeEntryIDs)
 		if err != nil {
 			return err
 		}
@@ -2545,21 +2575,27 @@ func (s *PostgresStore) selectTransferTargetTx(ctx context.Context, tx pgx.Tx, a
 }
 
 func (s *PostgresStore) createMessageTx(ctx context.Context, tx pgx.Tx, conversationID, clientMsgID string, senderType domain.SenderType, senderID string, messageType domain.MessageType, content string, translations map[string]string) (domain.Message, error) {
+	return s.createMessageWithKnowledgeTx(ctx, tx, conversationID, clientMsgID, senderType, senderID, messageType, content, translations, nil)
+}
+
+// createMessageWithKnowledgeTx 在 createMessageTx 基础上附带"回答依据"知识条目 ID。
+func (s *PostgresStore) createMessageWithKnowledgeTx(ctx context.Context, tx pgx.Tx, conversationID, clientMsgID string, senderType domain.SenderType, senderID string, messageType domain.MessageType, content string, translations map[string]string, knowledgeEntryIDs []string) (domain.Message, error) {
 	msg := domain.Message{
-		ServerMsgID:    "msg_" + randomID(12),
-		ClientMsgID:    strings.TrimSpace(clientMsgID),
-		ConversationID: conversationID,
-		SenderType:     senderType,
-		SenderID:       senderID,
-		MessageType:    messageType,
-		Content:        strings.TrimSpace(content),
-		Translations:   cleanTranslations(translations),
-		CreatedAt:      dbNow(),
+		ServerMsgID:       "msg_" + randomID(12),
+		ClientMsgID:       strings.TrimSpace(clientMsgID),
+		ConversationID:    conversationID,
+		SenderType:        senderType,
+		SenderID:          senderID,
+		MessageType:       messageType,
+		Content:           strings.TrimSpace(content),
+		Translations:      cleanTranslations(translations),
+		KnowledgeEntryIDs: cleanKnowledgeBaseIDs(knowledgeEntryIDs),
+		CreatedAt:         dbNow(),
 	}
 	row := tx.QueryRow(ctx, `
-		INSERT INTO messages (server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, translations, created_at, revoked_at, revoked_by_kind, revoked_by_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, NULL, '', '')
-		RETURNING `+messageColumns, msg.ServerMsgID, msg.ClientMsgID, msg.ConversationID, msg.SenderType, msg.SenderID, msg.MessageType, msg.Content, marshalTranslationsJSON(msg.Translations), msg.CreatedAt)
+		INSERT INTO messages (server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, translations, knowledge_entry_ids, created_at, revoked_at, revoked_by_kind, revoked_by_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, NULL, '', '')
+		RETURNING `+messageColumns, msg.ServerMsgID, msg.ClientMsgID, msg.ConversationID, msg.SenderType, msg.SenderID, msg.MessageType, msg.Content, marshalTranslationsJSON(msg.Translations), marshalStringListJSON(msg.KnowledgeEntryIDs), msg.CreatedAt)
 	return scanMessage(row)
 }
 
@@ -3275,8 +3311,10 @@ func scanMessage(row scanTarget) (domain.Message, error) {
 	var revokedByKind sql.NullString
 	var revokedByID sql.NullString
 	var translationsJSON string
-	err := row.Scan(&out.ServerMsgID, &out.ClientMsgID, &out.ConversationID, &out.SenderType, &out.SenderID, &out.MessageType, &out.Content, &translationsJSON, &out.CreatedAt, &revokedAt, &revokedByKind, &revokedByID, &out.DetectedLang, &out.AuthorLang, &out.TranslationStatus)
+	var knowledgeEntryIDsJSON string
+	err := row.Scan(&out.ServerMsgID, &out.ClientMsgID, &out.ConversationID, &out.SenderType, &out.SenderID, &out.MessageType, &out.Content, &translationsJSON, &out.CreatedAt, &revokedAt, &revokedByKind, &revokedByID, &out.DetectedLang, &out.AuthorLang, &out.TranslationStatus, &knowledgeEntryIDsJSON)
 	out.Translations = parseTranslationsJSON(translationsJSON)
+	out.KnowledgeEntryIDs = parseStringListJSON(knowledgeEntryIDsJSON)
 	if revokedAt.Valid {
 		out.RevokedAt = &revokedAt.Time
 	}
@@ -3323,6 +3361,32 @@ func marshalTranslationsJSON(translations map[string]string) string {
 	payload, err := json.Marshal(translations)
 	if err != nil {
 		return "{}"
+	}
+	return string(payload)
+}
+
+// parseStringListJSON 解析 JSONB 字符串数组列（keywords、knowledge_entry_ids 等）。
+func parseStringListJSON(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" || raw == "null" {
+		return nil
+	}
+	out := []string{}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return cleanKnowledgeBaseIDs(out)
+}
+
+// marshalStringListJSON 把字符串切片序列化为 JSONB 参数。
+func marshalStringListJSON(values []string) string {
+	values = cleanKnowledgeBaseIDs(values)
+	if len(values) == 0 {
+		return "[]"
+	}
+	payload, err := json.Marshal(values)
+	if err != nil {
+		return "[]"
 	}
 	return string(payload)
 }

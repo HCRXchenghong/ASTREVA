@@ -80,6 +80,34 @@ type Store interface {
 	// UpdateAgentPreferences 覆盖保存客服偏好；非法方言模式归一为 standard。
 	UpdateAgentPreferences(agentID string, next domain.AgentPreferences) (domain.AgentPreferences, error)
 
+	// ===== AI 知识库 =====
+	// KnowledgeBases 返回全部知识库（按 sort_order、创建时间排序）。
+	KnowledgeBases() []domain.KnowledgeBase
+	KnowledgeBase(id string) (domain.KnowledgeBase, bool)
+	CreateKnowledgeBase(next domain.KnowledgeBase) (domain.KnowledgeBase, error)
+	// UpdateKnowledgeBase 覆盖更新知识库（ID/创建时间不变）。
+	UpdateKnowledgeBase(id string, next domain.KnowledgeBase) (domain.KnowledgeBase, error)
+	// DeleteKnowledgeBase 删除知识库并级联删除其条目。
+	DeleteKnowledgeBase(id string) (domain.KnowledgeBase, error)
+	// KnowledgeEntries 按库与关键词分页列出条目（后台管理用）。
+	KnowledgeEntries(baseID, query string, limit, offset int) []domain.KnowledgeEntry
+	KnowledgeEntry(id string) (domain.KnowledgeEntry, bool)
+	CreateKnowledgeEntry(next domain.KnowledgeEntry) (domain.KnowledgeEntry, error)
+	UpdateKnowledgeEntry(id string, next domain.KnowledgeEntry) (domain.KnowledgeEntry, error)
+	DeleteKnowledgeEntry(id string) (domain.KnowledgeEntry, error)
+	// KnowledgeEntriesForBases 返回启用中的条目：仅限启用中的知识库；
+	// baseIDs 为空表示全部启用库。Postgres 用 WHERE enabled AND base_id = ANY($1) 取候选，
+	// 避免全表扫描；后续可再加倒排表（本期不做）。
+	KnowledgeEntriesForBases(baseIDs []string) []domain.KnowledgeEntry
+	KnowledgeSettings() domain.KnowledgeSettings
+	UpdateKnowledgeSettings(next domain.KnowledgeSettings) (domain.KnowledgeSettings, error)
+
+	// RequestHumanHandoff 静默转人工：会话状态置为 human_requested 并分配客服，
+	// 不产生任何消息，供 AI 知识库未命中（unknown_action=handoff）时复用既有转人工逻辑。
+	RequestHumanHandoff(conversationID string) (domain.Conversation, error)
+	// AddAIMessageWithKnowledge 与 AddAIMessage 相同，并记录本次回答依据的知识条目 ID。
+	AddAIMessageWithKnowledge(conversationID, content string, translations map[string]string, knowledgeEntryIDs []string) (domain.Message, domain.Conversation, error)
+
 	AppReleases(platform string) []domain.AppRelease
 	CreateAppRelease(next domain.AppRelease) (domain.AppRelease, error)
 	UpdateAppRelease(id string, next domain.AppRelease) (domain.AppRelease, error)

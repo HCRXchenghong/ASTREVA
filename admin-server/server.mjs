@@ -27,6 +27,7 @@ import { createMediaRouter } from './modules/media-router.mjs';
 import { createPublishService } from './modules/publish-service.mjs';
 import { createPublishRouter } from './modules/publish-router.mjs';
 import { createServiceBridgeProxy } from './modules/servicebridge-proxy.mjs';
+import { createAIProviderClient } from './modules/ai-provider-client.mjs';
 import { createWebsiteTranslationService } from './modules/website-translation-service.mjs';
 import { createWebsiteTranslationRouter } from './modules/website-translation-router.mjs';
 import { createWebsiteSeoService } from './modules/website-seo-service.mjs';
@@ -128,7 +129,26 @@ const platformStore = createPlatformStore({
   }
 });
 await platformStore.init();
-const translationService = createWebsiteTranslationService({ platformStore });
+
+// 客服引擎代理必须先于 AI 消费方创建：AI 供应商解析与后台管理共用同一条受信管理员通道。
+const serviceBridgeProxy = createServiceBridgeProxy({
+  apiUrl: SERVICEBRIDGE_API_URL,
+  adminAccount: SERVICEBRIDGE_ADMIN_ACCOUNT,
+  adminPassword: SERVICEBRIDGE_ADMIN_PASSWORD,
+  publicOrigin: PUBLIC_ORIGIN,
+  bodyRaw,
+  bodyJson,
+  json,
+  send,
+  verifySession,
+  // 控制台保存供应商/能力绑定后立即让本地缓存失效，下一次请求即读取新配置。
+  onConfigChange: () => aiProviderClient.invalidate()
+});
+// 网站翻译 / AI SEO / AI 生图统一从客服引擎控制台解析供应商；解析失败返回 null，消费方沿用本地配置。
+const aiProviderClient = createAIProviderClient({ adminJson: serviceBridgeProxy.adminJson });
+const resolveAiProvider = (capability) => aiProviderClient.resolve(capability);
+
+const translationService = createWebsiteTranslationService({ platformStore, resolveProvider: resolveAiProvider });
 const seoService = createWebsiteSeoService({ aiService: translationService });
 const publishService = createPublishService({
   rebuildUrl: REBUILD_URL,
@@ -179,23 +199,14 @@ function configuredMediaAiService(config, store = mediaStore) {
     allowedHosts: config.aiImage.allowedHosts,
     downloadHosts: config.aiImage.downloadHosts,
     configuredModels: config.aiImage.configuredModels,
-    requestTimeoutMs: config.aiImage.requestTimeoutMs
+    requestTimeoutMs: config.aiImage.requestTimeoutMs,
+    // 每次生图请求都会先尝试 image 能力绑定（走 TTL 缓存），未绑定则完全走本地配置。
+    resolveProvider: resolveAiProvider
   });
 }
 
 let mediaStore = configuredMediaStore(mediaRuntimeConfig);
 let mediaAiService = configuredMediaAiService(mediaRuntimeConfig, mediaStore);
-const serviceBridgeProxy = createServiceBridgeProxy({
-  apiUrl: SERVICEBRIDGE_API_URL,
-  adminAccount: SERVICEBRIDGE_ADMIN_ACCOUNT,
-  adminPassword: SERVICEBRIDGE_ADMIN_PASSWORD,
-  publicOrigin: PUBLIC_ORIGIN,
-  bodyRaw,
-  bodyJson,
-  json,
-  send,
-  verifySession
-});
 
 const SYSTEM_SETTINGS_DEFAULTS = {
   business: { timezone: 'Asia/Shanghai', start: '09:00', end: '18:00', enabled: true },

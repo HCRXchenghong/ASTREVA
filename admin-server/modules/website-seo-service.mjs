@@ -140,6 +140,8 @@ export function createWebsiteSeoService({ aiService }) {
       const batch = targets.slice(index, index + SEO_BATCH_SIZE);
       const result = await aiService.generateJson(promptFor(batch, next.site?.brandName), {
         type: 'array',
+        // 明确声明能力，让文本生成器优先使用控制台绑定的 seo 供应商。
+        capability: 'seo',
         system: '你是资深的国际工业品牌 SEO 策略师，严格按 JSON 合同输出，不编造事实。',
         temperature: 0.25,
         maxTokens: 12000

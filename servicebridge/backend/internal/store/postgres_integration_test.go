@@ -186,6 +186,143 @@ func TestPostgresAgentPreferences(t *testing.T) {
 
 func strPtr(value string) *string { return &value }
 
+// TestPostgresKnowledge 是 AI 知识库的真实 PostgreSQL 集成测试：
+// 验证 ensureCoreTables 能建表（含 messages.knowledge_entry_ids 列）、
+// keywords / knowledge_entry_ids 的 JSONB 往返、检索配置单例读写与级联删除。
+func TestPostgresKnowledge(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	// 1) 建库 + 关键词 JSONB 往返
+	base, err := st.CreateKnowledgeBase(domain.KnowledgeBase{
+		Name:        "集成测试知识库 " + time.Now().Format("150405.000000"),
+		Description: "集成测试",
+		Enabled:     true,
+		SortOrder:   3,
+	})
+	if err != nil {
+		t.Fatalf("创建知识库失败（ai_knowledge_bases 表缺失时必然失败）：%v", err)
+	}
+	if base.ID == "" || base.CreatedAt.IsZero() {
+		t.Fatalf("知识库字段不完整：%+v", base)
+	}
+
+	entry, err := st.CreateKnowledgeEntry(domain.KnowledgeEntry{
+		BaseID:   base.ID,
+		Title:    "排水沟槽",
+		Content:  "不锈钢排水沟槽支持定制长度与颜色。",
+		Keywords: []string{"排水沟槽", "不锈钢"},
+		Category: "产品",
+		Priority: 7,
+		Enabled:  true,
+	})
+	if err != nil {
+		t.Fatalf("创建知识条目失败（ai_knowledge_entries 表缺失时必然失败）：%v", err)
+	}
+	if len(entry.Keywords) != 2 || entry.Keywords[1] != "不锈钢" {
+		t.Fatalf("keywords JSONB 往返失败：%#v", entry.Keywords)
+	}
+	if entry.Priority != 7 {
+		t.Fatalf("priority = %d, want 7", entry.Priority)
+	}
+
+	// 2) 列表/过滤/候选
+	listed := st.KnowledgeEntries(base.ID, "排水", 0, 0)
+	if len(listed) != 1 || listed[0].ID != entry.ID {
+		t.Fatalf("条目列表不符：%#v", listed)
+	}
+	candidates := st.KnowledgeEntriesForBases([]string{base.ID})
+	if len(candidates) != 1 || candidates[0].ID != entry.ID {
+		t.Fatalf("限定库的候选集不符：%#v", candidates)
+	}
+	if got := st.KnowledgeEntriesForBases([]string{"kb_missing"}); len(got) != 0 {
+		t.Fatalf("不存在的库不应返回候选：%#v", got)
+	}
+
+	// 3) 检索配置单例：默认值 -> 更新 -> 读回
+	defaults := st.KnowledgeSettings()
+	if !defaults.Enabled || defaults.MaxEntries <= 0 {
+		t.Fatalf("默认检索配置不符：%+v", defaults)
+	}
+	updatedSettings, err := st.UpdateKnowledgeSettings(domain.KnowledgeSettings{
+		UnknownAction:  domain.KnowledgeUnknownRefuse,
+		RefuseReply:    "抱歉，我暂时无法回答。",
+		ScoreThreshold: 0.5,
+		MaxEntries:     5,
+		Enabled:        true,
+	})
+	if err != nil {
+		t.Fatalf("写入检索配置失败（ai_knowledge_settings 表缺失时必然失败）：%v", err)
+	}
+	if updatedSettings.UnknownAction != domain.KnowledgeUnknownRefuse || updatedSettings.ScoreThreshold != 0.5 || updatedSettings.MaxEntries != 5 {
+		t.Fatalf("检索配置读回不符：%+v", updatedSettings)
+	}
+	if updatedSettings.UpdatedAt == nil {
+		t.Fatal("检索配置 updated_at 未写入")
+	}
+	if again := st.KnowledgeSettings(); again.RefuseReply != "抱歉，我暂时无法回答。" {
+		t.Fatalf("检索配置未持久化：%+v", again)
+	}
+
+	// 4) 消息 knowledge_entry_ids JSONB 往返
+	if _, err := st.UpdateAISettings(domain.AISettings{Enabled: true, Mode: domain.AIModeAlwaysAI}); err != nil {
+		t.Fatalf("切换 AI 模式失败：%v", err)
+	}
+	session, err := st.CreateVisitorConversation("203.0.113.11", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建访客会话失败：%v", err)
+	}
+	conversationID := session.Conversation.ID
+	msg, _, err := st.AddAIMessageWithKnowledge(conversationID, "依据资料回答", nil, []string{entry.ID, "ke_other"})
+	if err != nil {
+		t.Fatalf("写入带回答依据的 AI 消息失败（knowledge_entry_ids 列缺失时必然失败）：%v", err)
+	}
+	if len(msg.KnowledgeEntryIDs) != 2 {
+		t.Fatalf("回答依据未正确写入：%#v", msg.KnowledgeEntryIDs)
+	}
+	messages := st.Messages(conversationID)
+	if len(messages) == 0 {
+		t.Fatal("消息列表为空")
+	}
+	last := messages[len(messages)-1]
+	if len(last.KnowledgeEntryIDs) != 2 || last.KnowledgeEntryIDs[0] != entry.ID || last.KnowledgeEntryIDs[1] != "ke_other" {
+		t.Fatalf("knowledge_entry_ids JSONB 往返失败：%#v", last.KnowledgeEntryIDs)
+	}
+	// 分页读取路径（同一 messageColumns 列序）也必须匹配。
+	page := st.PagedMessages(conversationID, 10, "")
+	if len(page.Messages) == 0 || len(page.Messages[len(page.Messages)-1].KnowledgeEntryIDs) != 2 {
+		t.Fatalf("分页消息的回答依据丢失：%#v", page.Messages)
+	}
+
+	// 5) 删除知识库级联删除条目
+	if _, err := st.DeleteKnowledgeBase(base.ID); err != nil {
+		t.Fatalf("删除知识库失败：%v", err)
+	}
+	if _, ok := st.KnowledgeEntry(entry.ID); ok {
+		t.Fatal("删除知识库后条目应被级联删除")
+	}
+	if _, err := st.DeleteKnowledgeBase(base.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("重复删除知识库应返回 ErrNotFound，实际 %v", err)
+	}
+
+	if err := st.DeleteConversation(domain.AuthSession{Kind: domain.AccountAdmin, AccountID: "admin_it"}, conversationID); err != nil {
+		t.Logf("清理测试会话失败（不影响结论）：%v", err)
+	}
+}
+
 // TestPostgresAIProvidersAndBindings 是 AI 多供应商与能力绑定的真实 PostgreSQL 集成测试：
 // 验证 ensureCoreTables 能建表、默认值/加密密钥/掩码正确、绑定可读写，
 // 以及删除供应商后绑定引用被清理。

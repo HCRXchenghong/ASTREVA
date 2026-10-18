@@ -380,6 +380,117 @@ func isSafePublicURL(value string) bool {
 	return (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
 }
 
+const (
+	maxKnowledgeBaseNameRunes    = 100
+	maxKnowledgeDescriptionRunes = 500
+	maxKnowledgeTitleRunes       = 200
+	maxKnowledgeContentRunes     = 20000
+	maxKnowledgeCategoryRunes    = 100
+	maxKnowledgeKeywords         = 50
+	maxKnowledgeKeywordRunes     = 100
+	maxKnowledgeBaseIDRunes      = 64
+)
+
+// normalizeKnowledgeBase 归一化并校验知识库。
+func normalizeKnowledgeBase(next domain.KnowledgeBase) (domain.KnowledgeBase, error) {
+	name, err := cleanRequiredText(next.Name, maxKnowledgeBaseNameRunes)
+	if err != nil {
+		return domain.KnowledgeBase{}, err
+	}
+	description, err := cleanOptionalText(next.Description, maxKnowledgeDescriptionRunes)
+	if err != nil {
+		return domain.KnowledgeBase{}, err
+	}
+	if next.SortOrder < -10000 || next.SortOrder > 10000 {
+		return domain.KnowledgeBase{}, ErrInvalidInput
+	}
+	next.Name = name
+	next.Description = description
+	return next, nil
+}
+
+// normalizeKnowledgeEntry 归一化并校验知识条目：关键词去空去重、正文必填。
+func normalizeKnowledgeEntry(next domain.KnowledgeEntry) (domain.KnowledgeEntry, error) {
+	baseID, err := cleanRequiredText(next.BaseID, maxKnowledgeBaseIDRunes)
+	if err != nil {
+		return domain.KnowledgeEntry{}, err
+	}
+	next.BaseID = baseID
+	title, err := cleanOptionalText(next.Title, maxKnowledgeTitleRunes)
+	if err != nil {
+		return domain.KnowledgeEntry{}, err
+	}
+	next.Title = title
+	content, err := cleanRequiredText(next.Content, maxKnowledgeContentRunes)
+	if err != nil {
+		return domain.KnowledgeEntry{}, err
+	}
+	next.Content = content
+	category, err := cleanOptionalText(next.Category, maxKnowledgeCategoryRunes)
+	if err != nil {
+		return domain.KnowledgeEntry{}, err
+	}
+	next.Category = category
+	keywords := make([]string, 0, len(next.Keywords))
+	seen := map[string]bool{}
+	for _, keyword := range next.Keywords {
+		keyword = strings.TrimSpace(keyword)
+		if keyword == "" || seen[keyword] {
+			continue
+		}
+		if runeLen(keyword) > maxKnowledgeKeywordRunes {
+			return domain.KnowledgeEntry{}, ErrInvalidInput
+		}
+		seen[keyword] = true
+		keywords = append(keywords, keyword)
+		if len(keywords) > maxKnowledgeKeywords {
+			return domain.KnowledgeEntry{}, ErrInvalidInput
+		}
+	}
+	next.Keywords = keywords
+	if next.Priority < -1000 || next.Priority > 1000 {
+		return domain.KnowledgeEntry{}, ErrInvalidInput
+	}
+	return next, nil
+}
+
+// normalizeKnowledgeSettings 归一化并校验知识库配置：显式非法取值一律拒绝，不静默改写。
+func normalizeKnowledgeSettings(next domain.KnowledgeSettings) (domain.KnowledgeSettings, error) {
+	raw := strings.TrimSpace(next.UnknownAction)
+	if raw != "" && !domain.ValidKnowledgeUnknownAction(raw) {
+		return domain.KnowledgeSettings{}, ErrInvalidInput
+	}
+	if next.ScoreThreshold < 0 || next.ScoreThreshold > 1 {
+		return domain.KnowledgeSettings{}, ErrInvalidInput
+	}
+	if next.MaxEntries < 0 || next.MaxEntries > 20 {
+		return domain.KnowledgeSettings{}, ErrInvalidInput
+	}
+	out := domain.NormalizeKnowledgeSettings(next)
+	if _, err := cleanOptionalText(out.RefuseReply, maxKeywordReplyRunes); err != nil {
+		return domain.KnowledgeSettings{}, err
+	}
+	return out, nil
+}
+
+// cleanKnowledgeBaseIDs 清洗客服限定的知识库 ID 列表：去空、去重、限长。
+func cleanKnowledgeBaseIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
 func runeLen(value string) int {
 	return utf8.RuneCountInString(value)
 }

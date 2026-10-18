@@ -13,6 +13,7 @@ import (
 
 	"customer-service/backend/internal/ai"
 	"customer-service/backend/internal/domain"
+	"customer-service/backend/internal/knowledge"
 	"customer-service/backend/internal/notify"
 	"customer-service/backend/internal/realtime"
 	"customer-service/backend/internal/store"
@@ -406,16 +407,43 @@ func (s *Service) generateAIReply(conversationID, currentMsgID, userText string,
 	visitorLang = ai.NormalizeLang(visitorLang, ai.LangZh)
 	// 仅读取本会话的历史消息作为上下文，按 conversationID 隔离，绝不跨会话共享。
 	history := s.conversationAITurns(conversationID, currentMsgID, visitorLang)
-	// cacheKey 用会话 ID：同一会话的多轮请求共享同一缓存前缀，跨会话天然隔离。
+	// 知识库检索：只有存在启用中的知识库时才进入"只依据资料回答"模式；
+	// 未配置任何知识库时，下面的分支与改造前完全一致（AI 自由回答）。
+	search := s.searchKnowledge(userText, nil)
 	var reply string
-	if settingsErr == nil {
+	var knowledgeEntryIDs []string
+	handoffRequested := false
+	switch {
+	case search.Active && len(search.Hits) == 0:
+		// 库外问题：不调用 AI 自由作答，按配置拒答或静默转人工。
+		current, ok := s.store.Conversation(conversationID)
+		if !ok || current.Status == domain.ConversationAssigned || current.Status == domain.ConversationClosed {
+			// 人工已实际接管或会话已结束：AI 静默撤出，不产生任何消息。
+			s.stopAITyping(conversationID)
+			return
+		}
+		reply = knowledgeRefuseText(search.Settings)
+		if search.Settings.UnknownAction == domain.KnowledgeUnknownHandoff {
+			if _, err := s.store.RequestHumanHandoff(conversationID); err != nil {
+				s.logger.Warn("知识库未命中转人工失败", "conversation_id", conversationID, "error", err)
+			} else {
+				handoffRequested = true
+			}
+		}
+	case settingsErr == nil:
+		if len(search.Hits) > 0 {
+			// 命中知识：把资料注入 system prompt，并要求只依据资料回答。
+			settings.SystemPrompt = knowledge.BuildKnowledgePrompt(settings.SystemPrompt, search.Hits, search.ByID)
+			knowledgeEntryIDs = knowledgeHitIDs(search.Hits)
+		}
+		// cacheKey 用会话 ID：同一会话的多轮请求共享同一缓存前缀，跨会话天然隔离。
 		generated, err := s.ai.Reply(ctx, settings, s.store.ContactSettings(), history, userText, visitorLang, conversationID)
 		if err != nil {
 			s.logger.Warn("AI reply failed", "conversation_id", conversationID, "error", err)
 			generated = aiBusyText(visitorLang)
 		}
 		reply = generated
-	} else {
+	default:
 		reply = aiBusyText(visitorLang)
 	}
 	translations := map[string]string{}
@@ -429,7 +457,7 @@ func (s *Service) generateAIReply(conversationID, currentMsgID, userText string,
 			translations[ai.LangZh] = zhText
 		}
 	}
-	msg, conversation, err := s.store.AddAIMessage(conversationID, reply, translations)
+	msg, conversation, err := s.store.AddAIMessageWithKnowledge(conversationID, reply, translations, knowledgeEntryIDs)
 	if err != nil {
 		// 无论静默撤出还是保存失败，都要关掉访客端的"AI 正在回复"指示。
 		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.typing", Data: map[string]any{"sender_type": "ai", "typing": false}})
@@ -446,6 +474,10 @@ func (s *Service) generateAIReply(conversationID, currentMsgID, userText string,
 	}
 	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: conversation})
+	if handoffRequested {
+		// 知识库未命中转人工：复用与关键词转人工一致的推送/通知行为。
+		s.notifyAgent(conversation)
+	}
 }
 
 // conversationAITurns 构造传给 AI 的当前会话历史上下文。

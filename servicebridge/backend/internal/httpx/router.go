@@ -26,6 +26,7 @@ import (
 	"customer-service/backend/internal/app"
 	"customer-service/backend/internal/config"
 	"customer-service/backend/internal/domain"
+	"customer-service/backend/internal/knowledge"
 	"customer-service/backend/internal/notify"
 	"customer-service/backend/internal/openapi"
 	"customer-service/backend/internal/store"
@@ -361,11 +362,13 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		}
 		// 指针字段表示"本次是否提供"：未提供的字段保持原值。
 		var req struct {
-			AutoTranslateIncoming *bool   `json:"auto_translate_incoming"`
-			AutoTranslateOutgoing *bool   `json:"auto_translate_outgoing"`
-			ReviewTranslation     *bool   `json:"review_translation_before_send"`
-			DialectMode           *string `json:"translation_dialect_mode"`
-			AISuggestReplies      *bool   `json:"ai_suggest_replies"`
+			AutoTranslateIncoming   *bool     `json:"auto_translate_incoming"`
+			AutoTranslateOutgoing   *bool     `json:"auto_translate_outgoing"`
+			ReviewTranslation       *bool     `json:"review_translation_before_send"`
+			DialectMode             *string   `json:"translation_dialect_mode"`
+			AISuggestReplies        *bool     `json:"ai_suggest_replies"`
+			KnowledgeSuggestEnabled *bool     `json:"knowledge_suggest_enabled"`
+			KnowledgeBaseIDs        *[]string `json:"knowledge_base_ids"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -388,6 +391,17 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		if req.AISuggestReplies != nil {
 			next.AISuggestReplies = req.AISuggestReplies
 		}
+		if req.KnowledgeSuggestEnabled != nil {
+			next.KnowledgeSuggestEnabled = req.KnowledgeSuggestEnabled
+		}
+		if req.KnowledgeBaseIDs != nil {
+			baseIDs, err := resolveAgentKnowledgeBaseIDs(service, *req.KnowledgeBaseIDs)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			next.KnowledgeBaseIDs = baseIDs
+		}
 		if req.DialectMode != nil {
 			if !domain.ValidDialectMode(*req.DialectMode) {
 				writeError(w, fmt.Errorf("%w: translation_dialect_mode 只允许 standard 或 dialect", store.ErrInvalidInput))
@@ -401,6 +415,38 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"preferences": updated.WithDefaults()})
+	})
+
+	// 知识库辅助推荐发送：只生成 1-3 条候选回复，绝不落库任何消息，AI 不直接发送。
+	mux.HandleFunc("POST /api/agent/suggest-reply", func(w http.ResponseWriter, r *http.Request) {
+		session, err := service.AuthFromRequest(r)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if session.Kind != domain.AccountAgent {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req struct {
+			ConversationID string `json:"conversation_id"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		result, err := service.SuggestReply(r.Context(), session.AccountID, req.ConversationID)
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrInvalidInput), errors.Is(err, store.ErrForbidden):
+				writeError(w, err)
+			case errors.Is(err, app.ErrAIProviderHostNotAllowed):
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "ai_provider_host_not_allowed", "message": err.Error()})
+			default:
+				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "suggest_reply_failed", "message": err.Error()})
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	})
 
 	// 发送前译文预览：只翻译，不创建任何消息。
@@ -1472,6 +1518,341 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		writeJSON(w, http.StatusOK, map[string]any{"bindings": aiBindingList(service.Store().AIBindings())})
 	})
 
+	// ===== AI 知识库（后台管理）=====
+	mux.HandleFunc("GET /api/admin/knowledge/bases", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		bases := service.Store().KnowledgeBases()
+		if bases == nil {
+			bases = []domain.KnowledgeBase{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"bases": bases})
+	})
+
+	mux.HandleFunc("POST /api/admin/knowledge/bases", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req knowledgeBaseCreateRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		enabled := true
+		if req.Enabled != nil {
+			enabled = *req.Enabled
+		}
+		base, err := service.Store().CreateKnowledgeBase(domain.KnowledgeBase{
+			Name:        req.Name,
+			Description: req.Description,
+			Enabled:     enabled,
+			SortOrder:   req.SortOrder,
+		})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "knowledge_base.create", "knowledge_base", base.ID, "新增知识库 "+base.Name)
+		writeJSON(w, http.StatusCreated, map[string]any{"base": base})
+	})
+
+	mux.HandleFunc("PATCH /api/admin/knowledge/bases/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req knowledgeBasePatchRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		id := r.PathValue("id")
+		current, ok := service.Store().KnowledgeBase(id)
+		if !ok {
+			writeError(w, store.ErrNotFound)
+			return
+		}
+		next := current
+		if req.Name != nil {
+			next.Name = *req.Name
+		}
+		if req.Description != nil {
+			next.Description = *req.Description
+		}
+		if req.Enabled != nil {
+			next.Enabled = *req.Enabled
+		}
+		if req.SortOrder != nil {
+			next.SortOrder = *req.SortOrder
+		}
+		updated, err := service.Store().UpdateKnowledgeBase(id, next)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "knowledge_base.update", "knowledge_base", updated.ID, "更新知识库 "+updated.Name)
+		writeJSON(w, http.StatusOK, map[string]any{"base": updated})
+	})
+
+	mux.HandleFunc("DELETE /api/admin/knowledge/bases/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		id := r.PathValue("id")
+		deleted, err := service.Store().DeleteKnowledgeBase(id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "knowledge_base.delete", "knowledge_base", id, "删除知识库 "+deleted.Name)
+		writeJSON(w, http.StatusOK, map[string]any{"base": deleted})
+	})
+
+	mux.HandleFunc("GET /api/admin/knowledge/entries", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
+		offset, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("offset")))
+		entries := service.Store().KnowledgeEntries(
+			r.URL.Query().Get("base_id"),
+			r.URL.Query().Get("q"),
+			limit,
+			offset,
+		)
+		if entries == nil {
+			entries = []domain.KnowledgeEntry{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+	})
+
+	mux.HandleFunc("POST /api/admin/knowledge/entries", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req knowledgeEntryCreateRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		enabled := true
+		if req.Enabled != nil {
+			enabled = *req.Enabled
+		}
+		entry, err := service.Store().CreateKnowledgeEntry(domain.KnowledgeEntry{
+			BaseID:   req.BaseID,
+			Title:    req.Title,
+			Content:  req.Content,
+			Keywords: req.Keywords,
+			Category: req.Category,
+			Priority: req.Priority,
+			Enabled:  enabled,
+		})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "knowledge_entry.create", "knowledge_entry", entry.ID, "新增知识条目")
+		writeJSON(w, http.StatusCreated, map[string]any{"entry": entry})
+	})
+
+	mux.HandleFunc("PATCH /api/admin/knowledge/entries/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req knowledgeEntryPatchRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		id := r.PathValue("id")
+		current, ok := service.Store().KnowledgeEntry(id)
+		if !ok {
+			writeError(w, store.ErrNotFound)
+			return
+		}
+		next := current
+		if req.BaseID != nil {
+			next.BaseID = *req.BaseID
+		}
+		if req.Title != nil {
+			next.Title = *req.Title
+		}
+		if req.Content != nil {
+			next.Content = *req.Content
+		}
+		if req.Keywords != nil {
+			next.Keywords = *req.Keywords
+		}
+		if req.Category != nil {
+			next.Category = *req.Category
+		}
+		if req.Priority != nil {
+			next.Priority = *req.Priority
+		}
+		if req.Enabled != nil {
+			next.Enabled = *req.Enabled
+		}
+		updated, err := service.Store().UpdateKnowledgeEntry(id, next)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "knowledge_entry.update", "knowledge_entry", updated.ID, "更新知识条目")
+		writeJSON(w, http.StatusOK, map[string]any{"entry": updated})
+	})
+
+	mux.HandleFunc("DELETE /api/admin/knowledge/entries/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		id := r.PathValue("id")
+		deleted, err := service.Store().DeleteKnowledgeEntry(id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "knowledge_entry.delete", "knowledge_entry", id, "删除知识条目")
+		writeJSON(w, http.StatusOK, map[string]any{"entry": deleted})
+	})
+
+	// 后台检索预览：返回排序后的命中与分数，不做阈值过滤，便于管理员对照阈值调参。
+	mux.HandleFunc("POST /api/admin/knowledge/search", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req knowledgeSearchRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		query := strings.TrimSpace(req.Query)
+		if query == "" {
+			writeError(w, fmt.Errorf("%w: query 不能为空", store.ErrInvalidInput))
+			return
+		}
+		limit := req.Limit
+		if limit <= 0 {
+			limit = service.Store().KnowledgeSettings().MaxEntries
+		}
+		if limit > 20 {
+			limit = 20
+		}
+		entries := service.Store().KnowledgeEntriesForBases(req.BaseIDs)
+		hits := knowledge.RankKnowledgeEntries(query, entries, limit)
+		if hits == nil {
+			hits = []domain.KnowledgeHit{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"hits": hits})
+	})
+
+	// 批量导入知识条目：base_id 必须存在；单次最多 1000 条。
+	mux.HandleFunc("POST /api/admin/knowledge/import", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req knowledgeImportRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		baseID := strings.TrimSpace(req.BaseID)
+		if baseID == "" || len(req.Entries) == 0 {
+			writeError(w, fmt.Errorf("%w: base_id 与 entries 不能为空", store.ErrInvalidInput))
+			return
+		}
+		if len(req.Entries) > 1000 {
+			writeError(w, fmt.Errorf("%w: 单次最多导入 1000 条", store.ErrInvalidInput))
+			return
+		}
+		if _, ok := service.Store().KnowledgeBase(baseID); !ok {
+			writeError(w, store.ErrNotFound)
+			return
+		}
+		imported := 0
+		for _, item := range req.Entries {
+			entry, err := service.Store().CreateKnowledgeEntry(domain.KnowledgeEntry{
+				BaseID:   baseID,
+				Title:    item.Title,
+				Content:  item.Content,
+				Keywords: item.Keywords,
+				Category: item.Category,
+				Priority: item.Priority,
+				Enabled:  true,
+			})
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error":    "invalid_input",
+					"message":  err.Error(),
+					"imported": imported,
+				})
+				return
+			}
+			_ = entry
+			imported++
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "knowledge_entry.import", "knowledge_base", baseID, "批量导入知识条目")
+		writeJSON(w, http.StatusOK, map[string]any{"imported": imported})
+	})
+
+	mux.HandleFunc("GET /api/admin/knowledge/settings", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		writeJSON(w, http.StatusOK, service.Store().KnowledgeSettings())
+	})
+
+	mux.HandleFunc("PATCH /api/admin/knowledge/settings", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req knowledgeSettingsPatchRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		next := service.Store().KnowledgeSettings()
+		if req.UnknownAction != nil {
+			if !domain.ValidKnowledgeUnknownAction(*req.UnknownAction) {
+				writeError(w, fmt.Errorf("%w: unknown_action 只允许 refuse 或 handoff", store.ErrInvalidInput))
+				return
+			}
+			next.UnknownAction = domain.NormalizeKnowledgeUnknownAction(*req.UnknownAction)
+		}
+		if req.RefuseReply != nil {
+			next.RefuseReply = *req.RefuseReply
+		}
+		if req.ScoreThreshold != nil {
+			if *req.ScoreThreshold < 0 || *req.ScoreThreshold > 1 {
+				writeError(w, fmt.Errorf("%w: score_threshold 必须在 0 与 1 之间", store.ErrInvalidInput))
+				return
+			}
+			next.ScoreThreshold = *req.ScoreThreshold
+		}
+		if req.MaxEntries != nil {
+			if *req.MaxEntries < 0 || *req.MaxEntries > 20 {
+				writeError(w, fmt.Errorf("%w: max_entries 必须在 0 与 20 之间", store.ErrInvalidInput))
+				return
+			}
+			next.MaxEntries = *req.MaxEntries
+		}
+		if req.Enabled != nil {
+			next.Enabled = *req.Enabled
+		}
+		updated, err := service.Store().UpdateKnowledgeSettings(next)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "knowledge_settings.update", "knowledge_settings", "1", "更新知识库检索配置")
+		writeJSON(w, http.StatusOK, updated)
+	})
+
 	// 管理员查看/重置某客服的偏好，复用客服自助接口的存储方法。
 	mux.HandleFunc("GET /api/admin/agents/{id}/preferences", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(service, r) {
@@ -1513,6 +1894,17 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		}
 		if req.AISuggestReplies != nil {
 			next.AISuggestReplies = req.AISuggestReplies
+		}
+		if req.KnowledgeSuggestEnabled != nil {
+			next.KnowledgeSuggestEnabled = req.KnowledgeSuggestEnabled
+		}
+		if req.KnowledgeBaseIDs != nil {
+			baseIDs, err := resolveAgentKnowledgeBaseIDs(service, *req.KnowledgeBaseIDs)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			next.KnowledgeBaseIDs = baseIDs
 		}
 		if req.DialectMode != nil {
 			if !domain.ValidDialectMode(*req.DialectMode) {
@@ -1820,11 +2212,97 @@ type aiSettingsRequest struct {
 
 // agentPreferencesPatchRequest 是管理员重置客服偏好的局部更新请求。
 type agentPreferencesPatchRequest struct {
-	AutoTranslateIncoming *bool   `json:"auto_translate_incoming"`
-	AutoTranslateOutgoing *bool   `json:"auto_translate_outgoing"`
-	ReviewTranslation     *bool   `json:"review_translation_before_send"`
-	DialectMode           *string `json:"translation_dialect_mode"`
-	AISuggestReplies      *bool   `json:"ai_suggest_replies"`
+	AutoTranslateIncoming   *bool     `json:"auto_translate_incoming"`
+	AutoTranslateOutgoing   *bool     `json:"auto_translate_outgoing"`
+	ReviewTranslation       *bool     `json:"review_translation_before_send"`
+	DialectMode             *string   `json:"translation_dialect_mode"`
+	AISuggestReplies        *bool     `json:"ai_suggest_replies"`
+	KnowledgeSuggestEnabled *bool     `json:"knowledge_suggest_enabled"`
+	KnowledgeBaseIDs        *[]string `json:"knowledge_base_ids"`
+}
+
+// knowledgeBaseCreateRequest 是新建知识库请求；enabled 省略时默认 true。
+type knowledgeBaseCreateRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Enabled     *bool  `json:"enabled"`
+	SortOrder   int    `json:"sort_order"`
+}
+
+// knowledgeBasePatchRequest 是知识库局部更新请求。
+type knowledgeBasePatchRequest struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Enabled     *bool   `json:"enabled"`
+	SortOrder   *int    `json:"sort_order"`
+}
+
+// knowledgeEntryCreateRequest 是新建知识条目请求；enabled 省略时默认 true。
+type knowledgeEntryCreateRequest struct {
+	BaseID   string   `json:"base_id"`
+	Title    string   `json:"title"`
+	Content  string   `json:"content"`
+	Keywords []string `json:"keywords"`
+	Category string   `json:"category"`
+	Priority int      `json:"priority"`
+	Enabled  *bool    `json:"enabled"`
+}
+
+// knowledgeEntryPatchRequest 是知识条目局部更新请求。
+type knowledgeEntryPatchRequest struct {
+	BaseID   *string   `json:"base_id"`
+	Title    *string   `json:"title"`
+	Content  *string   `json:"content"`
+	Keywords *[]string `json:"keywords"`
+	Category *string   `json:"category"`
+	Priority *int      `json:"priority"`
+	Enabled  *bool     `json:"enabled"`
+}
+
+// knowledgeSearchRequest 是后台检索预览请求。
+type knowledgeSearchRequest struct {
+	Query   string   `json:"query"`
+	BaseIDs []string `json:"base_ids"`
+	Limit   int      `json:"limit"`
+}
+
+// knowledgeImportRequest 是批量导入请求。
+type knowledgeImportRequest struct {
+	BaseID  string `json:"base_id"`
+	Entries []struct {
+		Title    string   `json:"title"`
+		Content  string   `json:"content"`
+		Keywords []string `json:"keywords"`
+		Category string   `json:"category"`
+		Priority int      `json:"priority"`
+	} `json:"entries"`
+}
+
+// knowledgeSettingsPatchRequest 是知识库检索配置局部更新请求。
+type knowledgeSettingsPatchRequest struct {
+	UnknownAction  *string  `json:"unknown_action"`
+	RefuseReply    *string  `json:"refuse_reply"`
+	ScoreThreshold *float64 `json:"score_threshold"`
+	MaxEntries     *int     `json:"max_entries"`
+	Enabled        *bool    `json:"enabled"`
+}
+
+// resolveAgentKnowledgeBaseIDs 清洗并校验客服限定的知识库 ID：去空去重，且必须真实存在。
+func resolveAgentKnowledgeBaseIDs(service *app.Service, ids []string) ([]string, error) {
+	out := make([]string, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		if _, ok := service.Store().KnowledgeBase(id); !ok {
+			return nil, fmt.Errorf("%w: 知识库 %s 不存在", store.ErrInvalidInput, id)
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out, nil
 }
 
 // handleAIProviderSecret 实现服务间解密配置读取接口：

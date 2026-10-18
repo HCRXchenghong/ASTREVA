@@ -36,6 +36,8 @@ func VisitorFacingMessageForLang(msg domain.Message, lang string) domain.Message
 	}
 	msg.Translations = nil
 	msg.OriginalContent = ""
+	// "回答依据"是客服/后台的内部追溯信息，不下发给访客。
+	msg.KnowledgeEntryIDs = nil
 	return msg
 }
 

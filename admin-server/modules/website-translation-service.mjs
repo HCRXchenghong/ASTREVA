@@ -58,6 +58,12 @@ function maskSecret(value) {
   return `${secret.slice(0, 4)}***${secret.slice(-4)}`;
 }
 
+// 部分调用方只注入了 error 日志，这里做一次安全兜底，避免告警把主流程打断。
+function logWarn(logger, message) {
+  if (logger && typeof logger.warn === 'function') logger.warn(message);
+  else console.warn(message);
+}
+
 function apiEndpoint(baseUrl, suffix) {
   const clean = cleanUrl(baseUrl)
     .replace(/\/(chat\/completions|responses|messages|models)$/i, '')
@@ -192,12 +198,42 @@ function promptFor(locale, entries) {
   ].join('\n');
 }
 
-export function createWebsiteTranslationService({ platformStore, fetchImpl = fetch, logger = console }) {
+export function createWebsiteTranslationService({ platformStore, fetchImpl = fetch, logger = console, resolveProvider = null }) {
   let stored = null;
   const queued = new Map();
   const latestRevision = new Map();
   const progressByLocale = new Map();
   let draining = false;
+
+  /**
+   * 解析控制台里的能力绑定。命中时只覆盖上游 baseUrl/apiType/model/apiKey，
+   * 批量大小、超时、语言对、提示词等本地业务参数保持不变；解析为 null 时完全走原逻辑。
+   */
+  async function effectiveUpstream(capability, config, apiKey) {
+    if (typeof resolveProvider !== 'function') return { config, apiKey };
+    let provider = null;
+    try {
+      provider = await resolveProvider(capability);
+    } catch (error) {
+      logWarn(logger, `[AI 供应商] 解析 ${capability} 能力失败，沿用本地配置：${error?.message || error}`);
+      return { config, apiKey };
+    }
+    if (!provider) return { config, apiKey };
+    // 防御性检查：翻译/SEO 只接受文本协议，且地址与密钥必须完整。
+    if (!provider.baseUrl || !provider.apiKey || !API_TYPES.has(provider.apiType)) {
+      logWarn(logger, `[AI 供应商] ${capability} 能力绑定配置不完整或协议不受支持，沿用本地配置。`);
+      return { config, apiKey };
+    }
+    return {
+      config: {
+        ...config,
+        baseUrl: provider.baseUrl,
+        apiType: provider.apiType,
+        model: provider.model || config.model
+      },
+      apiKey: provider.apiKey
+    };
+  }
 
   async function loadSetting() {
     if (stored) return stored;
@@ -283,9 +319,15 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
 
   async function generateJson(prompt, options = {}) {
     const current = await loadSetting();
-    const config = current.config;
-    const apiKey = String(current.secrets?.apiKey || '');
-    if (!config.enabled) throw Object.assign(new Error('网站 AI 已停用，请先在网站翻译设置中启用。'), { code: 'AI_UNCONFIGURED' });
+    if (!current.config.enabled) throw Object.assign(new Error('网站 AI 已停用，请先在网站翻译设置中启用。'), { code: 'AI_UNCONFIGURED' });
+    // AI SEO 传入 capability=seo，只有真正走 SEO 生成时才解析 seo 绑定。
+    const upstream = await effectiveUpstream(
+      String(options.capability || 'translation'),
+      current.config,
+      String(current.secrets?.apiKey || '')
+    );
+    const config = upstream.config;
+    const apiKey = upstream.apiKey;
     if (!apiKey || !config.model) {
       throw Object.assign(new Error('网站 AI 未完整配置：请先在网站翻译设置中保存 API Key 和模型。'), { code: 'AI_UNCONFIGURED' });
     }
@@ -325,9 +367,11 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
 
   async function translate(locale, content, sourceRevision) {
     const current = await loadSetting();
-    const config = current.config;
-    const apiKey = String(current.secrets?.apiKey || '');
-    if (!config.enabled) throw Object.assign(new Error('自动翻译已停用。'), { code: 'TRANSLATION_UNCONFIGURED' });
+    if (!current.config.enabled) throw Object.assign(new Error('自动翻译已停用。'), { code: 'TRANSLATION_UNCONFIGURED' });
+    // 控制台已把翻译能力绑定到供应商时，使用该上游（含协议/模型/密钥）；否则完全沿用本地配置。
+    const upstream = await effectiveUpstream('translation', current.config, String(current.secrets?.apiKey || ''));
+    const config = upstream.config;
+    const apiKey = upstream.apiKey;
     if (!apiKey || !config.model) throw Object.assign(new Error('翻译上游未完整配置：需要 API Key 和模型。'), { code: 'TRANSLATION_UNCONFIGURED' });
     const entries = collectTranslatableEntries(content);
     const total = entries.length;

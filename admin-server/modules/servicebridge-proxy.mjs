@@ -1,5 +1,5 @@
 /** 客服引擎的服务端代理：浏览器不会接触客服管理员口令。 */
-export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, publicOrigin, bodyRaw, bodyJson, json, send, verifySession }) {
+export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, publicOrigin, bodyRaw, bodyJson, json, send, verifySession, onConfigChange = null }) {
   let adminSession = { token: '', expiresAt: 0 };
 
   function isAllowedPath(pathname) {
@@ -10,12 +10,18 @@ export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, 
       /^\/api\/conversations\/[^/]+\/(messages|read|remark|close)(?:\/[^/]+\/revoke)?$/.test(pathname);
   }
 
-  async function adminToken(forceRefresh = false) {
+  // 控制台保存 AI 供应商/能力绑定后，立即让 admin-server 的供应商缓存失效。
+  function isAiConfigPath(pathname) {
+    return /^\/api\/admin\/ai-(?:providers|bindings)(?:\/|$)/.test(pathname);
+  }
+
+  async function adminToken(forceRefresh = false, signal = undefined) {
     if (!forceRefresh && adminSession.token && adminSession.expiresAt > Date.now()) return adminSession.token;
     const response = await fetch(`${apiUrl}/api/admin/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ account: adminAccount, password: adminPassword })
+      body: JSON.stringify({ account: adminAccount, password: adminPassword }),
+      signal
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.token) {
@@ -32,7 +38,7 @@ export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, 
     const call = async (forceRefresh = false) => fetch(`${apiUrl}${targetPath}${query}`, {
       method,
       headers: {
-        Authorization: `Bearer ${await adminToken(forceRefresh)}`,
+        Authorization: `Bearer ${await adminToken(forceRefresh, options.signal)}`,
         ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(options.headers || {})
       },
@@ -90,6 +96,11 @@ export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, 
         'Cache-Control': 'no-store'
       };
       if (response.headers.get('content-disposition')) headers['Content-Disposition'] = response.headers.get('content-disposition');
+      // 控制台保存 AI 供应商/绑定成功后立即失效 admin-server 的供应商缓存；
+      // 回调失败只影响缓存时效，绝不能影响控制台响应。
+      if (response.ok && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method || '') && isAiConfigPath(targetPath)) {
+        try { await onConfigChange?.(targetPath); } catch {}
+      }
       send(res, response.status, body, headers);
     } catch (error) {
       json(res, 503, { error: { message: `客服引擎不可用：${error.message}` } });

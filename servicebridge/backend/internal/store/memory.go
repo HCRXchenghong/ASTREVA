@@ -52,6 +52,10 @@ type MemoryStore struct {
 	aiBindings   map[string]domain.AIBinding
 	business     domain.BusinessHours
 	push         domain.PushSettings
+
+	knowledgeBases    map[string]*domain.KnowledgeBase
+	knowledgeEntries  map[string]*domain.KnowledgeEntry
+	knowledgeSettings domain.KnowledgeSettings
 }
 
 type Options struct {
@@ -69,19 +73,23 @@ type Options struct {
 func NewMemoryStore(options Options) *MemoryStore {
 	now := time.Now().UTC()
 	s := &MemoryStore{
-		adminsByAccount: map[string]*domain.AdminUser{},
-		agentsByAccount: map[string]*domain.Agent{},
-		agentsByID:      map[string]*domain.Agent{},
-		authTokens:      map[string]domain.AuthSession{},
-		visitorTokens:   map[string]domain.AuthSession{},
-		visitors:        map[string]*domain.Visitor{},
-		conversations:   map[string]*domain.Conversation{},
-		messages:        map[string][]domain.Message{},
-		ratings:         map[string]*domain.ServiceRating{},
-		auditEvents:     []domain.AuditEvent{},
-		apiApps:         map[string]*domain.APIApp{},
-		aiProviders:     map[string]*domain.AIProvider{},
-		aiBindings:      map[string]domain.AIBinding{},
+		adminsByAccount:  map[string]*domain.AdminUser{},
+		agentsByAccount:  map[string]*domain.Agent{},
+		agentsByID:       map[string]*domain.Agent{},
+		authTokens:       map[string]domain.AuthSession{},
+		visitorTokens:    map[string]domain.AuthSession{},
+		visitors:         map[string]*domain.Visitor{},
+		conversations:    map[string]*domain.Conversation{},
+		messages:         map[string][]domain.Message{},
+		ratings:          map[string]*domain.ServiceRating{},
+		auditEvents:      []domain.AuditEvent{},
+		apiApps:          map[string]*domain.APIApp{},
+		aiProviders:      map[string]*domain.AIProvider{},
+		aiBindings:       map[string]domain.AIBinding{},
+		knowledgeBases:   map[string]*domain.KnowledgeBase{},
+		knowledgeEntries: map[string]*domain.KnowledgeEntry{},
+		// 知识库默认开启，但没有任何知识库时 AI 行为与未接入知识库时完全一致。
+		knowledgeSettings: domain.DefaultKnowledgeSettings(),
 		contacts: domain.ContactSettings{
 			// 联系方式与欢迎语默认全部为空：真实内容必须由管理员在后台配置，
 			// 与 PostgreSQL 未配置时的行为保持一致。
@@ -1073,6 +1081,11 @@ func (s *MemoryStore) AddVisitorMessage(conversationID, clientMsgID, content str
 }
 
 func (s *MemoryStore) AddAIMessage(conversationID, content string, translations map[string]string) (domain.Message, domain.Conversation, error) {
+	return s.AddAIMessageWithKnowledge(conversationID, content, translations, nil)
+}
+
+// AddAIMessageWithKnowledge 落库一条 AI 消息，并记录本次回答依据的知识条目 ID。
+func (s *MemoryStore) AddAIMessageWithKnowledge(conversationID, content string, translations map[string]string, knowledgeEntryIDs []string) (domain.Message, domain.Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1090,7 +1103,7 @@ func (s *MemoryStore) AddAIMessage(conversationID, content string, translations 
 	if conversation.Status == domain.ConversationWaiting {
 		conversation.Status = domain.ConversationAIServing
 	}
-	msg := s.createMessageLocked(conversationID, "", domain.SenderAI, "ai", domain.MessageAIText, content, translations)
+	msg := s.createMessageWithKnowledgeLocked(conversationID, "", domain.SenderAI, "ai", domain.MessageAIText, content, translations, knowledgeEntryIDs)
 	s.touchConversationLocked(conversation, agentPreviewText(domain.MessageAIText, content, translations), false, msg.CreatedAt)
 	return msg, *conversation, nil
 }
@@ -2023,16 +2036,22 @@ func (s *MemoryStore) selectTransferTargetLocked(agentID, group string) *domain.
 }
 
 func (s *MemoryStore) createMessageLocked(conversationID, clientMsgID string, senderType domain.SenderType, senderID string, messageType domain.MessageType, content string, translations map[string]string) domain.Message {
+	return s.createMessageWithKnowledgeLocked(conversationID, clientMsgID, senderType, senderID, messageType, content, translations, nil)
+}
+
+// createMessageWithKnowledgeLocked 在 createMessageLocked 基础上附带"回答依据"知识条目 ID。
+func (s *MemoryStore) createMessageWithKnowledgeLocked(conversationID, clientMsgID string, senderType domain.SenderType, senderID string, messageType domain.MessageType, content string, translations map[string]string, knowledgeEntryIDs []string) domain.Message {
 	msg := domain.Message{
-		ServerMsgID:    "msg_" + randomID(12),
-		ClientMsgID:    clientMsgID,
-		ConversationID: conversationID,
-		SenderType:     senderType,
-		SenderID:       senderID,
-		MessageType:    messageType,
-		Content:        strings.TrimSpace(content),
-		Translations:   cleanTranslations(translations),
-		CreatedAt:      time.Now().UTC(),
+		ServerMsgID:       "msg_" + randomID(12),
+		ClientMsgID:       clientMsgID,
+		ConversationID:    conversationID,
+		SenderType:        senderType,
+		SenderID:          senderID,
+		MessageType:       messageType,
+		Content:           strings.TrimSpace(content),
+		Translations:      cleanTranslations(translations),
+		KnowledgeEntryIDs: cleanKnowledgeBaseIDs(knowledgeEntryIDs),
+		CreatedAt:         time.Now().UTC(),
 	}
 	s.messages[conversationID] = append(s.messages[conversationID], msg)
 	return msg

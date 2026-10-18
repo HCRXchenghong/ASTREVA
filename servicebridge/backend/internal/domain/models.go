@@ -88,6 +88,10 @@ type AgentPreferences struct {
 	ReviewTranslation     *bool  `json:"review_translation_before_send,omitempty"` // 发送前确认/编辑译文，默认 true
 	DialectMode           string `json:"translation_dialect_mode,omitempty"`       // "standard"（默认）| "dialect"
 	AISuggestReplies      *bool  `json:"ai_suggest_replies,omitempty"`             // AI 推荐发送内容，默认 true
+	// KnowledgeSuggestEnabled 控制客服侧"知识库辅助推荐发送"开关，默认 true。
+	KnowledgeSuggestEnabled *bool `json:"knowledge_suggest_enabled,omitempty"`
+	// KnowledgeBaseIDs 限定该客服可检索的知识库；为空表示全部启用中的知识库。
+	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty"`
 }
 
 // NormalizeDialectMode 归一化方言模式：空或非法值一律回落到 standard。
@@ -129,6 +133,10 @@ func (p AgentPreferences) WithDefaults() AgentPreferences {
 	if out.AISuggestReplies == nil {
 		value := true
 		out.AISuggestReplies = &value
+	}
+	if out.KnowledgeSuggestEnabled == nil {
+		value := true
+		out.KnowledgeSuggestEnabled = &value
 	}
 	out.DialectMode = NormalizeDialectMode(out.DialectMode)
 	return out
@@ -231,7 +239,10 @@ type Message struct {
 	// TranslationStatus 记录本条消息的翻译状态：pending / done / failed / skipped。
 	TranslationStatus string `json:"translation_status,omitempty"`
 	// HiddenFromVisitor 仅在生成访客视图时使用：该消息不应展示给访客（如仅客服端可见的转接提示）。
-	HiddenFromVisitor bool        `json:"-"`
+	HiddenFromVisitor bool `json:"-"`
+	// KnowledgeEntryIDs 记录这条 AI 回复依据的知识条目 ID，供客服端追溯"回答依据"。
+	// 非知识库回复（含拒答/转人工）为空。
+	KnowledgeEntryIDs []string    `json:"knowledge_entry_ids,omitempty"`
 	CreatedAt         time.Time   `json:"created_at"`
 	RevokedAt         *time.Time  `json:"revoked_at,omitempty"`
 	RevokedByKind     AccountKind `json:"revoked_by_kind,omitempty"`
@@ -430,6 +441,129 @@ type AIBinding struct {
 	Model      string         `json:"model,omitempty"`
 	Params     map[string]any `json:"params,omitempty"`
 	UpdatedAt  time.Time      `json:"updated_at,omitempty"`
+}
+
+// ===== AI 知识库 =====
+
+// 知识库未命中（库外问题）时的处理方式。
+const (
+	KnowledgeUnknownRefuse  = "refuse"  // 直接回复配置的拒答文案
+	KnowledgeUnknownHandoff = "handoff" // 回复拒答文案并静默转人工
+)
+
+// 知识库检索默认参数。
+const (
+	DefaultKnowledgeScoreThreshold = 0.35
+	DefaultKnowledgeMaxEntries     = 3
+)
+
+// DefaultKnowledgeRefuseReply 是未配置拒答文案时使用的中文默认文案。
+// 其它语言由现有翻译链路按访客语言翻译。
+const DefaultKnowledgeRefuseReply = "抱歉，这个问题我暂时没有查到相关资料，已为您转接人工客服跟进。"
+
+// DefaultKnowledgeSettings 返回知识库检索配置的默认值。
+// 默认 handoff：库外问题交给人工，避免 AI 自由编造答案。
+func DefaultKnowledgeSettings() KnowledgeSettings {
+	return KnowledgeSettings{
+		UnknownAction:  KnowledgeUnknownHandoff,
+		RefuseReply:    DefaultKnowledgeRefuseReply,
+		ScoreThreshold: DefaultKnowledgeScoreThreshold,
+		MaxEntries:     DefaultKnowledgeMaxEntries,
+		Enabled:        true,
+	}
+}
+
+// KnowledgeBase 是一个 AI 知识库，可分别启停、排序。
+type KnowledgeBase struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Enabled     bool      `json:"enabled"`
+	SortOrder   int       `json:"sort_order"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// KnowledgeEntry 是知识库中的一条知识。
+type KnowledgeEntry struct {
+	ID        string    `json:"id"`
+	BaseID    string    `json:"base_id"`
+	Title     string    `json:"title"`
+	Content   string    `json:"content"`
+	Keywords  []string  `json:"keywords"`
+	Category  string    `json:"category"`
+	Priority  int       `json:"priority"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// KnowledgeSettings 是知识库检索的全局配置（单例表 ai_knowledge_settings）。
+type KnowledgeSettings struct {
+	// UnknownAction 为库外问题的处理方式：refuse | handoff。
+	UnknownAction string `json:"unknown_action"`
+	// RefuseReply 为拒答/转人工前给访客的文案（默认中文，其它语言走翻译链路）。
+	RefuseReply string `json:"refuse_reply"`
+	// ScoreThreshold 为命中阈值，低于该分数的检索结果视为未命中。
+	ScoreThreshold float64 `json:"score_threshold"`
+	// MaxEntries 为单次注入提示词的最大知识条数。
+	MaxEntries int `json:"max_entries"`
+	// Enabled 为知识库总开关；关闭后 AI 行为与未接入知识库时完全一致。
+	Enabled   bool       `json:"enabled"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// KnowledgeHit 是一条带分数的检索命中结果。
+type KnowledgeHit struct {
+	EntryID string   `json:"entry_id"`
+	BaseID  string   `json:"base_id"`
+	Title   string   `json:"title"`
+	Score   float64  `json:"score"`
+	Matched []string `json:"matched,omitempty"`
+}
+
+// ValidKnowledgeUnknownAction 判断库外处理方式是否合法。
+func ValidKnowledgeUnknownAction(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case KnowledgeUnknownRefuse, KnowledgeUnknownHandoff:
+		return true
+	default:
+		return false
+	}
+}
+
+// NormalizeKnowledgeUnknownAction 归一化库外处理方式：空或非法值回落到 handoff。
+// 选择 handoff 作为默认值，保证库外问题不会由 AI 自由编造答案。
+func NormalizeKnowledgeUnknownAction(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case KnowledgeUnknownRefuse:
+		return KnowledgeUnknownRefuse
+	default:
+		return KnowledgeUnknownHandoff
+	}
+}
+
+// NormalizeKnowledgeSettings 填充知识库配置的默认值并归一化非法取值。
+func NormalizeKnowledgeSettings(next KnowledgeSettings) KnowledgeSettings {
+	out := next
+	out.UnknownAction = NormalizeKnowledgeUnknownAction(out.UnknownAction)
+	out.RefuseReply = strings.TrimSpace(out.RefuseReply)
+	if out.RefuseReply == "" {
+		out.RefuseReply = DefaultKnowledgeRefuseReply
+	}
+	if out.ScoreThreshold < 0 {
+		out.ScoreThreshold = DefaultKnowledgeScoreThreshold
+	}
+	if out.ScoreThreshold > 1 {
+		out.ScoreThreshold = 1
+	}
+	if out.MaxEntries <= 0 {
+		out.MaxEntries = DefaultKnowledgeMaxEntries
+	}
+	if out.MaxEntries > 20 {
+		out.MaxEntries = 20
+	}
+	return out
 }
 
 // NormalizeAllowedHosts 归一化白名单：去空格、转小写、去重、逗号连接。
