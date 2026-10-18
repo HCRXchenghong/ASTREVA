@@ -15,6 +15,15 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   set +a
 fi
 
+# Arco 控制台是构建产物；首次启动或产物缺失时先构建一次。
+if [[ ! -f "$ROOT_DIR/admin-web/dist/index.html" ]]; then
+  printf '[astreva] building Arco admin console...\n'
+  (cd "$ROOT_DIR" && npm --workspace admin-web run build) || {
+    printf '[astreva] admin console build failed\n' >&2
+    exit 1
+  }
+fi
+
 export PUBLIC_SITE_URL="${PUBLIC_SITE_URL:-http://127.0.0.1:4321}"
 export PUBLIC_ADMIN_URL="${PUBLIC_ADMIN_URL:-http://127.0.0.1:1337}"
 export PUBLIC_LEADS_ENDPOINT="${PUBLIC_LEADS_ENDPOINT:-$PUBLIC_ADMIN_URL/site-admin-api/leads}"
@@ -57,8 +66,9 @@ start_service servicebridge-user-web python3 -m http.server 5173 --bind 0.0.0.0 
 
 printf '[astreva] local stack launched. Logs are in %s\n' "$LOG_DIR"
 printf '[astreva] frontend: http://127.0.0.1:4321/\n'
-printf '[astreva] admin login: http://127.0.0.1:1337/admin-2fa\n'
+printf '[astreva] admin login: http://127.0.0.1:1337/site-admin/login\n'
 printf '[astreva] site admin: http://127.0.0.1:1337/site-admin/\n'
+printf '[astreva] admin dev (HMR): npm run dev:admin-web  # http://127.0.0.1:5174/site-admin/\n'
 printf '[astreva] servicebridge user web: http://127.0.0.1:5173/?embed=1\n'
 
 while true; do

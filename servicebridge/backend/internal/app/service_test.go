@@ -29,8 +29,12 @@ func TestAIReplyTimeoutTracksConfiguredTimeout(t *testing.T) {
 	if got := aiReplyTimeout(domain.AISettings{TimeoutSeconds: 30}); got != 30*time.Second+translationWindow {
 		t.Fatalf("configured timeout not honored: %s", got)
 	}
-	// 上限 150s，避免外层的翻译余量把超时推得过大。
-	if got := aiReplyTimeout(domain.AISettings{TimeoutSeconds: 120}); got != maxAIReplyTimeout {
+	// AI 配置最多 120s，加上翻译余量后为 145s，仍在 150s 上限内。
+	if got := aiReplyTimeout(domain.AISettings{TimeoutSeconds: 120}); got != 120*time.Second+translationWindow {
+		t.Fatalf("configured timeout not honored: %s", got)
+	}
+	// 超过上限时收敛到 150s。
+	if got := aiReplyTimeout(domain.AISettings{TimeoutSeconds: 200}); got != maxAIReplyTimeout {
 		t.Fatalf("configured timeout must be capped: %s", got)
 	}
 }

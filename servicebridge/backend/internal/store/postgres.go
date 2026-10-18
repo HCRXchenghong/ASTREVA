@@ -466,6 +466,7 @@ func (s *PostgresStore) ConversationsForAgent(agentID string) ([]domain.Conversa
 	}
 	defer rows.Close()
 	conversations, err := scanConversations(rows)
+	rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -485,6 +486,7 @@ func (s *PostgresStore) AllConversations() []domain.Conversation {
 	}
 	defer rows.Close()
 	conversations, err := scanConversations(rows)
+	rows.Close()
 	if err != nil {
 		return nil
 	}
@@ -515,14 +517,7 @@ func (s *PostgresStore) Conversation(id string) (domain.Conversation, bool) {
 	defer cancel()
 
 	conversation, err := s.conversationByID(ctx, id)
-	if err != nil {
-		return domain.Conversation{}, false
-	}
-	conversations := []domain.Conversation{conversation}
-	if err := s.fillConversationAgents(ctx, s.pool, conversations); err != nil {
-		return conversation, true
-	}
-	return conversations[0], true
+	return conversation, err == nil
 }
 
 func (s *PostgresStore) Messages(conversationID string) []domain.Message {
@@ -2005,12 +2000,29 @@ func (s *PostgresStore) agentByIDForUpdateTx(ctx context.Context, tx pgx.Tx, id 
 
 func (s *PostgresStore) conversationByID(ctx context.Context, id string) (domain.Conversation, error) {
 	row := s.pool.QueryRow(ctx, `SELECT `+conversationColumns+` FROM conversations WHERE id=$1`, id)
-	return scanConversation(row)
+	conversation, err := scanConversation(row)
+	if err != nil {
+		return conversation, err
+	}
+	return s.fillConversationAgent(ctx, s.pool, conversation)
 }
 
 func (s *PostgresStore) conversationByIDForUpdateTx(ctx context.Context, tx pgx.Tx, id string) (domain.Conversation, error) {
 	row := tx.QueryRow(ctx, `SELECT `+conversationColumns+` FROM conversations WHERE id=$1 FOR UPDATE`, id)
-	return scanConversation(row)
+	conversation, err := scanConversation(row)
+	if err != nil {
+		return conversation, err
+	}
+	return s.fillConversationAgent(ctx, tx, conversation)
+}
+
+// fillConversationAgent 为单个会话补齐只读的客服名称/头像，序列化路径统一走这里保证访客能拿到真实客服信息。
+func (s *PostgresStore) fillConversationAgent(ctx context.Context, exec dbTx, conversation domain.Conversation) (domain.Conversation, error) {
+	conversations := []domain.Conversation{conversation}
+	if err := s.fillConversationAgents(ctx, exec, conversations); err != nil {
+		return conversation, err
+	}
+	return conversations[0], nil
 }
 
 func (s *PostgresStore) nextWaitingConversationForUpdateTx(ctx context.Context, tx pgx.Tx) (domain.Conversation, error) {

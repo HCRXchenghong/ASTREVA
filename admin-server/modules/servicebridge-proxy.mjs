@@ -5,6 +5,8 @@ export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, 
   function isAllowedPath(pathname) {
     return pathname === '/api/contact-settings' ||
       pathname.startsWith('/api/admin/') ||
+      // 客服引擎上传的图片/语音：统一后台需要同源代理才能在消息里回显。
+      pathname.startsWith('/uploads/') ||
       /^\/api\/conversations\/[^/]+\/(messages|read|remark|close)(?:\/[^/]+\/revoke)?$/.test(pathname);
   }
 

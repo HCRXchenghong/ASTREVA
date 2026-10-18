@@ -1,6 +1,6 @@
 # App 发布、更新与推送
 
-客服 App 的版本分发走自建更新通道：统一后台上传安装包，App 启动时向客服引擎查询最新版本，按后台配置执行“强制更新”（不升级不能使用）或“可选更新”（可稍后）。
+客服 App 的版本分发走自建更新通道：统一控制台上传安装包，App 启动时向客服引擎查询最新版本，按后台配置执行「强制更新」（不升级不能使用）或「可选更新」（可稍后）。推送参数同样在控制台里配置，不再依赖构建期参数。
 
 ## 版本号规则
 
@@ -19,23 +19,49 @@ flutter build apk --release \
 ## 更新流程
 
 1. 构建 APK 并记录 `version_code`。
-2. 登录统一后台 → 左侧“App 版本”。
+2. 登录统一控制台 → **应用管理 → App 版本**。
 3. 选择平台、填写版本号和更新说明，上传安装包。
-4. “强制更新”开关决定低于此版本的 App 是否必须升级：
-   - 开：App 弹窗无法关闭，只能点“立即更新”，下载后自动拉起系统安装。
-   - 关：App 弹窗提供“稍后再说”，下次启动再提醒。
-5. 每个版本可单独“停用/启用”，删除版本会同时移除安装包文件。
+4. 勾选「强制更新」（或在版本列表里点「设为强制」）：低于此版本的 App 必须升级才能继续使用；不勾选则可选更新。
+5. 每个版本可单独「停用/启用」，删除版本会同时移除安装包文件。
+
+App 启动时请求 `GET /api/app-update/latest?platform=android&version_code=N`，有更新时下载 `GET /api/app-update/download/{id}`（公开端点）。Android 下载完成后会校验后台记录的 SHA-256（`checksum`），校验失败会删除文件并报错。
 
 ## Android 检测与安装
 
-- App 启动时请求 `GET /api/app-update/latest?platform=android&version_code=N`。
-- 有更新时下载 `GET /api/app-update/download/{id}`（公开端点，无登录要求）。
-- 安装通过系统 `ACTION_VIEW` + FileProvider 完成；Android 8+ 首次需要用户允许“安装未知应用”，App 会引导打开系统设置页。
-- 未开启该权限时 App 提示并跳转设置，用户开启后回到 App 重新点击更新。
+- 安装通过系统 `ACTION_VIEW` + FileProvider 完成；Android 8+ 首次需要用户允许「安装未知应用」，App 会引导打开系统设置页。
+- 强制更新弹窗会拦截系统返回键，不能绕过。
+- 未开启安装权限时 App 提示并跳转设置，用户开启后回到 App 重新点击更新。
 
 iOS 无法旁载安装包。iOS 上检测到更新时提示用户前往 App Store；TestFlight/正式发布仍需走 Apple 发布流程。
 
-## 正式签名
+## 推送配置（控制台可配）
+
+推送不再需要 `--dart-define=FIREBASE_*`：App 启动时调用 `GET /api/app-config` 获取公开的 Firebase 参数并初始化；参数为空或 `push_enabled=false` 时自动跳过推送初始化，不影响聊天。
+
+配置步骤：
+
+1. Firebase 控制台新建项目并开启 Cloud Messaging。
+2. 控制台 → **系统设置 → 推送设置**，填入：
+   - Firebase 客户端参数：`api_key`、`app_id`、`messaging_sender_id`、`project_id`、`storage_bucket`（可选 `vapid_key`）；
+   - 服务端密钥：Firebase 服务账号 JSON（推荐，服务端会自动换取并缓存 OAuth2 令牌）；
+   - iOS 额外填 APNs `.p8` 私钥、Key ID、Apple Team ID、Topic（Bundle ID）与环境（production/sandbox）。
+3. 点击「验证凭证」：FCM 会真实换取一次 OAuth2 令牌，APNs 会真实签出一次 JWT；结果会分项展示。
+4. 保存后立即生效，无需重启服务或重新构建 App。
+
+安全说明：服务端密钥使用 `DATA_ENCRYPTION_KEY` 做 AES-256-GCM 加密存入 PostgreSQL，接口只返回是否已配置与末四位掩码，永不回显明文；清除密钥有独立按钮。
+
+App 行为：
+
+- 登录后申请通知权限并上报设备 token（`POST /api/agent/device-token`，带 `platform`）。
+- token 刷新时自动重新上报；退出登录时上报空 token 解除绑定。
+- 前台 Android 用本地通知渠道 `agent_messages` 展示，iOS 由系统横幅展示；后台/进程被回收时由 FCM/APNs 系统通知展示。
+- 点击通知按 `conversation_id` 跳转；冷启动时先登录再自动打开会话。
+
+后端触发点：访客新消息、**新会话分配**、**会话转接**都会推送；未配置任何通道时只记录日志，不影响聊天。
+
+## 正式签名（待办）
+
+Android 与 iOS 的正式签名、商店素材、隐私清单仍未完成，需要发布负责人执行：
 
 Android：
 
@@ -52,65 +78,26 @@ storeFile=/绝对路径/astreva-release.keystore
 PROPS
 ```
 
-在 `android/app/build.gradle.kts` 的 `buildTypes.release` 中按 `key.properties` 配置 `signingConfig`，替换当前的 debug 签名。发布用 `flutter build appbundle` 产出 `.aab`。
+在 `android/app/build.gradle.kts` 的 `buildTypes.release` 中按 `key.properties` 配置 `signingConfig`，替换当前的 debug 签名；发布用 `flutter build appbundle`。
 
-iOS：在 Xcode 中配置开发者团队、Bundle ID 和签名证书，通过 Archive + App Store Connect 上传。商店素材、隐私清单和权限说明需另行准备。
+iOS：在 Xcode 中配置开发者团队、Bundle ID 和签名证书，开启 Push Notifications capability（`Runner.entitlements` 已包含 `aps-environment`，正式发布前改成 `production`），通过 Archive + App Store Connect 上传。
 
-## 推送接入（FCM）
-
-App 端已集成 `firebase_messaging` + `flutter_local_notifications`，后端具备推送触发点（新会话分配、访客新消息）。`FCM_ACCESS_TOKEN` 未配置时后端只记录日志，不影响聊天功能。
-
-### 1. 配置 Firebase 参数
-
-App 使用 `FirebaseOptions` 初始化，不依赖 `google-services.json`。构建时传入 Firebase 项目参数：
-
-```bash
-flutter build apk --release \
-  --dart-define=SERVICEBRIDGE_URL=https://客服域名 \
-  --dart-define=APP_VERSION_CODE=3 \
-  --dart-define=FIREBASE_API_KEY=AIza... \
-  --dart-define=FIREBASE_APP_ID=1:123456:android:abc123 \
-  --dart-define=FIREBASE_MESSAGING_SENDER_ID=123456789 \
-  --dart-define=FIREBASE_PROJECT_ID=your-project \
-  --dart-define=FIREBASE_STORAGE_BUCKET=your-project.appspot.com
-```
-
-未传入 `FIREBASE_*` 参数时 App 自动跳过推送初始化，登录、聊天、更新检查均不受影响。参数可从 Firebase 控制台 → 项目设置 → 常规 → “您的应用”中获取。
-
-### 2. App 内行为
-
-- 首次登录后自动申请通知权限，并向后端上报设备 token：`POST /api/agent/device-token`，body 为 `{"device_token":"<FCM token>"}`。
-- FCM token 刷新时自动重新上报；退出登录时向后端上报空 token 解除绑定。
-- 前台展示策略（避免重复通知）：Android 前台由 `flutter_local_notifications` 展示横幅（渠道 agent_messages，Android 13+ 会请求通知权限）；iOS 前台由系统横幅展示（setForegroundNotificationPresentationOptions）。后台/进程被系统回收时由 FCM 系统通知展示。
-- 点击通知按 `conversation_id` 跳转对应会话：冷启动时先进入登录页，登录完成后自动打开会话。
-
-### 3. 后端环境变量
-
-- `FCM_ACCESS_TOKEN`：Firebase 服务账号 OAuth2 access token（短期有效）或 API 网关生成的令牌。
-- `FCM_ENDPOINT`：可选，默认 `https://fcm.googleapis.com/v1/projects/-/messages:send`；正式环境需把 `-` 替换为项目 ID，并配合服务账号签名刷新 `FCM_ACCESS_TOKEN`。
-- 推送对象是客服设备 token，访客新消息或会话分配时触发。
-
-### 4. iOS 注意事项
-
-iOS 需要在 Xcode 中为 Runner 开启 Push Notifications capability、配置 APNs 证书，并通过真机验证。iOS 上检测到新版本时只能引导用户去 App Store，不能旁载安装。APNs 后端签名通道尚未实现，iOS 正式推送前需补充。
-
-
-## 推送集成本地验证
-
-依赖版本：firebase_core 4.4.0、firebase_messaging 16.1.1、flutter_local_notifications 22.0.1（与本地 pub 缓存匹配的版本组合；联网后可直接执行）。
+## 本地验证
 
 ```bash
 cd servicebridge/apps/agent-mobile
-flutter pub get            # 联网时执行一次，锁定时按上面的版本
-flutter analyze           # 已通过：No issues found
-flutter test              # 测试内核编译已通过；沙箱内因禁 socket 无法跑完，本机可直接通过
-flutter build apk --debug --dart-define=FIREBASE_API_KEY=... --dart-define=FIREBASE_APP_ID=... --dart-define=FIREBASE_MESSAGING_SENDER_ID=... --dart-define=FIREBASE_PROJECT_ID=...
+PUB_CACHE="$PWD/.pub-cache" flutter pub get    # 依赖下载到仓库内，避免污染系统 pub 缓存
+dart analyze
+flutter test
+flutter build apk --debug \
+  --dart-define=SERVICEBRIDGE_URL=https://客服域名 \
+  --dart-define=APP_VERSION_CODE=3
 ```
 
-### 真机验证步骤
+真机验证步骤：
 
-1. Firebase 控制台新建项目，开启 Cloud Messaging，按上文参数构建并安装到 Android 真机。
-2. 登录客服账号，在后台查看 agents.device_token 已写入；用访客端发消息或新建会话。
-3. 分别验证：App 前台（横幅+声音）、后台、进程被杀三种状态下均收到通知；点击通知直达对应会话。
+1. 按上文完成推送配置并点「验证凭证」通过。
+2. 登录客服账号，在控制台确认该客服的 `device_platform` 与 `device_token` 已写入。
+3. 用访客端发消息、新建会话、后台转接三种方式各触发一次，分别验证 App 前台、后台、进程被杀三种状态都能收到通知，点击直达对应会话。
 4. 退出登录后再次触发，确认不再收到推送；重新登录后恢复。
-5. iOS 需在 Xcode 开启 Push Notifications capability、配置 APNs 证书并真机验证（项目为 Swift Package Manager 集成，无需 Podfile/pod install）。
+5. iOS 需真机 + APNs 证书验证；模拟器无法验证远程推送。

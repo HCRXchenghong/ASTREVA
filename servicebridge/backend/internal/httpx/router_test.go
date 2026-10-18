@@ -294,7 +294,7 @@ func TestFormValueTruthyAcceptsHTMLCheckboxValues(t *testing.T) {
 	}
 }
 
-
+func TestVisitorMessagePageMasksRevokedAgentMessage(t *testing.T) {
 	st := store.NewMemoryStore(store.Options{})
 	_, _ = st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false})
 	service := app.NewService(st, realtime.NewHub(), slog.Default())

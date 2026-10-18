@@ -79,11 +79,12 @@ func NewMemoryStore(options Options) *MemoryStore {
 		auditEvents:     []domain.AuditEvent{},
 		apiApps:         map[string]*domain.APIApp{},
 		contacts: domain.ContactSettings{
-			// 联系方式默认为空：真实联系方式必须由管理员在后台配置，杜绝内置占位号码。
+			// 联系方式与欢迎语默认全部为空：真实内容必须由管理员在后台配置，
+			// 与 PostgreSQL 未配置时的行为保持一致。
 			Telephone:  "",
 			WhatsApp:   "",
 			Telegram:   "",
-			EntryReply: "您好，欢迎咨询在线客服，请问有什么可以帮您？",
+			EntryReply: "",
 		},
 		ai: domain.AISettings{
 			Enabled:         true,

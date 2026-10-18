@@ -13,6 +13,7 @@ Authorization: Bearer <token>
 | GET | `/healthz` | 进程健康 |
 | GET | `/readyz` | 存储就绪 |
 | GET | `/api/contact-settings` | 欢迎语、联系方式、快捷问题 |
+| GET | `/api/app-config` | 公开的 Firebase 客户端参数与推送开关，供客服 App 启动时初始化 |
 | POST | `/api/visitor/conversations` | 创建访客和会话，body: `source` |
 | GET | `/api/conversations/{id}/messages` | 历史分页，query: `limit`、`before` |
 | POST | `/api/uploads` | 鉴权上传，multipart 字段 `file` |
@@ -28,6 +29,9 @@ Authorization: Bearer <token>
 | POST | `/api/agent/login` | 登录，body: `account`、`password` |
 | POST | `/api/agent/status` | `online`、`busy`、`offline` |
 | GET | `/api/agent/conversations` | 当前客服负责的会话 |
+| POST | `/api/agent/avatar` | 更新客服头像 `avatar_url` |
+| GET | `/api/agent/ratings/summary` | 当前客服好评率 |
+| POST | `/api/agent/device-token` | 上报推送设备 token，body: `device_token`、`platform(android\|ios)`（空 token 解除绑定） |
 | POST | `/api/account/password` | 修改当前账号密码 |
 | POST | `/api/conversations/{id}/read` | 清除当前角色未读 |
 | PATCH | `/api/conversations/{id}/remark` | 修改备注 |
@@ -58,6 +62,8 @@ Authorization: Bearer <token>
 | POST | `/api/admin/ai-settings/models` | 按所选协议真实读取上游模型列表 |
 | POST | `/api/admin/ai-settings/test` | 测试 AI 回复 |
 | GET/PATCH | `/api/admin/business-hours` | 获取/保存营业时间 |
+| GET/PATCH | `/api/admin/push-settings` | 获取/保存推送配置（Firebase 客户端参数 + FCM 服务账号/APNs 密钥，密钥加密存储、只回掩码） |
+| POST | `/api/admin/push-settings/test` | 验证推送凭证：FCM 真实换取 OAuth2 令牌、APNs 真实签出 JWT |
 | PATCH | `/api/admin/contact-settings` | 保存访客端联系方式和欢迎语 |
 | GET | `/api/admin/ratings/summary` | 评价汇总 |
 | GET | `/api/admin/ratings` | 最近评价，query: `limit` |
@@ -88,13 +94,13 @@ Authorization: Bearer <token>
 
 ## 核心结构
 
-会话状态：`waiting`、`assigned`、`ai_serving`、`human_requested`、`closed`。
+会话状态：`waiting`、`assigned`、`ai_serving`、`human_requested`、`closed`。会话对象额外带只读字段 `assigned_agent_name`、`assigned_agent_avatar`，供访客端显示真实接待客服。
 
 消息类型：`text`、`emoji`、`image`、`audio`、`contact_telephone`、`contact_whatsapp`、`contact_telegram`、`system`、`ai_text`、`handoff_request`、`revoked`。数据库仍兼容读取历史 `contact_phone`、`contact_wechat` 消息，但新接口不再产生旧类型。
 
-AI 配置写入字段包括 `enabled`、`mode`、`base_url`、`api_key`、`model`、`api_type`、`temperature`、`max_output_tokens`、`timeout_seconds`、`system_prompt`。`api_type` 仅允许 `chat_completions`、`responses`、`anthropic_messages`。API Key 使用服务端主密钥加密保存，返回只包含 `api_key_masked`，不会回传明文 Key。
+AI 配置写入字段包括 `enabled`、`mode`、`base_url`、`api_key`、`model`、`api_type`、`temperature`、`max_output_tokens`、`timeout_seconds`、`system_prompt`。`timeout_seconds` 允许 0-120；AI 回复的外层超时按该值加翻译余量计算（上限 150 秒），不会再被固定的 25 秒截断。`api_type` 仅允许 `chat_completions`、`responses`、`anthropic_messages`。API Key 使用服务端主密钥加密保存，返回只包含 `api_key_masked`，不会回传明文 Key。
 
-联系方式对外只返回 `telephone`、`whatsapp`、`telegram` 和 `entry_reply`，不再返回微信、QQ 或图片二维码配置。
+联系方式对外只返回 `telephone`、`whatsapp`、`telegram` 和 `entry_reply`，不再返回微信、QQ 或图片二维码配置。默认全部为空，必须由管理员在控制台配置（`PATCH` 为整体替换语义）。营业时间含 `timezone/start/end/enabled/offline_reply`：非营业时间 AI 继续接待，但不自动分配人工，并给访客发送一次 `offline_reply`（为空用内置文案）。
 
 接待优先级为：人工已分配 / 人工排队 > 明确转人工 > 关键词规则 > AI。会话一旦由人工接管，即使客服离线或 AI 请求稍后返回，也只能转给其他人工或保持人工队列，不会重新触发关键词与 AI。
 
