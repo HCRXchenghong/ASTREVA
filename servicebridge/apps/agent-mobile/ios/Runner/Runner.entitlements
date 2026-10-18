@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 开发期使用 development；正式签名发布前必须改为 production。 -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

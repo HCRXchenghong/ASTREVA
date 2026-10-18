@@ -57,27 +57,19 @@ class PushService {
   }
 
   Future<void> _doInit() async {
+    // 只准备本地通知插件；Firebase/通知权限一律等 /api/app-config 下发后再处理。
     try {
       await _initLocalNotifications();
     } catch (error) {
       debugPrint('[push] 本地通知初始化失败，聊天功能不受影响：$error');
     }
-    if (dartDefineConfigured) {
-      // 显式构建配置优先，无需等待服务端。
-      await _initializeFirebase(
-        FirebaseOptions(
-          apiKey: _apiKey,
-          appId: _appId,
-          messagingSenderId: _messagingSenderId,
-          projectId: _projectId,
-          storageBucket: _storageBucket.isEmpty ? null : _storageBucket,
-        ),
-      );
-    }
   }
 
   /// B1：启动（或登录）后用服务端下发的参数初始化 Firebase。
-  /// 参数为空、服务端关闭推送或请求失败时静默跳过，绝不阻塞登录。
+  /// 完全以服务端开关为准：
+  /// - `push_enabled=false` → 不初始化 Firebase、不请求通知权限；
+  /// - firebase 字段为空或请求失败 → 静默跳过并记录日志，绝不报错、绝不阻塞登录；
+  /// - dart-define 仅作为非空字段的可选覆盖。
   Future<void> configureFromServer(String baseUrl) async {
     await init();
     if (_firebaseReady || _serverPushDisabled || _configInFlight) return;
@@ -88,9 +80,9 @@ class PushService {
       final config = await ServiceBridgeClient(
         baseUrl: ServiceBridgeClient.normalizeBaseUrl(normalized),
       ).appConfig();
-      if (!config.pushEnabled && !dartDefineConfigured) {
+      if (!config.pushEnabled) {
         _serverPushDisabled = true;
-        debugPrint('[push] 服务端未启用推送，跳过初始化');
+        debugPrint('[push] 服务端未启用推送，跳过初始化与通知权限申请');
         return;
       }
       final firebase = config.firebase;
@@ -141,6 +133,8 @@ class PushService {
     _messagingConfigured = true;
     final messaging = FirebaseMessaging.instance;
     try {
+      // 只有服务端确认启用推送后才会走到这里，此时才申请通知权限。
+      await _requestAndroidNotificationPermission();
       await messaging.requestPermission(
         alert: true,
         badge: true,
@@ -193,12 +187,20 @@ class PushService {
         _handleConversationTap(response.payload);
       },
     );
-    await plugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.requestNotificationsPermission();
     _localNotifications = plugin;
+  }
+
+  /// Android 13+ 的通知权限只在确实要展示通知时申请（推送开关关闭时不打扰用户）。
+  Future<void> _requestAndroidNotificationPermission() async {
+    try {
+      await _localNotifications
+          ?.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.requestNotificationsPermission();
+    } catch (error) {
+      debugPrint('[push] 通知权限申请失败：$error');
+    }
   }
 
   Future<void> _showForegroundNotification(RemoteMessage message) async {
@@ -235,6 +237,7 @@ class PushService {
       await init();
       final plugin = _localNotifications;
       if (plugin == null) return;
+      await _requestAndroidNotificationPermission();
       const details = NotificationDetails(
         android: AndroidNotificationDetails(
           'agent_messages',

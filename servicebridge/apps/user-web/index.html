@@ -1286,6 +1286,13 @@
             State.ws = null;
             State.visitorToken = '';
             State.conversationId = '';
+            // B11/B12/B14：清理转人工、真实客服信息与保留历史状态。
+            State.humanRequested = false;
+            State.keepHistoryOnEnd = false;
+            State.assignedAgentName = '';
+            State.assignedAgentAvatar = '';
+            State.pendingSends.forEach((timer) => clearTimeout(timer));
+            State.pendingSends = new Map();
             State.selectedRatingScore = 0;
             State.ratingSubmitted = false;
             State.ratingPromptVisible = false;
@@ -1412,7 +1419,9 @@
             // 恢复旧会话时，把当前网站语言同步给后端：
             // 会话语言是创建时记录的，访客切换网站语言后若不同步，
             // AI 会继续按旧语言（如中文）回复。
-            syncVisitorLangToServer();
+            // B14：该接口同时返回会话状态，用于判断历史会话是否已结束。
+            const restoredConversation = await syncVisitorLangToServer();
+            if (restoredConversation) applyAssignedAgent(restoredConversation);
             State.startingConversation = false;
             DOM.entryBtn.disabled = false;
             DOM.entryBtn.textContent = t('consultService');
@@ -1430,6 +1439,12 @@
             }
             if (!State.quickRepliesRendered) {
                 renderQuickRepliesCard();
+            }
+            // B14：会话已结束时保留历史渲染，展示"会话已结束"状态与评价入口。
+            if (restoredConversation && restoredConversation.status === 'closed') {
+                enterEndedSessionState({ keepHistory: true });
+                scrollToBottom();
+                return true;
             }
             saveVisitorSession();
             connectSocket();
@@ -1852,9 +1867,9 @@
             const avatar = State.typingSender === 'agent' ? State.agentAvatar : AVATAR_ASSETS.service;
             const html = `
                 <div class="flex gap-3 msg-wrapper typing-indicator">
-                    <img src="${avatar}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
+                    <img src="${escapeHTML(avatar)}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
                     <div class="flex flex-col max-w-[70%] items-start">
-                        <span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>
+                        <span class="text-[11px] text-gray-500 ml-1 mb-1 block">${escapeHTML(State.agentName)}</span>
                         <div class="bg-wc-ai border border-gray-200/50 p-2.5 rounded-lg shadow-sm relative bubble-left min-h-[40px] flex items-center">
                             <span class="typing-dots" dir="ltr"><span></span><span></span><span></span></span>
                         </div>
@@ -1896,11 +1911,14 @@
                 case 'AI':
                     State.agentName = t('agentNameDefault');
                     State.agentAvatar = AVATAR_ASSETS.service;
+                    State.humanRequested = false;
                     DOM.headerAiBadge.classList.remove('hidden');
                     break;
                 case 'HUMAN':
-                    State.agentName = t('agentNameHumanPrefix') + '李雪';
-                    State.agentAvatar = AVATAR_ASSETS.service;
+                    // B12：使用会话下发的真实客服名/头像，缺失时才回退默认文案。
+                    State.agentName = agentDisplayName();
+                    State.agentAvatar = agentAvatarURL();
+                    State.humanRequested = false;
                     DOM.sysBanner.classList.remove('hidden');
                     DOM.sysBanner.className = 'bg-[#f0f9eb] text-[#67c23a] text-xs px-3 py-2 flex items-center justify-center border-b border-[#e1f3d8] shrink-0 z-10 shadow-sm relative';
                     DOM.sysBannerText.innerHTML = '<i class="fas fa-check-circle mr-1"></i>' + t('humanConnected');
@@ -1915,6 +1933,54 @@
             DOM.headerTitle.textContent = State.agentName;
         }
 
+        // === B14：恢复历史会话时发现会话已结束 ===
+        // 保留已渲染的历史消息，给出明确的"会话已结束"状态与评价入口，
+        // 而不是直接把访客踢回入口页。
+        function enterEndedSessionState(options = {}) {
+            State.keepHistoryOnEnd = options.keepHistory !== false;
+            State.connected = false;
+            State.pendingReturnToEntry = false;
+            disconnectSocket();
+            updateSessionState('ENDED');
+            showEndedBanner();
+            const shouldPrompt = options.promptRating !== false
+                && !State.ratingSubmitted
+                && !!State.visitorToken
+                && !!State.conversationId;
+            if (shouldPrompt) {
+                State.evalReturnMessage = '';
+                showEvalSheet();
+            }
+        }
+
+        function showEndedBanner() {
+            DOM.sysBanner.classList.remove('hidden');
+            DOM.sysBanner.className = 'bg-[#f4f4f5] text-[#6b7280] text-xs px-3 py-2 flex items-center justify-center border-b border-[#e5e7eb] shrink-0 z-10 shadow-sm relative';
+            DOM.sysBannerText.innerHTML = '<i class="fas fa-info-circle mr-1"></i>'
+                + escapeHTML(t('sessionEndedKeepHistory'))
+                + ' <a href="javascript:void(0)" class="text-blue-500 underline ml-1" onclick="restartConsultation()">'
+                + escapeHTML(t('restartConsultation'))
+                + '</a>';
+        }
+
+        // 已结束会话中的"重新咨询"入口。
+        window.restartConsultation = async function() {
+            disconnectSocket();
+            clearVisitorSession();
+            resetConversationRuntime();
+            resetChatView();
+            hideEvalImmediately();
+            updateSessionState('AI');
+            State.startingConversation = false;
+            DOM.entryBtn.disabled = false;
+            DOM.entryBtn.textContent = t('consultService');
+            if (isEmbedMode()) {
+                await openConsultation();
+                return;
+            }
+            showEntryView();
+        };
+
         function triggerAction(action) {
             closeAllPanels();
             
@@ -1926,15 +1992,27 @@
                 DOM.uploadImageInput.click();
             }
             else if (action === 'human') {
+                // B11：转人工入口（此前 triggerAction('human') 是死代码）。
                 if (State.sessionType === 'HUMAN') {
                     showToast(t("alreadyHumanState"));
                     return;
                 }
-                // 无痕转人工：后台静默排队分配客服，前端不展示任何"转接中"提示；
-                // AI 继续接待，直到人工客服真实回复后会话才无感切换到人工。
+                if (State.sessionType === 'ENDED') {
+                    showToast(t("sessionEnded"));
+                    return;
+                }
+                if (!State.connected || !State.ws) {
+                    showToast(t("messageNotSentReconnecting"));
+                    return;
+                }
+                // 无痕转人工：后台静默排队分配客服，AI 继续接待；
+                // 这里额外给出"等待人工接入"的可见提示，保证 UI 状态合理。
                 const handoffId = sendSocketMessage('', 'handoff_request');
                 // 让服务端回执的本地化请求文案作为访客自己的气泡渲染出来。
                 if (handoffId) State.renderedClientMsgIds.delete(handoffId);
+                State.humanRequested = true;
+                appendSystemMessage(t('humanRequested'));
+                showToast(t('humanRequested'));
             } 
             else if (action === 'phone') {
 				const telephone = State.contacts.telephone;
@@ -2015,17 +2093,24 @@
 
         // 把当前网站语言同步到会话（访客切换语言后，AI 回复与翻译按新语言处理）。
         // 语言未变时后端直接返回，无副作用；失败不影响正常聊天。
-        function syncVisitorLangToServer() {
-            if (!State.visitorToken || !State.conversationId) return;
+        // B14：返回会话对象（含 status 与 assigned_agent_*），供恢复历史时判断状态。
+        async function syncVisitorLangToServer() {
+            if (!State.visitorToken || !State.conversationId) return null;
             const lang = window.__CHAT_LANG__ || 'zh';
-            fetch(`${State.apiBase}/api/visitor/lang`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${State.visitorToken}`
-                },
-                body: JSON.stringify({ lang })
-            }).catch(() => {});
+            try {
+                const resp = await fetch(`${State.apiBase}/api/visitor/lang`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${State.visitorToken}`
+                    },
+                    body: JSON.stringify({ lang })
+                });
+                if (!resp.ok) return null;
+                return await resp.json();
+            } catch (err) {
+                return null;
+            }
         }
 
         async function drainPendingInitialMessages() {
@@ -2231,6 +2316,8 @@
 
         function applyConversationState(conversation) {
             if (!conversation) return;
+            // B12：先记录真实客服信息，再切换状态，保证 HUMAN 分支能取到。
+            applyAssignedAgent(conversation);
             if (conversation.status === 'assigned') {
                 updateSessionState('HUMAN');
             } else if (conversation.status === 'ai_serving') {
@@ -2239,6 +2326,11 @@
                 // 无痕转人工：排队等待人工期间访客侧仍显示 AI 接待，不展示转接提示。
                 updateSessionState('AI');
             } else if (conversation.status === 'closed') {
+                if (State.keepHistoryOnEnd || State.sessionType === 'ENDED') {
+                    // B14：已进入"结束但保留历史"模式，维持现状。
+                    enterEndedSessionState({ keepHistory: true, promptRating: false });
+                    return;
+                }
                 promptForRatingOrReturn(t("sessionEnded"));
                 return;
             }
@@ -2285,7 +2377,8 @@
                 DOM.evalOverlay.classList.remove('flex');
                 DOM.evalOverlay.classList.add('hidden');
                 State.ratingPromptVisible = false;
-                if (closeHostAfter) {
+                // B14：恢复的已结束会话保留历史时，不通知主站关闭、也不跳回入口页。
+                if (closeHostAfter && !State.keepHistoryOnEnd) {
                     notifyHost('servicebridge:conversation-closed', {
                         conversationId: State.conversationId
                     });
@@ -2401,10 +2494,15 @@
                 showToast(t("imageUploading"));
                 const data = await uploadMedia(file, file.name || `image-${Date.now()}.png`);
                 const imageURL = resolveAssetURL(data.url);
-                appendMessage(createImageMessageHTML(imageURL, true), true);
-                if (State.connected) {
-                    sendSocketMessage(data.url, 'image');
-                }
+                // B15：连接断开时以失败态渲染，点击图标可重发。
+                const clientId = State.connected && State.ws ? sendSocketMessage(data.url, 'image') : '';
+                appendMessage(createImageMessageHTML(imageURL, true, {
+                    clientMsgId: clientId,
+                    msgType: 'image',
+                    displayText: data.url,
+                    retryText: data.url
+                }, false, !clientId), true);
+                if (!clientId) showToast(t("messageNotSentReconnecting"));
             } catch (err) {
                 console.error(err);
                 showToast(t("imageUploadFailed"));
@@ -2490,12 +2588,15 @@
                         }
                         const data = await uploadMedia(payload, fileName);
                         const audioURL = resolveAssetURL(data.url);
-                        appendMessage(createAudioMessageHTML(audioURL, true), true);
-                        if (State.connected) {
-                            sendSocketMessage(data.url, 'audio');
-                        } else {
-                            appendMessage(createMessageHTML(t('serverDisconnected'), false), false);
-                        }
+                        // B15：连接断开时以失败态渲染，点击图标可重发。
+                        const clientId = State.connected && State.ws ? sendSocketMessage(data.url, 'audio') : '';
+                        appendMessage(createAudioMessageHTML(audioURL, true, {
+                            clientMsgId: clientId,
+                            msgType: 'audio',
+                            displayText: data.url,
+                            retryText: data.url
+                        }, false, !clientId), true);
+                        if (!clientId) showToast(t('messageNotSentReconnecting'));
                     } catch (err) {
                         console.error(err);
                         showToast(t('voiceSendFailed'));
