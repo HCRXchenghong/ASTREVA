@@ -125,6 +125,35 @@ func resolveAutoReplyPath(priority string, aiEnabled, aiConfigured bool) autoRep
 	}
 }
 
+// bindingUpstreamConfigured 判断"接待能力"是否已通过多供应商绑定提供可用上游。
+// ai_first/ai_only 模式不应只在全局 ai_settings 配了 Key 时才算"AI 可用"——
+// 只通过能力绑定（targets 或旧 binding）供 Key 的场景同样必须被识别。
+func bindingUpstreamConfigured(capability string, targets []domain.AIBindingTarget, bindings map[string]domain.AIBinding, providers map[string]domain.AIProvider) bool {
+	usable := func(providerID string) bool {
+		providerID = strings.TrimSpace(providerID)
+		if providerID == "" {
+			return false
+		}
+		provider, ok := providers[providerID]
+		if !ok || !provider.Enabled {
+			return false
+		}
+		return strings.TrimSpace(provider.BaseURL) != "" && strings.TrimSpace(provider.APIKey) != ""
+	}
+	for _, target := range targets {
+		if target.Capability != capability || !target.Enabled {
+			continue
+		}
+		if usable(target.ProviderID) {
+			return true
+		}
+	}
+	if binding, ok := bindings[capability]; ok && usable(binding.ProviderID) {
+		return true
+	}
+	return false
+}
+
 // aiUpstreamConfigured 判断 AI 上游是否具备可调用配置（地址 + 密钥缺一不可）。
 func aiUpstreamConfigured(settings domain.AISettings) bool {
 	return strings.TrimSpace(settings.BaseURL) != "" && strings.TrimSpace(settings.APIKey) != ""

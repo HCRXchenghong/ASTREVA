@@ -1994,6 +1994,29 @@ func scanAIBindingTarget(row scanTarget) (domain.AIBindingTarget, error) {
 }
 
 // AIBindingTargets 返回全部能力候选供应商，按 capability、priority、provider_id 稳定排序。
+// aiProvidersForPolicy 读取供应商（含解密后的 Key），用于判断"接待能力是否已有可用上游"。
+func (s *PostgresStore) aiProvidersForPolicy() map[string]domain.AIProvider {
+	ctx, cancel := dbContext()
+	defer cancel()
+	rows, err := s.pool.Query(ctx, `SELECT `+aiProviderColumns+` FROM ai_providers`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := map[string]domain.AIProvider{}
+	for rows.Next() {
+		provider, err := scanAIProvider(rows)
+		if err != nil {
+			continue
+		}
+		if err := s.revealAIProvider(&provider); err != nil {
+			continue
+		}
+		out[provider.ID] = provider
+	}
+	return out
+}
+
 func (s *PostgresStore) AIBindingTargets() []domain.AIBindingTarget {
 	ctx, cancel := dbContext()
 	defer cancel()
@@ -2944,7 +2967,8 @@ func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, co
 		return nil, false, err
 	}
 	aiEnabled := aiSettings.Enabled && aiSettings.Mode != domain.AIModeManualOnly
-	path := resolveAutoReplyPath(policy.AIKeywordPriority, aiEnabled, aiUpstreamConfigured(aiSettings))
+	bindingConfigured := bindingUpstreamConfigured(domain.AICapabilityReception, s.AIBindingTargets(), s.AIBindings(), s.aiProvidersForPolicy())
+	path := resolveAutoReplyPath(policy.AIKeywordPriority, aiEnabled, aiUpstreamConfigured(aiSettings) || bindingConfigured)
 	if path.keywordAllowed {
 		rules, err := s.keywordRules(ctx, tx)
 		if err != nil {

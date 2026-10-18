@@ -1941,6 +1941,36 @@ type aiBindingTargetKey struct {
 
 // AIBindingTargets 返回全部候选供应商，按 capability、priority、provider_id 稳定排序，
 // 便于运行时按序构造能力链与测试断言。
+// providersSnapshotLocked 返回当前供应商快照（调用方需已持锁）。
+func (s *MemoryStore) providersSnapshotLocked() map[string]domain.AIProvider {
+	out := make(map[string]domain.AIProvider, len(s.aiProviders))
+	for id, provider := range s.aiProviders {
+		if provider == nil {
+			continue
+		}
+		out[id] = *provider
+	}
+	return out
+}
+
+// bindingTargetsLocked 返回绑定目标快照（调用方需已持锁，禁止在此再取锁）。
+func (s *MemoryStore) bindingTargetsLocked() []domain.AIBindingTarget {
+	out := make([]domain.AIBindingTarget, 0, len(s.aiBindingTargets))
+	for _, target := range s.aiBindingTargets {
+		out = append(out, target)
+	}
+	return out
+}
+
+// bindingsSnapshotLocked 返回旧式单条绑定快照（调用方需已持锁，禁止在此再取锁）。
+func (s *MemoryStore) bindingsSnapshotLocked() map[string]domain.AIBinding {
+	out := make(map[string]domain.AIBinding, len(s.aiBindings))
+	for capability, binding := range s.aiBindings {
+		out[capability] = binding
+	}
+	return out
+}
+
 func (s *MemoryStore) AIBindingTargets() []domain.AIBindingTarget {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -2282,7 +2312,8 @@ func (s *MemoryStore) generateAutoRepliesLocked(conversation *domain.Conversatio
 
 	// 关键词与 AI 的先后由策略 ai_keyword_priority 决定；判定集中在 resolveAutoReplyPath。
 	// keyword_first（默认）完全保持既有行为：先关键词、命中即短路，未命中才请求 AI。
-	path := resolveAutoReplyPath(s.servicePolicy.AIKeywordPriority, s.aiReplyAvailableLocked(), aiUpstreamConfigured(s.ai))
+	configured := aiUpstreamConfigured(s.ai) || bindingUpstreamConfigured(domain.AICapabilityReception, s.bindingTargetsLocked(), s.bindingsSnapshotLocked(), s.providersSnapshotLocked())
+	path := resolveAutoReplyPath(s.servicePolicy.AIKeywordPriority, s.aiReplyAvailableLocked(), configured)
 	if path.keywordAllowed {
 		for _, rule := range s.keywordRules {
 			if !rule.Enabled || !keywordMatches(rule, normalized) {
