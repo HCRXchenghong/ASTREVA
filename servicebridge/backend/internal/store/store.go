@@ -31,6 +31,10 @@ type Store interface {
 	AddAIMessage(conversationID, content string, translations map[string]string) (domain.Message, domain.Conversation, error)
 	AddAgentMessage(agentID, conversationID, clientMsgID, content string, messageType domain.MessageType, translations map[string]string) (MessageResult, error)
 	UpdateMessageTranslations(conversationID, serverMsgID string, translations map[string]string) (domain.Message, error)
+	// SetMessageLanguageMeta 记录消息的语种与翻译状态（检测在应用层完成）。
+	SetMessageLanguageMeta(conversationID, serverMsgID, detectedLang, authorLang, translationStatus string) (domain.Message, error)
+	// UpdateConversationLanguage 更新会话的语言状态（访客语言、检测语种、显式指令覆盖、语种统计）。
+	UpdateConversationLanguage(conversationID string, patch ConversationLanguagePatch) (domain.Conversation, error)
 	RevokeMessage(actor domain.AuthSession, conversationID, serverMsgID string) (domain.Message, domain.Conversation, error)
 	CloseConversation(actor domain.AuthSession, conversationID string) (domain.Conversation, domain.Message, error)
 	DeleteConversation(actor domain.AuthSession, conversationID string) error
@@ -88,4 +92,12 @@ type MessagePage struct {
 	Messages   []domain.Message `json:"messages"`
 	HasMore    bool             `json:"has_more"`
 	NextBefore string           `json:"next_before,omitempty"`
+}
+
+// ConversationLanguagePatch 描述会话语言状态的可选更新字段，nil 表示不修改。
+type ConversationLanguagePatch struct {
+	VisitorLang       *string
+	DetectedLang      *string
+	ReplyLangOverride *string
+	LanguageStats     map[string]int
 }

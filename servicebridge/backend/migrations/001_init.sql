@@ -193,3 +193,13 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO business_hours (id, timezone, start_time, end_time, enabled)
 VALUES (1, 'Asia/Shanghai', '09:00', '18:00', true)
 ON CONFLICT (id) DO NOTHING;
+
+-- ===== 自动翻译与语种识别（P2）=====
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS detected_lang TEXT NOT NULL DEFAULT '';
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS author_lang TEXT NOT NULL DEFAULT '';
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS translation_status TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS detected_lang TEXT NOT NULL DEFAULT '';
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reply_lang_override TEXT NOT NULL DEFAULT '';
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reply_lang_override_at TIMESTAMPTZ;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS language_stats JSONB NOT NULL DEFAULT '{}'::jsonb;

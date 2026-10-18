@@ -26,8 +26,8 @@ const (
 
 	adminColumns        = `id, account, name, password_hash, created_at`
 	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), COALESCE(device_platform, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate`
-	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
-	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id`
+	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, COALESCE(detected_lang, ''), COALESCE(reply_lang_override, ''), reply_lang_override_at, COALESCE(language_stats::text, '{}'), last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
+	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id, COALESCE(detected_lang, ''), COALESCE(author_lang, ''), COALESCE(translation_status, '')`
 	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
 	auditColumns        = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
 )
@@ -786,6 +786,75 @@ func (s *PostgresStore) AddAgentMessage(agentID, conversationID, clientMsgID, co
 		return nil
 	})
 	return out, err
+}
+
+// SetMessageLanguageMeta 记录消息语种与翻译状态。
+func (s *PostgresStore) SetMessageLanguageMeta(conversationID, serverMsgID, detectedLang, authorLang, translationStatus string) (domain.Message, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	row := s.pool.QueryRow(ctx,
+		`UPDATE messages SET
+		   detected_lang = COALESCE(NULLIF($3, ''), detected_lang),
+		   author_lang = COALESCE(NULLIF($4, ''), author_lang),
+		   translation_status = COALESCE(NULLIF($5, ''), translation_status)
+		 WHERE server_msg_id=$1 AND conversation_id=$2
+		 RETURNING `+messageColumns,
+		serverMsgID, conversationID, detectedLang, authorLang, translationStatus)
+	msg, err := scanMessage(row)
+	if err != nil {
+		return domain.Message{}, mapNoRows(err)
+	}
+	return msg, nil
+}
+
+// UpdateConversationLanguage 更新会话语言状态。
+func (s *PostgresStore) UpdateConversationLanguage(conversationID string, patch ConversationLanguagePatch) (domain.Conversation, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	sets := []string{}
+	args := []any{conversationID}
+	add := func(column string, value any) {
+		args = append(args, value)
+		sets = append(sets, fmt.Sprintf("%s=$%d", column, len(args)))
+	}
+	if patch.VisitorLang != nil {
+		add("visitor_lang", *patch.VisitorLang)
+	}
+	if patch.DetectedLang != nil {
+		add("detected_lang", *patch.DetectedLang)
+	}
+	if patch.ReplyLangOverride != nil {
+		add("reply_lang_override", *patch.ReplyLangOverride)
+		if *patch.ReplyLangOverride == "" {
+			sets = append(sets, "reply_lang_override_at=NULL")
+		} else {
+			sets = append(sets, "reply_lang_override_at=now()")
+		}
+	}
+	if patch.LanguageStats != nil {
+		encoded, err := json.Marshal(patch.LanguageStats)
+		if err != nil {
+			return domain.Conversation{}, err
+		}
+		add("language_stats", string(encoded))
+	}
+	if len(sets) == 0 {
+		conversation, ok := s.Conversation(conversationID)
+		if !ok {
+			return domain.Conversation{}, ErrNotFound
+		}
+		return conversation, nil
+	}
+	sets = append(sets, "updated_at=now()")
+	row := s.pool.QueryRow(ctx,
+		`UPDATE conversations SET `+strings.Join(sets, ", ")+` WHERE id=$1 RETURNING `+conversationColumns, args...)
+	conversation, err := scanConversation(row)
+	if err != nil {
+		return domain.Conversation{}, mapNoRows(err)
+	}
+	return conversation, nil
 }
 
 func (s *PostgresStore) UpdateMessageTranslations(conversationID, serverMsgID string, translations map[string]string) (domain.Message, error) {
@@ -2771,6 +2840,8 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 	var out domain.Conversation
 	var remarkUpdatedAt sql.NullTime
 	var lastMessageAt sql.NullTime
+	var replyLangOverrideAt sql.NullTime
+	var languageStatsJSON string
 	err := row.Scan(
 		&out.ID,
 		&out.VisitorID,
@@ -2783,6 +2854,10 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 		&out.AssignedAgentID,
 		&out.Source,
 		&out.VisitorLang,
+		&out.DetectedLang,
+		&out.ReplyLangOverride,
+		&replyLangOverrideAt,
+		&languageStatsJSON,
 		&out.LastMessage,
 		&lastMessageAt,
 		&out.UnreadForAgent,
@@ -2796,7 +2871,26 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 	if lastMessageAt.Valid {
 		out.LastMessageAt = &lastMessageAt.Time
 	}
+	if replyLangOverrideAt.Valid {
+		out.ReplyLangOverrideAt = &replyLangOverrideAt.Time
+	}
+	if stats := parseLanguageStatsJSON(languageStatsJSON); len(stats) > 0 {
+		out.LanguageStats = stats
+	}
 	return out, err
+}
+
+// parseLanguageStatsJSON 解析 conversations.language_stats 列。
+func parseLanguageStatsJSON(raw string) map[string]int {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "{}" {
+		return nil
+	}
+	stats := map[string]int{}
+	if err := json.Unmarshal([]byte(trimmed), &stats); err != nil {
+		return nil
+	}
+	return stats
 }
 
 func scanConversations(rows pgx.Rows) ([]domain.Conversation, error) {
@@ -2858,7 +2952,7 @@ func scanMessage(row scanTarget) (domain.Message, error) {
 	var revokedByKind sql.NullString
 	var revokedByID sql.NullString
 	var translationsJSON string
-	err := row.Scan(&out.ServerMsgID, &out.ClientMsgID, &out.ConversationID, &out.SenderType, &out.SenderID, &out.MessageType, &out.Content, &translationsJSON, &out.CreatedAt, &revokedAt, &revokedByKind, &revokedByID)
+	err := row.Scan(&out.ServerMsgID, &out.ClientMsgID, &out.ConversationID, &out.SenderType, &out.SenderID, &out.MessageType, &out.Content, &translationsJSON, &out.CreatedAt, &revokedAt, &revokedByKind, &revokedByID, &out.DetectedLang, &out.AuthorLang, &out.TranslationStatus)
 	out.Translations = parseTranslationsJSON(translationsJSON)
 	if revokedAt.Valid {
 		out.RevokedAt = &revokedAt.Time

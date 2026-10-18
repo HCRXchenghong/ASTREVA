@@ -316,13 +316,31 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 		return store.MessageResult{}, store.ErrNotFound
 	}
 	visitorLang := ai.NormalizeLang(conversation.VisitorLang, ai.LangZh)
+	language := s.resolveConversationLanguage(conversation, content, messageType)
+	visitorLang = language.ReplyLang
 	if messageType == domain.MessageHandoff && strings.TrimSpace(content) == "" {
 		content = humanRequestText(visitorLang)
 	}
-	translations := s.translateToChinese(visitorLang, messageType, content)
+	// 翻译源语言用"这条消息实际使用的语言"，而不是会话初始语言。
+	translations := s.translateToChinese(language.DetectedLang, messageType, content)
 	result, err := s.store.AddVisitorMessage(conversationID, clientMsgID, content, messageType, translations)
 	if err != nil {
 		return store.MessageResult{}, err
+	}
+	// 记录语种与翻译状态，供客服端展示语种标签与「查看原文」。
+	if updated, metaErr := s.store.SetMessageLanguageMeta(conversationID, result.Input.ServerMsgID,
+		language.DetectedLang, language.DetectedLang, translationStatusFor(language.DetectedLang, ai.LangZh, translations)); metaErr == nil {
+		result.Input = updated
+	}
+	if language.Changed {
+		if updated, langErr := s.store.UpdateConversationLanguage(conversationID, store.ConversationLanguagePatch{
+			VisitorLang:       &language.ReplyLang,
+			DetectedLang:      &language.DetectedLang,
+			ReplyLangOverride: &language.Override,
+			LanguageStats:     language.Stats,
+		}); langErr == nil {
+			result.Conversation = updated
+		}
 	}
 
 	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.ack", Data: VisitorFacingMessageForLang(result.Input, visitorLang)})
@@ -451,11 +469,20 @@ func (s *Service) AddAgentMessage(agentID, conversationID, clientMsgID, content 
 	if !ok {
 		return store.MessageResult{}, store.ErrNotFound
 	}
-	visitorLang := ai.NormalizeLang(conversation.VisitorLang, ai.LangZh)
-	translations := s.translateFromChineseForVisitor(visitorLang, messageType, content)
+	visitorLang := conversationReplyLang(conversation)
+	authorLang := visitorLang
+	if isTranslatableMessageType(messageType) && strings.TrimSpace(content) != "" {
+		authorLang = ai.DetectLanguage(content).Code
+	}
+	// 客服可以写任何语言：源语言=检测结果，目标语言=访客当前语言。
+	translations := s.translateMessage(authorLang, visitorLang, messageType, content)
 	result, err := s.store.AddAgentMessage(agentID, conversationID, clientMsgID, content, messageType, translations)
 	if err != nil {
 		return store.MessageResult{}, err
+	}
+	if updated, metaErr := s.store.SetMessageLanguageMeta(conversationID, result.Input.ServerMsgID,
+		authorLang, authorLang, translationStatusFor(authorLang, visitorLang, translations)); metaErr == nil {
+		result.Input = updated
 	}
 	s.hub.SendToAgent(agentID, realtime.Event{Event: "message.ack", Data: result.Input})
 	// 访客侧看到的是其语言译文；客服发送的中文原文不下发给访客。
@@ -872,39 +899,33 @@ func aiBusyText(lang string) string {
 }
 
 // translateToChinese 把访客消息翻译成中文供客服/后台查看。翻译失败或已是中文时返回 nil（下发原文）。
-func (s *Service) translateToChinese(visitorLang string, messageType domain.MessageType, content string) map[string]string {
-	if visitorLang == ai.LangZh || !isTranslatableMessageType(messageType) {
-		return nil
-	}
-	if ai.DetectLang(content) == ai.LangZh {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
-	defer cancel()
-	translated, err := s.ai.Translate(ctx, s.store.AISettings(), content, visitorLang, ai.LangZh)
-	if err != nil || strings.TrimSpace(translated) == "" {
-		s.logger.Warn("translate visitor message to Chinese failed", "error", err)
-		return nil
-	}
-	return map[string]string{ai.LangZh: translated}
+func (s *Service) translateToChinese(sourceLang string, messageType domain.MessageType, content string) map[string]string {
+	return s.translateMessage(sourceLang, ai.LangZh, messageType, content)
 }
 
-// translateFromChineseForVisitor 把客服/后台的中文消息翻译成访客语言。失败或访客语言为中文时返回 nil。
-func (s *Service) translateFromChineseForVisitor(visitorLang string, messageType domain.MessageType, content string) map[string]string {
-	if visitorLang == ai.LangZh || !isTranslatableMessageType(messageType) {
+// translateMessage 通用译文生成：源语言与目标语言相同、不可翻译类型或翻译失败时返回 nil。
+func (s *Service) translateMessage(sourceLang, targetLang string, messageType domain.MessageType, content string) map[string]string {
+	sourceLang = ai.NormalizeLang(sourceLang, ai.LangZh)
+	targetLang = ai.NormalizeLang(targetLang, ai.LangZh)
+	if sourceLang == targetLang || !isTranslatableMessageType(messageType) || strings.TrimSpace(content) == "" {
 		return nil
 	}
-	if translated, ok := knownSystemText(content, visitorLang); ok {
-		return map[string]string{visitorLang: translated}
+	if translated, ok := knownSystemText(content, targetLang); ok {
+		return map[string]string{targetLang: translated}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
 	defer cancel()
-	translated, err := s.ai.Translate(ctx, s.store.AISettings(), content, ai.LangZh, visitorLang)
+	translated, err := s.ai.Translate(ctx, s.store.AISettings(), content, sourceLang, targetLang)
 	if err != nil || strings.TrimSpace(translated) == "" {
-		s.logger.Warn("translate agent message for visitor failed", "error", err)
+		s.logger.Warn("translate message failed", "source", sourceLang, "target", targetLang, "error", err)
 		return nil
 	}
-	return map[string]string{visitorLang: translated}
+	return map[string]string{targetLang: translated}
+}
+
+// translateFromChineseForVisitor 兼容旧调用点：把中文消息翻译成访客语言。
+func (s *Service) translateFromChineseForVisitor(visitorLang string, messageType domain.MessageType, content string) map[string]string {
+	return s.translateMessage(ai.LangZh, visitorLang, messageType, content)
 }
 
 // translateGeneratedMessageForVisitor 翻译关键词自动回复等系统生成消息，并落库译文。

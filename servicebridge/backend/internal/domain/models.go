@@ -120,27 +120,33 @@ type AuditEvent struct {
 }
 
 type Conversation struct {
-	ID               string             `json:"id"`
-	VisitorID        string             `json:"visitor_id"`
-	VisitorIP        string             `json:"visitor_ip"`
-	VisitorIPSource  string             `json:"visitor_ip_source,omitempty"`
-	VisitorRemark    string             `json:"visitor_remark"`
-	RemarkUpdatedBy  string             `json:"remark_updated_by,omitempty"`
-	RemarkUpdatedAt  *time.Time         `json:"remark_updated_at,omitempty"`
-	Status           ConversationStatus `json:"status"`
-	AssignedAgentID  string             `json:"assigned_agent_id,omitempty"`
+	ID              string             `json:"id"`
+	VisitorID       string             `json:"visitor_id"`
+	VisitorIP       string             `json:"visitor_ip"`
+	VisitorIPSource string             `json:"visitor_ip_source,omitempty"`
+	VisitorRemark   string             `json:"visitor_remark"`
+	RemarkUpdatedBy string             `json:"remark_updated_by,omitempty"`
+	RemarkUpdatedAt *time.Time         `json:"remark_updated_at,omitempty"`
+	Status          ConversationStatus `json:"status"`
+	AssignedAgentID string             `json:"assigned_agent_id,omitempty"`
 	// AssignedAgentName/AssignedAgentAvatar 是只读派生字段：按 AssignedAgentID 补齐，
 	// 供访客端展示真实客服，不落库、不参与写入。
 	AssignedAgentName   string `json:"assigned_agent_name,omitempty"`
 	AssignedAgentAvatar string `json:"assigned_agent_avatar,omitempty"`
 	Source              string `json:"source"`
-	VisitorLang      string             `json:"visitor_lang,omitempty"`
-	LastMessage      string             `json:"last_message"`
-	LastMessageAt    *time.Time         `json:"last_message_at,omitempty"`
-	UnreadForAgent   int                `json:"unread_for_agent"`
-	UnreadForVisitor int                `json:"unread_for_visitor"`
-	CreatedAt        time.Time          `json:"created_at"`
-	UpdatedAt        time.Time          `json:"updated_at"`
+	VisitorLang         string `json:"visitor_lang,omitempty"`
+	// DetectedLang 是最近一条访客消息检测出的语种；ReplyLangOverride 来自
+	// 客户显式要求（如"请用英语回答我"），整个会话持续生效，客服可清除。
+	DetectedLang        string         `json:"detected_lang,omitempty"`
+	ReplyLangOverride   string         `json:"reply_lang_override,omitempty"`
+	ReplyLangOverrideAt *time.Time     `json:"reply_lang_override_at,omitempty"`
+	LanguageStats       map[string]int `json:"language_stats,omitempty"`
+	LastMessage         string         `json:"last_message"`
+	LastMessageAt       *time.Time     `json:"last_message_at,omitempty"`
+	UnreadForAgent      int            `json:"unread_for_agent"`
+	UnreadForVisitor    int            `json:"unread_for_visitor"`
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
 }
 
 type Message struct {
@@ -155,6 +161,12 @@ type Message struct {
 	Translations map[string]string `json:"translations,omitempty"`
 	// OriginalContent 仅在下发时填充：当 Content 被替换为译文时保留原文，供客服端「查看原文」使用。
 	OriginalContent string `json:"original_content,omitempty"`
+	// DetectedLang 是这条消息实际使用的语言（访客消息=访客语言，客服消息=客服写的语言）。
+	DetectedLang string `json:"detected_lang,omitempty"`
+	// AuthorLang 是内容的原始语言，翻译的源语言。
+	AuthorLang string `json:"author_lang,omitempty"`
+	// TranslationStatus 记录本条消息的翻译状态：pending / done / failed / skipped。
+	TranslationStatus string `json:"translation_status,omitempty"`
 	// HiddenFromVisitor 仅在生成访客视图时使用：该消息不应展示给访客（如仅客服端可见的转接提示）。
 	HiddenFromVisitor bool        `json:"-"`
 	CreatedAt         time.Time   `json:"created_at"`

@@ -1098,6 +1098,59 @@ func (s *MemoryStore) AddAgentMessage(agentID, conversationID, clientMsgID, cont
 	return MessageResult{Input: input, Conversation: *conversation}, nil
 }
 
+// SetMessageLanguageMeta 记录消息语种与翻译状态。
+func (s *MemoryStore) SetMessageLanguageMeta(conversationID, serverMsgID, detectedLang, authorLang, translationStatus string) (domain.Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index := s.findMessageIndexLocked(conversationID, serverMsgID)
+	if index < 0 {
+		return domain.Message{}, ErrNotFound
+	}
+	msg := &s.messages[conversationID][index]
+	if detectedLang != "" {
+		msg.DetectedLang = detectedLang
+	}
+	if authorLang != "" {
+		msg.AuthorLang = authorLang
+	}
+	if translationStatus != "" {
+		msg.TranslationStatus = translationStatus
+	}
+	return *msg, nil
+}
+
+// UpdateConversationLanguage 更新会话语言状态（显式指令覆盖优先，其次检测语种与访客语言）。
+func (s *MemoryStore) UpdateConversationLanguage(conversationID string, patch ConversationLanguagePatch) (domain.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	conversation, ok := s.conversations[conversationID]
+	if !ok || conversation == nil {
+		return domain.Conversation{}, ErrNotFound
+	}
+	if patch.VisitorLang != nil {
+		conversation.VisitorLang = *patch.VisitorLang
+	}
+	if patch.DetectedLang != nil {
+		conversation.DetectedLang = *patch.DetectedLang
+	}
+	if patch.ReplyLangOverride != nil {
+		conversation.ReplyLangOverride = *patch.ReplyLangOverride
+		if *patch.ReplyLangOverride == "" {
+			conversation.ReplyLangOverrideAt = nil
+		} else {
+			now := time.Now().UTC()
+			conversation.ReplyLangOverrideAt = &now
+		}
+	}
+	if patch.LanguageStats != nil {
+		conversation.LanguageStats = patch.LanguageStats
+	}
+	conversation.UpdatedAt = time.Now().UTC()
+	return *conversation, nil
+}
+
 func (s *MemoryStore) UpdateMessageTranslations(conversationID, serverMsgID string, translations map[string]string) (domain.Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

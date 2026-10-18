@@ -8,31 +8,37 @@ import (
 	"unicode"
 )
 
+// NormalizeOptionalLang 归一化语言标记，无法识别或为空时返回空字符串。
+// 需要区分"没有语言信息"与"回退语言"时使用它（NormalizeLang 会回退到 zh）。
+func NormalizeOptionalLang(value string) string {
+	v := strings.ToLower(strings.TrimSpace(value))
+	if v == "" {
+		return ""
+	}
+	v = strings.ReplaceAll(v, "_", "-")
+	base := v
+	if index := strings.IndexAny(base, "-"); index > 0 {
+		base = base[:index]
+	}
+	if code, ok := languageNames[base]; ok {
+		return code
+	}
+	switch base {
+	case LangZh, LangEn, LangAr, LangEs, LangFr, LangDe, LangPt, LangIt, LangNl,
+		LangID, LangVi, LangTr, LangPl, LangRo, LangRu, LangJa, LangKo, LangTh, LangHe, LangHi, LangEl:
+		return base
+	case LangYue:
+		return LangZh
+	}
+	return ""
+}
+
 // NormalizeLang 把各种语言标记归一化为基础语言码（zh / en / ar / es ...），
 // 无法识别时回退为 fallback（fallback 为空则回退 zh）。
 // 方言标签（如 es-419、ar-Gulf）只保留语言部分，译文键始终使用基础码。
 func NormalizeLang(value, fallback string) string {
-	v := strings.ToLower(strings.TrimSpace(value))
-	v = strings.ReplaceAll(v, "_", "-")
-	if v != "" {
-		base := v
-		if index := strings.IndexAny(base, "-"); index > 0 {
-			base = base[:index]
-		}
-		if code, ok := languageNames[base]; ok {
-			return code
-		}
-		switch base {
-		case LangZh, LangEn, LangAr, LangEs, LangFr, LangDe, LangPt, LangIt, LangNl,
-			LangID, LangVi, LangTr, LangPl, LangRo, LangRu, LangJa, LangKo, LangTh, LangHe, LangHi, LangEl:
-			return base
-		case LangYue:
-			return LangZh
-		}
-		// 兼容完整语言名（如 "spanish" / "英语"）
-		if code, ok := lookupLanguageName(base); ok {
-			return code
-		}
+	if code := NormalizeOptionalLang(value); code != "" {
+		return code
 	}
 	if fallback != "" {
 		return fallback
