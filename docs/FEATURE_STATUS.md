@@ -121,6 +121,7 @@
 | App | `dart analyze`（含 tool/）No issues found；契约断言 76 + 画像断言 89 全通过 |
 | 前端契约 | `npm run cms:contract` 通过 |
 | 引擎端到端 | 真实 Go 引擎 + 真实 admin-server 解析客户端：供应商创建/掩码/一键取模型/绑定/禁用回退 5/5；知识库建库/导入/检索/设置/推荐发送 11 项 |
+| **真实 AI 故障转移端到端** | `node scripts/verify-ai-failover.mjs` 9/9 PASS：真实 MiMo 供应商连通（一键取模型 9 个）；用控制台同一个 `PUT /api/admin/ai-binding-targets` 配 `reception=[坏供应商@0, MiMo@1]`；走公开 Open API 真实访客会话触发 AI 接待；断言①回复已产生 ②回复不等于 28 条本地兜底文案之一（证明真供应商作答，非兜底）③坏供应商健康显示失败信号与 `last_error`（证明 priority 0 先被真实尝试）④MiMo 保持健康；`finally` 逐项还原配置、删测试会话/应用/坏供应商。负向对照（把模型名改成不存在的名字）正确 FAIL 2 项，证明断言非空转 |
 
 ---
 

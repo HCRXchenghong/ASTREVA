@@ -389,3 +389,18 @@ App 的「AI 建议」按钮同样按两者共同启用/禁用；控制台「客
 - **自动关闭**：`auto_close_idle_minutes>0` 且双方静默超阈值 → 走既有结束流程（访客可评价），审计 `conversation.auto_closed`，不重复关闭。
 - **优先级四模式**：判定集中在纯函数 `resolveAutoReplyPath(priority, aiEnabled, aiConfigured)`；`keyword_first` 完全保持历史行为。
   **已知限制**：`ai_first`/`ai_only` 判断"上游是否已配置"时看的是**全局 `ai_settings`**（store 层看不到能力绑定）；若只通过「AI 管理 → 能力绑定」提供上游（全局 Key 为空），这两种模式会退化为关键词。修复方向：由应用层把"能力绑定是否可用"传入该判定（列入后续优化）。
+
+## 十、AI 故障转移的实时端到端验证（`scripts/verify-ai-failover.mjs`）
+
+`node scripts/verify-ai-failover.mjs`（纯 Node，无新增依赖）对**真实运行中的**客服引擎执行一次可重复的故障转移验收：
+
+1. 用种子超级管理员登录 Go 引擎后台（`POST /api/admin/login`，默认 `superadmin` / `123456`）。
+2. 记录当前 `GET /api/admin/ai-binding-targets` 与 `ai_keyword_priority`，在 `finally` 中**原样恢复**（含其它能力的候选）。
+3. 确保真实 MiMo 供应商存在（缺省 `https://api.xiaomimimo.com/v1` / `mimo-v2.6-flash`，密钥从 gitignored `.env` 的 `ASTREVA_E2E_MIMO_API_KEY` 读取），并用 `POST /api/admin/ai-providers/{id}/test` 验证连通。
+4. 造一个必然失败的候选：`http://127.0.0.1:9/v1`，`timeout_ms=3000`，连接被立即拒绝。
+5. 通过控制台同一接口 `PUT /api/admin/ai-binding-targets` 把 `reception` 链配成 `[broken@priority 0, mimo@priority 1]`。
+6. 临时把 `ai_keyword_priority` 设为 `ai_only`，经开放 API（`POST /open/v1/conversations` + `POST /open/v1/conversations/{id}/messages`）投递真实访客消息，轮询直到 AI 回复落库（≤90s）。
+7. 断言：确实产生 AI 回复；回复**不等于任何本地兜底文案**（从 Go 源码的 `fallbackReply` / `aiBusyText` / 拒答 / 超限文案提取，覆盖多语言）；`GET /api/admin/ai-providers/health` 中失败候选 `consecutive_failures >= 1`（或 `state=open`）且 `last_error` 指向死上游，MiMo 保持 `closed` 且 0 失败；任一断言失败则退出码非 0。
+8. 输出中的密钥一律掩码为 `sk-****`，绝不打印明文。
+
+幂等性：MiMo 供应商复用、绝不删除；失败候选每次重建（熔断器按 `provider_id` 计数，保证 priority 0 真的被尝试），结束时删除；临时开放 API 应用与测试会话一并删除；若上一次失败留下了熔断冷却，脚本会先等待冷却结束再发消息。可配置项：`ASTREVA_E2E_ENGINE_URL`、`ASTREVA_E2E_ADMIN_ACCOUNT`、`ASTREVA_E2E_ADMIN_PASSWORD`、`ASTREVA_E2E_MIMO_API_KEY`、`ASTREVA_E2E_MIMO_BASE_URL`、`ASTREVA_E2E_MIMO_MODEL`。
