@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +18,9 @@ import (
 	"customer-service/backend/internal/store"
 )
 
-// newTranslationStub 起一个 OpenAI 兼容的翻译上游，按调用次数返回不同译文。
+// newTranslationStub 起一个 OpenAI 兼容的翻译上游，按翻译调用次数返回不同译文。
+// 计数只统计翻译请求（system prompt 含"翻译专家"），避免 AI 自动回复并发打到同一上游时
+// 干扰"第几次翻译"的断言。
 func newTranslationStub(t *testing.T) (*httptest.Server, *int32) {
 	t.Helper()
 	var calls int32
@@ -26,10 +29,15 @@ func newTranslationStub(t *testing.T) (*httptest.Server, *int32) {
 			http.NotFound(w, r)
 			return
 		}
-		count := atomic.AddInt32(&calls, 1)
+		raw, _ := io.ReadAll(r.Body)
+		content := "AI 自动回复"
+		if strings.Contains(string(raw), "翻译专家") {
+			count := atomic.AddInt32(&calls, 1)
+			content = fmt.Sprintf("中文译文%d", count)
+		}
 		payload := map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"role": "assistant", "content": fmt.Sprintf("中文译文%d", count)}},
+				{"message": map[string]any{"role": "assistant", "content": content}},
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
