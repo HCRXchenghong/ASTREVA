@@ -100,6 +100,8 @@ class ChatMessage {
     this.clientMessageId = '',
     this.revoked = false,
     this.originalContent = '',
+    this.detectedLang = '',
+    this.translationStatus = '',
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
@@ -110,6 +112,8 @@ class ChatMessage {
     messageType: '${json['message_type'] ?? 'text'}',
     content: '${json['content'] ?? ''}',
     originalContent: '${json['original_content'] ?? ''}',
+    detectedLang: '${json['detected_lang'] ?? ''}',
+    translationStatus: '${json['translation_status'] ?? ''}',
     createdAt:
         DateTime.tryParse('${json['created_at'] ?? ''}')?.toLocal() ??
         DateTime.now(),
@@ -123,6 +127,12 @@ class ChatMessage {
   final String messageType;
   final String content;
   final String originalContent;
+
+  /// 这条消息实际使用的语言（基础码，如 es / ar / zh）。
+  final String detectedLang;
+
+  /// 翻译状态：skipped / pending / done / failed。
+  final String translationStatus;
   final DateTime createdAt;
   final bool revoked;
 
@@ -135,6 +145,8 @@ class ChatMessage {
     messageType: 'revoked',
     content: content,
     originalContent: originalContent,
+    detectedLang: detectedLang,
+    translationStatus: translationStatus,
     createdAt: createdAt,
     revoked: true,
   );

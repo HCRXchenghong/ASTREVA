@@ -72,22 +72,83 @@ type AdminUser struct {
 	Created  time.Time `json:"created_at"`
 }
 
+// 翻译方言模式取值。
+const (
+	DialectModeStandard = "standard"
+	DialectModeDialect  = "dialect"
+)
+
+// AgentPreferences 是客服账号级的翻译与辅助偏好。
+// 使用指针字段区分"未设置"与显式 false，读取时通过 WithDefaults 填充默认值。
+type AgentPreferences struct {
+	AutoTranslateIncoming *bool  `json:"auto_translate_incoming,omitempty"`       // 访客消息自动译成中文，默认 true
+	AutoTranslateOutgoing *bool  `json:"auto_translate_outgoing,omitempty"`       // 我的消息自动译成访客语言，默认 true
+	ReviewTranslation     *bool  `json:"review_translation_before_send,omitempty"` // 发送前确认/编辑译文，默认 true
+	DialectMode           string `json:"translation_dialect_mode,omitempty"`      // "standard"（默认）| "dialect"
+	AISuggestReplies      *bool  `json:"ai_suggest_replies,omitempty"`            // AI 推荐发送内容，默认 true
+}
+
+// NormalizeDialectMode 归一化方言模式：空或非法值一律回落到 standard。
+func NormalizeDialectMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case DialectModeDialect:
+		return DialectModeDialect
+	default:
+		return DialectModeStandard
+	}
+}
+
+// ValidDialectMode 判断方言模式是否为允许的取值（standard / dialect）。
+func ValidDialectMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case DialectModeStandard, DialectModeDialect:
+		return true
+	default:
+		return false
+	}
+}
+
+// WithDefaults 返回填充默认值后的偏好副本：nil 布尔值按 true 处理，
+// DialectMode 为空或非法时填 "standard"。
+func (p AgentPreferences) WithDefaults() AgentPreferences {
+	out := p
+	if out.AutoTranslateIncoming == nil {
+		value := true
+		out.AutoTranslateIncoming = &value
+	}
+	if out.AutoTranslateOutgoing == nil {
+		value := true
+		out.AutoTranslateOutgoing = &value
+	}
+	if out.ReviewTranslation == nil {
+		value := true
+		out.ReviewTranslation = &value
+	}
+	if out.AISuggestReplies == nil {
+		value := true
+		out.AISuggestReplies = &value
+	}
+	out.DialectMode = NormalizeDialectMode(out.DialectMode)
+	return out
+}
+
 type Agent struct {
-	ID                     string      `json:"id"`
-	Account                string      `json:"account"`
-	Name                   string      `json:"name"`
-	Group                  string      `json:"group"`
-	Password               string      `json:"-"`
-	Status                 AgentStatus `json:"status"`
-	DeviceToken            string      `json:"device_token,omitempty"`
-	DevicePlatform         string      `json:"device_platform,omitempty"`
-	MaxConversations       int         `json:"max_conversations"`
-	CurrentConversations   int         `json:"current_conversations"`
-	AvatarURL              string      `json:"avatar_url,omitempty"`
-	ManualSatisfactionRate *float64    `json:"manual_satisfaction_rate,omitempty"`
-	DisabledAt             *time.Time  `json:"disabled_at,omitempty"`
-	Created                time.Time   `json:"created_at"`
-	Updated                time.Time   `json:"updated_at"`
+	ID                     string           `json:"id"`
+	Account                string           `json:"account"`
+	Name                   string           `json:"name"`
+	Group                  string           `json:"group"`
+	Password               string           `json:"-"`
+	Status                 AgentStatus      `json:"status"`
+	DeviceToken            string           `json:"device_token,omitempty"`
+	DevicePlatform         string           `json:"device_platform,omitempty"`
+	MaxConversations       int              `json:"max_conversations"`
+	CurrentConversations   int              `json:"current_conversations"`
+	AvatarURL              string           `json:"avatar_url,omitempty"`
+	ManualSatisfactionRate *float64         `json:"manual_satisfaction_rate,omitempty"`
+	Preferences            AgentPreferences `json:"preferences"`
+	DisabledAt             *time.Time       `json:"disabled_at,omitempty"`
+	Created                time.Time        `json:"created_at"`
+	Updated                time.Time        `json:"updated_at"`
 }
 
 type Visitor struct {

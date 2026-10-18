@@ -2122,6 +2122,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final original = message.originalContent.trim();
     final hasOriginal =
         original.isNotEmpty && original != message.content.trim();
+    // 翻译状态与语种标签：让客服清楚对方原文、译文是否就绪。
+    final translationHint = _translationHintFor(message, isMine: isMine);
 
     return Container(
       constraints: BoxConstraints(
@@ -2146,41 +2148,98 @@ class _MessageBubbleState extends State<_MessageBubble> {
                 color: isAI ? AppColors.successBorder : AppColors.border,
               ),
       ),
-      child: hasOriginal
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                content,
-                const SizedBox(height: 6),
-                GestureDetector(
-                  onTap: () =>
-                      setState(() => _showOriginal = !_showOriginal),
-                  child: Text(
-                    _showOriginal ? '收起原文' : '查看原文',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.primary,
-                    ),
-                  ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          content,
+          if (hasOriginal) ...[
+            const SizedBox(height: 6),
+            GestureDetector(
+              onTap: () => setState(() => _showOriginal = !_showOriginal),
+              child: Text(
+                _showOriginal ? '收起原文' : '查看原文',
+                style: const TextStyle(fontSize: 11, color: AppColors.primary),
+              ),
+            ),
+            if (_showOriginal) ...[
+              const SizedBox(height: 4),
+              Text(
+                original,
+                style: TextStyle(
+                  color: textColor.withValues(alpha: .55),
+                  fontSize: 12,
+                  height: 1.4,
                 ),
-                if (_showOriginal) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    original,
-                    style: TextStyle(
-                      color: textColor.withValues(alpha: .55),
-                      fontSize: 12,
-                      height: 1.4,
-                    ),
-                  ),
-                ],
-              ],
-            )
-          : content,
+              ),
+            ],
+          ],
+          if (translationHint != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              translationHint,
+              style: TextStyle(
+                fontSize: 11,
+                color: textColor.withValues(alpha: .6),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
+
+/// 语言代码 → 中文名（与后台的语种标签保持一致）。
+const Map<String, String> _languageNames = {
+  'zh': '中文',
+  'en': '英语',
+  'ar': '阿拉伯语',
+  'es': '西班牙语',
+  'fr': '法语',
+  'de': '德语',
+  'pt': '葡萄牙语',
+  'it': '意大利语',
+  'nl': '荷兰语',
+  'id': '印尼语',
+  'vi': '越南语',
+  'tr': '土耳其语',
+  'pl': '波兰语',
+  'ro': '罗马尼亚语',
+  'ru': '俄语',
+  'ja': '日语',
+  'ko': '韩语',
+  'th': '泰语',
+  'he': '希伯来语',
+  'hi': '印地语',
+  'el': '希腊语',
+};
+
+String languageLabelFor(String code) {
+  final key = code.trim().toLowerCase().split('-').first;
+  if (key.isEmpty) return '';
+  return _languageNames[key] ?? key.toUpperCase();
+}
+
+/// 翻译状态提示：翻译中 / 翻译失败 / 已翻译 / 语种标签；无需展示时返回 null。
+String? _translationHintFor(ChatMessage message, {required bool isMine}) {
+  final status = message.translationStatus.trim();
+  final parts = <String>[];
+  if (status == 'pending') {
+    parts.add(isMine ? '翻译中…' : '对方原文，翻译中…');
+  } else if (status == 'failed') {
+    parts.add(isMine ? '翻译失败，已发送原文' : '翻译失败，已显示原文');
+  } else if (status == 'done' && isMine) {
+    parts.add('已翻译');
+  }
+  if (!isMine) {
+    final label = languageLabelFor(message.detectedLang);
+    if (label.isNotEmpty) parts.add('语种：$label');
+  }
+  if (parts.isEmpty) return null;
+  return parts.join(' · ');
+}
+
 class ChangePasswordDialog extends StatefulWidget {
   const ChangePasswordDialog({super.key, required this.client});
   final ServiceBridgeClient client;

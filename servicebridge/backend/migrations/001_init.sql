@@ -203,3 +203,6 @@ ALTER TABLE conversations ADD COLUMN IF NOT EXISTS detected_lang TEXT NOT NULL D
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reply_lang_override TEXT NOT NULL DEFAULT '';
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reply_lang_override_at TIMESTAMPTZ;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS language_stats JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- ===== 客服账号级翻译偏好（P3）=====
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'::jsonb;

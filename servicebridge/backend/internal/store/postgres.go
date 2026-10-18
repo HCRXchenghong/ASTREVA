@@ -25,7 +25,7 @@ const (
 	defaultDBTimeout = 5 * time.Second
 
 	adminColumns        = `id, account, name, password_hash, created_at`
-	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), COALESCE(device_platform, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate`
+	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), COALESCE(device_platform, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate, COALESCE(preferences::text, '{}')`
 	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, COALESCE(detected_lang, ''), COALESCE(reply_lang_override, ''), reply_lang_override_at, COALESCE(language_stats::text, '{}'), last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
 	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id, COALESCE(detected_lang, ''), COALESCE(author_lang, ''), COALESCE(translation_status, '')`
 	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
@@ -2674,6 +2674,8 @@ func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS translations JSONB NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS manual_satisfaction_rate DOUBLE PRECISION`,
+		// 客服账号级翻译偏好；历史账号读取时由 domain.AgentPreferences.WithDefaults 填充默认值。
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'::jsonb`,
 		`ALTER TABLE contact_settings ADD COLUMN IF NOT EXISTS wechat_reply_type TEXT NOT NULL DEFAULT 'image'`,
 		`ALTER TABLE contact_settings ADD COLUMN IF NOT EXISTS wechat_image_url TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE contact_settings ADD COLUMN IF NOT EXISTS qq_reply_type TEXT NOT NULL DEFAULT 'text'`,
@@ -2797,6 +2799,7 @@ func scanAgent(row scanTarget) (domain.Agent, error) {
 	var out domain.Agent
 	var disabled sql.NullTime
 	var manualRate sql.NullFloat64
+	var preferencesJSON string
 	err := row.Scan(
 		&out.ID,
 		&out.Account,
@@ -2813,7 +2816,11 @@ func scanAgent(row scanTarget) (domain.Agent, error) {
 		&out.Updated,
 		&out.AvatarURL,
 		&manualRate,
+		&preferencesJSON,
 	)
+	if err != nil {
+		return out, err
+	}
 	if disabled.Valid {
 		out.DisabledAt = &disabled.Time
 	}
@@ -2821,7 +2828,12 @@ func scanAgent(row scanTarget) (domain.Agent, error) {
 		rate := manualRate.Float64
 		out.ManualSatisfactionRate = &rate
 	}
-	return out, err
+	if trimmed := strings.TrimSpace(preferencesJSON); trimmed != "" && trimmed != "{}" {
+		if err := json.Unmarshal([]byte(trimmed), &out.Preferences); err != nil {
+			return out, fmt.Errorf("decode agent preferences: %w", err)
+		}
+	}
+	return out, nil
 }
 
 func scanAgents(rows pgx.Rows) ([]domain.Agent, error) {
@@ -3281,6 +3293,38 @@ func (s *PostgresStore) RegisterAgentDeviceToken(agentID, deviceToken, platform 
 	agent.DeviceToken = token
 	agent.DevicePlatform = normalizedPlatform
 	return agent, nil
+}
+
+// AgentPreferences 读取客服账号级偏好；未设置过的字段按默认值返回。
+func (s *PostgresStore) AgentPreferences(agentID string) (domain.AgentPreferences, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	agent, err := s.agentByID(ctx, strings.TrimSpace(agentID))
+	if err != nil {
+		return domain.AgentPreferences{}, mapNoRows(err)
+	}
+	return agent.Preferences.WithDefaults(), nil
+}
+
+// UpdateAgentPreferences 覆盖保存客服偏好，非法方言模式归一为 standard。
+func (s *PostgresStore) UpdateAgentPreferences(agentID string, next domain.AgentPreferences) (domain.AgentPreferences, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	encoded, err := json.Marshal(next.WithDefaults())
+	if err != nil {
+		return domain.AgentPreferences{}, err
+	}
+	row := s.pool.QueryRow(ctx, `
+		UPDATE agents SET preferences=$2::jsonb, updated_at=$3
+		WHERE id=$1
+		RETURNING `+agentColumns, strings.TrimSpace(agentID), string(encoded), dbNow())
+	agent, err := scanAgent(row)
+	if err != nil {
+		return domain.AgentPreferences{}, mapNoRows(err)
+	}
+	return agent.Preferences.WithDefaults(), nil
 }
 
 const apiAppColumns = `id, name, key_prefix, key_hash, enabled, rate_limit, note, request_count, last_used_at, created_at, updated_at`

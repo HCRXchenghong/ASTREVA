@@ -63,6 +63,10 @@ type Store interface {
 	UpdatePushSettings(next domain.PushSettings) (domain.PushSettings, error)
 	ChangePassword(session domain.AuthSession, currentPassword, newPassword string) error
 	RegisterAgentDeviceToken(agentID, deviceToken, platform string) (domain.Agent, error)
+	// AgentPreferences 读取客服账号级偏好（已填充默认值）。
+	AgentPreferences(agentID string) (domain.AgentPreferences, error)
+	// UpdateAgentPreferences 覆盖保存客服偏好；非法方言模式归一为 standard。
+	UpdateAgentPreferences(agentID string, next domain.AgentPreferences) (domain.AgentPreferences, error)
 
 	AppReleases(platform string) []domain.AppRelease
 	CreateAppRelease(next domain.AppRelease) (domain.AppRelease, error)

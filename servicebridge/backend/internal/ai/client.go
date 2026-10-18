@@ -75,6 +75,12 @@ func (c *Client) Reply(ctx context.Context, settings domain.AISettings, contacts
 // Translate 翻译一条客服对话内容。会先理解口语表达、语气和语境，再输出自然、地道的译文，
 // 避免逐字直译。源语言与目标语言相同时直接返回原文。
 func (c *Client) Translate(ctx context.Context, settings domain.AISettings, text, sourceLang, targetLang string) (string, error) {
+	return c.TranslateWithStyle(ctx, settings, text, sourceLang, targetLang, "")
+}
+
+// TranslateWithStyle 与 Translate 相同，但允许附加目标语言风格提示（如"拉美西班牙语""海湾阿拉伯语"）。
+// styleHint 为空时行为与 Translate 完全一致。
+func (c *Client) TranslateWithStyle(ctx context.Context, settings domain.AISettings, text, sourceLang, targetLang, styleHint string) (string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return "", nil
@@ -87,8 +93,12 @@ func (c *Client) Translate(ctx context.Context, settings domain.AISettings, text
 	if strings.TrimSpace(settings.APIKey) == "" {
 		return "", errors.New("AI API key is required for translation")
 	}
+	systemPrompt := translationPrompt(sourceLang, targetLang)
+	if hint := strings.TrimSpace(styleHint); hint != "" {
+		systemPrompt += "\n风格要求：" + hint
+	}
 	// 翻译是单条内容处理，不需要会话历史上下文。
-	out, err := c.complete(ctx, settings, translationPrompt(sourceLang, targetLang), nil, text, "")
+	out, err := c.complete(ctx, settings, systemPrompt, nil, text, "")
 	if err != nil {
 		return "", err
 	}

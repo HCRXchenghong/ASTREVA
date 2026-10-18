@@ -739,6 +739,32 @@ func (s *MemoryStore) RegisterAgentDeviceToken(agentID, deviceToken, platform st
 	return *agent, nil
 }
 
+// AgentPreferences 读取客服账号级偏好；未设置过的字段按默认值返回。
+func (s *MemoryStore) AgentPreferences(agentID string) (domain.AgentPreferences, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	agent, ok := s.agentsByID[agentID]
+	if !ok {
+		return domain.AgentPreferences{}, ErrNotFound
+	}
+	return agent.Preferences.WithDefaults(), nil
+}
+
+// UpdateAgentPreferences 覆盖保存客服偏好，非法方言模式归一为 standard。
+func (s *MemoryStore) UpdateAgentPreferences(agentID string, next domain.AgentPreferences) (domain.AgentPreferences, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agent, ok := s.agentsByID[agentID]
+	if !ok {
+		return domain.AgentPreferences{}, ErrNotFound
+	}
+	agent.Preferences = next.WithDefaults()
+	agent.Updated = time.Now().UTC()
+	return agent.Preferences, nil
+}
+
 func (s *MemoryStore) UpdateAgentAvatar(agentID, avatarURL string) (domain.Agent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

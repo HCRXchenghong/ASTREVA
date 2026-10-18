@@ -89,7 +89,10 @@
               </div>
               <!-- T3：客服自己发出的消息的翻译状态。 -->
               <div v-if="translationHint(message)" class="translation-hint" :class="`translation-${message.translation_status}`">
-                <icon-loading v-if="message.translation_status === 'pending'" class="hint-icon" />
+                <template v-if="message.translation_status === 'pending'">
+                  <icon-loading class="hint-icon" />
+                  <span>{{ translationHint(message) }}</span>
+                </template>
                 <a-tag v-else-if="message.translation_status === 'failed'" size="small" color="orange">
                   {{ translationHint(message) }}
                 </a-tag>
