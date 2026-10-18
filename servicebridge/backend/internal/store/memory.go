@@ -63,6 +63,10 @@ type MemoryStore struct {
 
 	aiLimits domain.AILimits
 
+	// 访客画像（P5）：按访客聚合的画像与单例配置。
+	visitorProfiles        map[string]*domain.VisitorProfile
+	visitorProfileSettings domain.VisitorProfileSettings
+
 	// 批次 4：客服策略 / 排队 / 黑名单 / 提醒渠道 / SMTP（本期只做存储与接口）。
 	servicePolicy domain.ServicePolicy
 	queue         map[string]domain.QueuedConversation
@@ -105,6 +109,9 @@ func NewMemoryStore(options Options) *MemoryStore {
 		knowledgeSettings: domain.DefaultKnowledgeSettings(),
 		// AI 限额默认开启但阈值宽松，与改造前（无限制）的实际体验保持一致。
 		aiLimits: domain.DefaultAILimits(),
+		// 访客画像默认开启，但只有真实访客消息才会生成画像。
+		visitorProfiles:        map[string]*domain.VisitorProfile{},
+		visitorProfileSettings: domain.DefaultVisitorProfileSettings(),
 		// 客服策略默认值与表结构一致；本批次不接线计时器，因此不影响现有流转。
 		servicePolicy: domain.DefaultServicePolicy(),
 		queue:         map[string]domain.QueuedConversation{},
@@ -1357,6 +1364,8 @@ func (s *MemoryStore) DeleteConversation(actor domain.AuthSession, conversationI
 	// 与 PostgreSQL 的外键 ON DELETE CASCADE 对齐：删除会话时清理排队记录。
 	delete(s.queue, conversationID)
 	delete(s.ratings, conversationID)
+	// 画像随访客数据保留策略清理：该访客已无任何会话时一并删除画像。
+	s.pruneVisitorProfileLocked(conversation.VisitorID)
 	return nil
 }
 

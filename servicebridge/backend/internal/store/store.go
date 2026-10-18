@@ -108,6 +108,25 @@ type Store interface {
 	// UpdateAILimits 覆盖保存限额配置；负数归零、超上限收敛，updated_at 由存储层写入。
 	UpdateAILimits(next domain.AILimits) (domain.AILimits, error)
 
+	// ===== 访客画像（P5）=====
+	// VisitorProfileSettings 读取画像单例配置；未写入时返回 DefaultVisitorProfileSettings()。
+	// 返回的 ThirdPartyKey 为解密后的明文，仅供服务端内部使用（json:"-"）。
+	VisitorProfileSettings() domain.VisitorProfileSettings
+	// UpdateVisitorProfileSettings 局部更新画像配置：nil=不改，ThirdPartyKey 传空串=清除。
+	// 数值越界会收敛到合法区间，密钥落库前加密。
+	UpdateVisitorProfileSettings(patch domain.VisitorProfileSettingsPatch) (domain.VisitorProfileSettings, error)
+	// VisitorProfile 按访客 ID 读取画像（跨会话聚合）。
+	VisitorProfile(visitorID string) (domain.VisitorProfile, bool)
+	// UpdateVisitorProfile 以"读-改-写"方式原子更新画像：mutate 返回错误则不写入。
+	// 注意：mutate 在存储锁内执行，必须是纯内存操作（网络/存储调用请在调用前完成）。
+	UpdateVisitorProfile(visitorID string, mutate func(*domain.VisitorProfile) error) (domain.VisitorProfile, error)
+	// VisitorProfiles 按关键词/国家码/标签筛选并分页返回画像，第二个返回值为总数。
+	VisitorProfiles(query domain.VisitorProfileQuery) ([]domain.VisitorProfile, int)
+	// ConversationsForVisitor 返回某访客的全部会话（创建时间倒序）。
+	ConversationsForVisitor(visitorID string) []domain.Conversation
+	// DeleteVisitorProfile 删除画像；不存在时返回 ErrNotFound。
+	DeleteVisitorProfile(visitorID string) error
+
 	// ===== 客服策略（批次 4：本期只做存储与接口，不接线计时器）=====
 	// ServicePolicy 读取客服策略单例（未写入时返回 DefaultServicePolicy()）。
 	ServicePolicy() domain.ServicePolicy

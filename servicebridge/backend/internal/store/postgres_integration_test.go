@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -1358,3 +1359,236 @@ func TestPostgresAPIAppScopes(t *testing.T) {
 		t.Fatalf("恢复不受限后应存 '[]'，实际 %q", storedScopes)
 	}
 }
+
+// TestPostgresVisitorProfiles 是访客画像（P5）的真实 PostgreSQL 集成测试：
+// 覆盖两张新表的建表、配置单例约束与密钥掩码、画像 JSONB 往返、
+// 列表筛选/分页、访客会话列表，以及会话清空后的画像清理。
+func TestPostgresVisitorProfiles(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	st, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	// 1) 建表：两张新表必须存在（缺表时下面的读写会直接失败）。
+	for _, table := range []string{"visitor_profiles", "visitor_profile_settings"} {
+		var exists bool
+		if err := st.pool.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name=$1)
+		`, table).Scan(&exists); err != nil {
+			t.Fatalf("查询表 %s 失败：%v", table, err)
+		}
+		if !exists {
+			t.Fatalf("ensureCoreTables 未建表：%s", table)
+		}
+	}
+
+	// 2) 配置单例：默认值 -> 写入（密钥加密）-> 读回掩码。
+	defaults := st.VisitorProfileSettings()
+	if !defaults.Enabled || defaults.ThirdPartyTimeoutMS != domain.DefaultThirdPartyTimeoutMS {
+		t.Fatalf("默认画像配置不符：%+v", defaults)
+	}
+	dir := "/data/geolite2-it"
+	url := "https://ip.example.com/{ip}"
+	key := "integration-secret-key-4321"
+	updated, err := st.UpdateVisitorProfileSettings(domain.VisitorProfileSettingsPatch{
+		GeoIPDir: &dir, ThirdPartyURL: &url, ThirdPartyKey: &key, CacheTTLHours: intPtr(48),
+	})
+	if err != nil {
+		t.Fatalf("更新画像配置失败：%v", err)
+	}
+	if updated.ThirdPartyKey != key || updated.ThirdPartyKeyMasked != "****4321" {
+		t.Fatalf("配置写入不符：%+v", updated)
+	}
+	var storedKey string
+	if err := st.pool.QueryRow(ctx, `SELECT third_party_key_ciphertext FROM visitor_profile_settings WHERE id=1`).Scan(&storedKey); err != nil {
+		t.Fatalf("读取密钥密文失败：%v", err)
+	}
+	if storedKey == key || !strings.HasPrefix(storedKey, "enc:v1:") {
+		t.Fatalf("密钥必须加密入库，实际 %q", storedKey)
+	}
+	reloaded := st.VisitorProfileSettings()
+	if reloaded.ThirdPartyKey != key || reloaded.CacheTTLHours != 48 || reloaded.GeoIPDir != dir {
+		t.Fatalf("配置读回不符：%+v", reloaded)
+	}
+	// 不传密钥 = 不改；空串 = 清除。
+	unchanged, err := st.UpdateVisitorProfileSettings(domain.VisitorProfileSettingsPatch{ShowFullIP: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("更新开关失败：%v", err)
+	}
+	if unchanged.ThirdPartyKey != key || unchanged.ShowFullIP {
+		t.Fatalf("局部更新语义不符：%+v", unchanged)
+	}
+	empty := ""
+	cleared, err := st.UpdateVisitorProfileSettings(domain.VisitorProfileSettingsPatch{ThirdPartyKey: &empty})
+	if err != nil {
+		t.Fatalf("清除密钥失败：%v", err)
+	}
+	if cleared.ThirdPartyKey != "" || cleared.ThirdPartyKeyMasked != "" {
+		t.Fatalf("密钥应被清除：%+v", cleared)
+	}
+
+	// 3) 单例约束：id=2 必须被 CHECK 拒绝。
+	if _, err := st.pool.Exec(ctx, `INSERT INTO visitor_profile_settings (id) VALUES (2)`); err == nil {
+		t.Fatal("visitor_profile_settings 单例约束未生效（id=2 竟然写入成功）")
+	}
+
+	// 4) 画像 JSONB 往返。
+	// 用时间派生的唯一 IP / 摘要后缀，保证多次运行（数据库不重建）时筛选断言仍然精确。
+	nano := time.Now().UnixNano()
+	uniqueIP := fmt.Sprintf("198.18.%d.%d", (nano/256)%256, nano%256)
+	uniqueSummary := fmt.Sprintf("咨询太阳能项目报价-%d", nano%1000000)
+	visitorID := "vis_pg_it_" + time.Now().Format("150405.000000")
+	evidenceTime := time.Now().UTC().Truncate(time.Second)
+	written, err := st.UpdateVisitorProfile(visitorID, func(profile *domain.VisitorProfile) error {
+		profile.Country = "沙特阿拉伯"
+		profile.CountryCode = "SA"
+		profile.Region = "利雅得省"
+		profile.City = "利雅得"
+		profile.Timezone = "Asia/Riyadh"
+		profile.NationalityGuess = "SA"
+		profile.NationalityConfidence = 0.95
+		profile.NationalityBasis = []string{domain.GeoBasisLocal, domain.GeoBasisLanguage, domain.GeoBasisTimezone}
+		profile.IPFirst = uniqueIP
+		profile.IPLast = uniqueIP
+		profile.Languages = map[string]int{"ar": 12, "en": 3}
+		profile.Dialect = "ar-Gulf"
+		profile.CodeSwitching = true
+		profile.Summary = uniqueSummary
+		profile.Tags = []string{"高意向", "询价"}
+		profile.Interests = []string{"太阳能"}
+		profile.Evidence = []domain.VisitorProfileEvidence{{MessageID: "msg_pg_1", Text: "كم السعر؟", CreatedAt: evidenceTime}}
+		profile.Visits = 4
+		profile.LastPath = "/ar/pricing"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("写入画像失败：%v", err)
+	}
+	if written.VisitorID != visitorID || written.NationalityConfidence != 0.95 {
+		t.Fatalf("写入结果不符：%+v", written)
+	}
+
+	read, ok := st.VisitorProfile(visitorID)
+	if !ok {
+		t.Fatal("画像应可读回")
+	}
+	if read.Country != "沙特阿拉伯" || read.CountryCode != "SA" || read.City != "利雅得" || read.Timezone != "Asia/Riyadh" {
+		t.Fatalf("地理字段往返失败：%+v", read)
+	}
+	if len(read.NationalityBasis) != 3 || read.NationalityBasis[0] != domain.GeoBasisLocal {
+		t.Fatalf("nationality_basis 往返失败：%+v", read.NationalityBasis)
+	}
+	if read.Languages["ar"] != 12 || read.Languages["en"] != 3 {
+		t.Fatalf("languages 往返失败：%+v", read.Languages)
+	}
+	if len(read.Tags) != 2 || len(read.Interests) != 1 || len(read.Evidence) != 1 {
+		t.Fatalf("JSONB 集合往返失败：%+v", read)
+	}
+	if read.Evidence[0].MessageID != "msg_pg_1" || !read.Evidence[0].CreatedAt.Equal(evidenceTime) {
+		t.Fatalf("evidence 往返失败：%+v", read.Evidence)
+	}
+	if !read.CodeSwitching || read.Dialect != "ar-Gulf" || read.Visits != 4 {
+		t.Fatalf("标量字段往返失败：%+v", read)
+	}
+	// 原始 JSONB 必须是数组/对象而不是 null。
+	var basisText, languagesText string
+	if err := st.pool.QueryRow(ctx, `SELECT nationality_basis::text, languages::text FROM visitor_profiles WHERE visitor_id=$1`, visitorID).
+		Scan(&basisText, &languagesText); err != nil {
+		t.Fatalf("读取原始 JSONB 失败：%v", err)
+	}
+	if !strings.HasPrefix(basisText, "[") || !strings.HasPrefix(languagesText, "{") {
+		t.Fatalf("JSONB 列类型不符：basis=%q languages=%q", basisText, languagesText)
+	}
+
+	// 5) 列表筛选与分页。
+	secondID := visitorID + "_b"
+	if _, err := st.UpdateVisitorProfile(secondID, func(profile *domain.VisitorProfile) error {
+		profile.Country = "美国"
+		profile.CountryCode = "US"
+		profile.City = "山景城"
+		profile.Summary = "咨询 API 文档"
+		profile.Tags = []string{"技术"}
+		profile.Languages = map[string]int{"en": 2}
+		return nil
+	}); err != nil {
+		t.Fatalf("写入第二个画像失败：%v", err)
+	}
+	byCountry, total := st.VisitorProfiles(domain.VisitorProfileQuery{Country: "SA"})
+	if total < 1 || len(byCountry) < 1 || byCountry[0].CountryCode != "SA" {
+		t.Fatalf("国家码筛选失败：%+v (total=%d)", byCountry, total)
+	}
+	byTag, total := st.VisitorProfiles(domain.VisitorProfileQuery{Tag: "技术"})
+	if total < 1 || len(byTag) < 1 || byTag[0].VisitorID != secondID {
+		t.Fatalf("标签筛选失败：%+v (total=%d)", byTag, total)
+	}
+	byQuery, total := st.VisitorProfiles(domain.VisitorProfileQuery{Query: "msg_pg_1"})
+	if total != 0 {
+		t.Fatalf("关键词不应命中证据文本，实际 total=%d", total)
+	}
+	byQuery, total = st.VisitorProfiles(domain.VisitorProfileQuery{Query: uniqueIP})
+	if total != 1 || len(byQuery) != 1 || byQuery[0].VisitorID != visitorID {
+		t.Fatalf("IP 关键词筛选失败：%+v (total=%d)", byQuery, total)
+	}
+	byQuery, total = st.VisitorProfiles(domain.VisitorProfileQuery{Query: uniqueSummary})
+	if total != 1 || len(byQuery) != 1 || byQuery[0].VisitorID != visitorID {
+		t.Fatalf("摘要关键词筛选失败：%+v (total=%d)", byQuery, total)
+	}
+	paged, total := st.VisitorProfiles(domain.VisitorProfileQuery{Limit: 1, Offset: 0})
+	if total < 2 || len(paged) != 1 {
+		t.Fatalf("分页失败：len=%d total=%d", len(paged), total)
+	}
+
+	// 6) 访客会话列表 + 会话清空后的画像清理。
+	session, err := st.CreateVisitorConversation("203.0.113.9", "web", "ar", "direct", "")
+	if err != nil {
+		t.Fatalf("创建访客会话失败：%v", err)
+	}
+	conversationID := session.Conversation.ID
+	conversationVisitorID := session.Conversation.VisitorID
+	if _, err := st.UpdateVisitorProfile(conversationVisitorID, func(profile *domain.VisitorProfile) error {
+		profile.Visits = 1
+		return nil
+	}); err != nil {
+		t.Fatalf("写入会话访客画像失败：%v", err)
+	}
+	conversations := st.ConversationsForVisitor(conversationVisitorID)
+	if len(conversations) != 1 || conversations[0].ID != conversationID {
+		t.Fatalf("ConversationsForVisitor = %+v", conversations)
+	}
+	admin := domain.AuthSession{Kind: domain.AccountAdmin, AccountID: "admin_it"}
+	if _, _, err := st.CloseConversation(admin, conversationID); err != nil {
+		t.Fatalf("关闭会话失败：%v", err)
+	}
+	if err := st.DeleteConversation(admin, conversationID); err != nil {
+		t.Fatalf("删除会话失败：%v", err)
+	}
+	if _, ok := st.VisitorProfile(conversationVisitorID); ok {
+		t.Fatal("该访客已无会话，画像应随数据保留策略清理")
+	}
+
+	// 7) 显式删除画像。
+	if err := st.DeleteVisitorProfile(visitorID); err != nil {
+		t.Fatalf("删除画像失败：%v", err)
+	}
+	if _, ok := st.VisitorProfile(visitorID); ok {
+		t.Fatal("画像应已删除")
+	}
+	if err := st.DeleteVisitorProfile(visitorID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("重复删除应返回 ErrNotFound，实际 %v", err)
+	}
+	_ = st.DeleteVisitorProfile(secondID)
+}
+
+func intPtr(value int) *int    { return &value }
+func boolPtr(value bool) *bool { return &value }

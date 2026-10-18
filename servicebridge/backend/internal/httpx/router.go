@@ -137,7 +137,8 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			return
 		}
 		ipInfo := resolveClientIP(r, trustedProxies)
-		session, err := service.CreateVisitorConversation(ipInfo.IP, req.Source, req.Lang, ipInfo.Source, "")
+		// 带上请求头：CDN 注入的国家码（CF-IPCountry 等）是画像最优先的地理来源。
+		session, err := service.CreateVisitorConversationWithGeo(ipInfo.IP, req.Source, req.Lang, ipInfo.Source, "", r.Header)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -2153,6 +2154,9 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 
 	// ===== 批次 4 第一波：客服策略 / 排队 / 黑名单 / 提醒渠道 / SMTP（只做配置与测试发送）=====
 	registerServicePolicyRoutes(mux, service, trustedProxies)
+
+	// ===== P5：访客画像（配置 / 列表 / 详情 / 重算 / 客服会话侧画像卡）=====
+	registerVisitorProfileRoutes(mux, service, trustedProxies)
 
 	handler := logRequests(logger, mux)
 	handler = rateLimit(cfg, trustedProxies, handler)

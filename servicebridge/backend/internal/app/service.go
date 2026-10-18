@@ -40,6 +40,9 @@ type Service struct {
 	alertLinkHint string
 	// policyLoop 是 SLA 巡检 ticker 的运行状态（见 service_policy_sla.go），可优雅停止。
 	policyLoop *policyLoopRunner
+
+	// profile 是访客画像的进程内运行时（地理解析器与告警去重，见 visitor_profile.go）。
+	profile *visitorProfileRuntime
 }
 
 func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Service {
@@ -54,6 +57,7 @@ func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Serv
 		limitTexts:              newLimitTextTranslator(),
 		watching:                newWatchRegistry(),
 		policyLoop:              &policyLoopRunner{},
+		profile:                 newVisitorProfileRuntime(),
 	}
 }
 
@@ -445,6 +449,9 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.typing", Data: map[string]any{"sender_type": "ai", "typing": true}})
 		go s.generateAIReply(conversationID, result.Input.ServerMsgID, result.AIText, visitorLang)
 	}
+	// 访客画像：异步累计语言/方言/code-switching/地理，绝不阻塞消息主流程。
+	// 画像关闭时 trackVisitorMessage 直接返回（不采集、不发起第三方请求）。
+	s.trackVisitorMessage(result.Conversation, result.Input, language.DetectedLang)
 	if needsAI {
 		s.queueTranslation(translationJob{
 			conversationID: conversationID,
