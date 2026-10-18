@@ -1,5 +1,5 @@
 <script lang="tsx">
-  import { defineComponent, ref, h, compile, computed } from 'vue';
+  import { defineComponent, ref, h, computed, resolveComponent } from 'vue';
   import { useI18n } from 'vue-i18n';
   import { useRoute, useRouter, RouteRecordRaw } from 'vue-router';
   import type { RouteMeta } from 'vue-router';
@@ -95,7 +95,7 @@
             _route.forEach((element) => {
               // This is demo, modify nodes as needed
               const icon = element?.meta?.icon
-                ? () => h(compile(`<${element?.meta?.icon}/>`))
+                ? () => h(resolveComponent(element.meta.icon))
                 : null;
               const node =
                 element?.children && element?.children.length !== 0 ? (
@@ -103,7 +103,7 @@
                     key={element?.name}
                     v-slots={{
                       icon,
-                      title: () => h(compile(t(element?.meta?.locale || ''))),
+                      title: () => t(element?.meta?.locale || element?.meta?.title || ''),
                     }}
                   >
                     {travel(element?.children)}
@@ -114,7 +114,7 @@
                     v-slots={{ icon }}
                     onClick={() => goto(element)}
                   >
-                    {t(element?.meta?.locale || '')}
+                    {t(element?.meta?.locale || element?.meta?.title || '')}
                   </a-menu-item>
                 );
               nodes.push(node as never);

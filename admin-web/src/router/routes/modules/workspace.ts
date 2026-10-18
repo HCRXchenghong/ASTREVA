@@ -6,9 +6,11 @@ export default {
   component: DEFAULT_LAYOUT,
   meta: {
     title: '工作台',
+        locale: '工作台',
     requiresAuth: true,
     icon: 'icon-dashboard',
     order: 1,
+    hideInMenu: false,
   },
   children: [
     {
@@ -17,8 +19,8 @@ export default {
       component: () => import('@/views/workspace/index.vue'),
       meta: {
         title: '实时工作台',
+        locale: '实时工作台',
         requiresAuth: true,
-        hideInMenu: true,
       },
     },
   ],

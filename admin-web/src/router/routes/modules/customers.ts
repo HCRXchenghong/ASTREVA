@@ -7,22 +7,26 @@ export default {
   redirect: '/customers/agents',
   meta: {
     title: '客服管理',
+        locale: '客服管理',
     requiresAuth: true,
     icon: 'icon-user-group',
     order: 2,
+    hideInMenu: false,
   },
   children: [
     {
       path: 'agents',
       name: 'Agents',
       component: () => import('@/views/customers/agents.vue'),
-      meta: { title: '客服账号', requiresAuth: true },
+      meta: { title: '客服账号',
+        locale: '客服账号', requiresAuth: true },
     },
     {
       path: 'evaluations',
       name: 'Evaluations',
       component: () => import('@/views/customers/evaluations.vue'),
-      meta: { title: '服务评价', requiresAuth: true },
+      meta: { title: '服务评价',
+        locale: '服务评价', requiresAuth: true },
     },
   ],
 };
