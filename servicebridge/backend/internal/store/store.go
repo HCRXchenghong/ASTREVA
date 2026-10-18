@@ -108,6 +108,46 @@ type Store interface {
 	// UpdateAILimits 覆盖保存限额配置；负数归零、超上限收敛，updated_at 由存储层写入。
 	UpdateAILimits(next domain.AILimits) (domain.AILimits, error)
 
+	// ===== 客服策略（批次 4：本期只做存储与接口，不接线计时器）=====
+	// ServicePolicy 读取客服策略单例（未写入时返回 DefaultServicePolicy()）。
+	ServicePolicy() domain.ServicePolicy
+	// UpdateServicePolicy 覆盖保存客服策略；非法枚举回落、负数归零、超上限收敛。
+	UpdateServicePolicy(next domain.ServicePolicy) (domain.ServicePolicy, error)
+
+	// QueueList 返回排队列表（priority DESC, enqueued_at ASC）。
+	QueueList() []domain.QueuedConversation
+	// EnqueueConversation 把会话写入排队队列（已存在时更新分组/优先级/原因，保留原入队时间）。
+	EnqueueConversation(entry domain.QueuedConversation) (domain.QueuedConversation, error)
+	// DequeueConversation 把会话移出排队队列；不存在时返回 ErrNotFound。
+	DequeueConversation(conversationID string) error
+
+	// BlacklistList 返回黑名单（kind 为空表示全部；已过期项仍会返回，便于后台清理）。
+	BlacklistList(kind string) []domain.BlacklistEntry
+	// AddBlacklist 新增黑名单项；(kind,value) 重复时返回 ErrConflict。
+	AddBlacklist(entry domain.BlacklistEntry) (domain.BlacklistEntry, error)
+	// DeleteBlacklist 删除黑名单项；不存在时返回 ErrNotFound。
+	DeleteBlacklist(id string) error
+	// MatchBlacklist 判断 (kind,value) 是否命中有效黑名单；过期项视为未命中并顺手清理。
+	MatchBlacklist(kind, value string) (domain.BlacklistEntry, bool)
+
+	// AgentAlertChannels 返回某客服的全部提醒渠道（Config 为明文，仅服务端内部使用；
+	// ConfigMasked 为掩码，供接口返回）。
+	AgentAlertChannels(agentID string) []domain.AgentAlertChannel
+	// AgentAlertChannel 按 ID 读取单个提醒渠道（Config 为明文），供渠道测试发送复用已保存配置。
+	AgentAlertChannel(id string) (domain.AgentAlertChannel, bool)
+	// CreateAgentAlertChannel 新增提醒渠道；每个客服最多 3 个，超出返回 ErrInvalidInput。
+	CreateAgentAlertChannel(agentID, kind string, config map[string]string) (domain.AgentAlertChannel, error)
+	// UpdateAgentAlertChannel 局部更新渠道；config==nil 表示不改配置。
+	// config 为合并语义：未出现的键保留原值，显式空串删除该键，其余覆盖。
+	UpdateAgentAlertChannel(id string, patch domain.AgentAlertChannelPatch, config *map[string]string) (domain.AgentAlertChannel, error)
+	// DeleteAgentAlertChannel 删除渠道；不存在时返回 ErrNotFound。
+	DeleteAgentAlertChannel(id string) error
+
+	// AlertSMTPSettings 读取全局 SMTP 设置；Password 为明文（json:"-"），PasswordMasked 供接口返回。
+	AlertSMTPSettings() domain.AlertSMTPSettings
+	// UpdateAlertSMTPSettings 覆盖保存 SMTP 设置；password==nil 不改，"" 清除，其它覆盖。
+	UpdateAlertSMTPSettings(next domain.AlertSMTPSettings, password *string) (domain.AlertSMTPSettings, error)
+
 	// RequestHumanHandoff 静默转人工：会话状态置为 human_requested 并分配客服，
 	// 不产生任何消息，供 AI 知识库未命中（unknown_action=handoff）时复用既有转人工逻辑。
 	RequestHumanHandoff(conversationID string) (domain.Conversation, error)

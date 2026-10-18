@@ -369,6 +369,9 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			AISuggestReplies        *bool     `json:"ai_suggest_replies"`
 			KnowledgeSuggestEnabled *bool     `json:"knowledge_suggest_enabled"`
 			KnowledgeBaseIDs        *[]string `json:"knowledge_base_ids"`
+			// 批次 4：接管弹窗与只读围观开关（默认 true / false）。
+			TakeoverPopupEnabled *bool `json:"takeover_popup_enabled"`
+			ReadOnlyWatch        *bool `json:"read_only_watch"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -393,6 +396,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		}
 		if req.KnowledgeSuggestEnabled != nil {
 			next.KnowledgeSuggestEnabled = req.KnowledgeSuggestEnabled
+		}
+		if req.TakeoverPopupEnabled != nil {
+			next.TakeoverPopupEnabled = req.TakeoverPopupEnabled
+		}
+		if req.ReadOnlyWatch != nil {
+			next.ReadOnlyWatch = req.ReadOnlyWatch
 		}
 		if req.KnowledgeBaseIDs != nil {
 			baseIDs, err := resolveAgentKnowledgeBaseIDs(service, *req.KnowledgeBaseIDs)
@@ -1961,6 +1970,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		if req.KnowledgeSuggestEnabled != nil {
 			next.KnowledgeSuggestEnabled = req.KnowledgeSuggestEnabled
 		}
+		if req.TakeoverPopupEnabled != nil {
+			next.TakeoverPopupEnabled = req.TakeoverPopupEnabled
+		}
+		if req.ReadOnlyWatch != nil {
+			next.ReadOnlyWatch = req.ReadOnlyWatch
+		}
 		if req.KnowledgeBaseIDs != nil {
 			baseIDs, err := resolveAgentKnowledgeBaseIDs(service, *req.KnowledgeBaseIDs)
 			if err != nil {
@@ -2134,6 +2149,9 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 
 	mux.HandleFunc("GET /ws", service.ServeWebSocket)
 
+	// ===== 批次 4 第一波：客服策略 / 排队 / 黑名单 / 提醒渠道 / SMTP（只做配置与测试发送）=====
+	registerServicePolicyRoutes(mux, service, trustedProxies)
+
 	handler := logRequests(logger, mux)
 	handler = rateLimit(cfg, trustedProxies, handler)
 	handler = cors(cfg, handler)
@@ -2282,6 +2300,8 @@ type agentPreferencesPatchRequest struct {
 	AISuggestReplies        *bool     `json:"ai_suggest_replies"`
 	KnowledgeSuggestEnabled *bool     `json:"knowledge_suggest_enabled"`
 	KnowledgeBaseIDs        *[]string `json:"knowledge_base_ids"`
+	TakeoverPopupEnabled    *bool     `json:"takeover_popup_enabled"`
+	ReadOnlyWatch           *bool     `json:"read_only_watch"`
 }
 
 // knowledgeBaseCreateRequest 是新建知识库请求；enabled 省略时默认 true。

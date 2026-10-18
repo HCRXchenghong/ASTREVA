@@ -92,6 +92,10 @@ type AgentPreferences struct {
 	KnowledgeSuggestEnabled *bool `json:"knowledge_suggest_enabled,omitempty"`
 	// KnowledgeBaseIDs 限定该客服可检索的知识库；为空表示全部启用中的知识库。
 	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty"`
+	// TakeoverPopupEnabled 控制访客发起会话时是否弹「接管」提示，默认 true。
+	TakeoverPopupEnabled *bool `json:"takeover_popup_enabled,omitempty"`
+	// ReadOnlyWatch 控制是否以只读围观方式查看会话（不标记已读、不计入分配），默认 false。
+	ReadOnlyWatch *bool `json:"read_only_watch,omitempty"`
 }
 
 // NormalizeDialectMode 归一化方言模式：空或非法值一律回落到 standard。
@@ -137,6 +141,14 @@ func (p AgentPreferences) WithDefaults() AgentPreferences {
 	if out.KnowledgeSuggestEnabled == nil {
 		value := true
 		out.KnowledgeSuggestEnabled = &value
+	}
+	if out.TakeoverPopupEnabled == nil {
+		value := true
+		out.TakeoverPopupEnabled = &value
+	}
+	if out.ReadOnlyWatch == nil {
+		value := false
+		out.ReadOnlyWatch = &value
 	}
 	out.DialectMode = NormalizeDialectMode(out.DialectMode)
 	return out
@@ -216,8 +228,15 @@ type Conversation struct {
 	LastMessageAt       *time.Time     `json:"last_message_at,omitempty"`
 	UnreadForAgent      int            `json:"unread_for_agent"`
 	UnreadForVisitor    int            `json:"unread_for_visitor"`
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
+	// FirstResponseAt/LastAgentReplyAt 供批次 4 的 SLA 计时器使用；本期只落库，
+	// 不参与任何会话流转（计时器接线在下一波）。
+	FirstResponseAt  *time.Time `json:"first_response_at,omitempty"`
+	LastAgentReplyAt *time.Time `json:"last_agent_reply_at,omitempty"`
+	// SLAState 是 SLA 状态机字段（本期恒为空串），QueueGroup 是会话所属排队分组。
+	SLAState   string    `json:"sla_state,omitempty"`
+	QueueGroup string    `json:"queue_group,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type Message struct {

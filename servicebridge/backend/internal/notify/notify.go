@@ -43,12 +43,19 @@ type Message struct {
 // Notifier 由调用方提供当前推送配置，便于后台改配置后立即生效。
 type Notifier interface {
 	Notify(ctx context.Context, settings domain.PushSettings, message Message) error
+	// SendAlertChannels 把客服提醒投递到该客服配置的提醒渠道（telegram / bark / email）。
+	// 单个渠道失败会重试 2 次，最终失败通过 errors.Join 汇总返回；密钥不写入日志。
+	SendAlertChannels(ctx context.Context, channels []domain.AgentAlertChannel, payload AlertPayload) error
 }
 
 // DisabledNotifier 不做任何事情，用于未接入推送的测试与最小部署。
 type DisabledNotifier struct{}
 
 func (DisabledNotifier) Notify(context.Context, domain.PushSettings, Message) error { return nil }
+
+func (DisabledNotifier) SendAlertChannels(context.Context, []domain.AgentAlertChannel, AlertPayload) error {
+	return nil
+}
 
 type cachedToken struct {
 	value     string
@@ -64,6 +71,13 @@ type Provider struct {
 	oauthEndpoint       string
 	fcmEndpointTemplate string
 	apnsEndpoints       map[string]string
+
+	// 提醒渠道（批次 4）：端点与重试间隔允许测试替换；sendMail 抽象便于用假 SMTP 交互测试。
+	telegramEndpointTemplate string
+	barkEndpointTemplate     string
+	retryDelays              []time.Duration
+	smtpSettings             func() domain.AlertSMTPSettings
+	sendMail                 mailSender
 
 	mu     sync.Mutex
 	tokens map[string]cachedToken
@@ -91,7 +105,11 @@ func NewProvider(logger *slog.Logger) *Provider {
 			"sandbox":    apnsSandboxURL,
 			"production": apnsProductionURL,
 		},
-		tokens: map[string]cachedToken{},
+		telegramEndpointTemplate: "https://api.telegram.org/bot%s/sendMessage",
+		barkEndpointTemplate:     "%s/%s/%s/%s",
+		retryDelays:              []time.Duration{200 * time.Millisecond, 600 * time.Millisecond},
+		sendMail:                 smtpSendMail,
+		tokens:                   map[string]cachedToken{},
 	}
 }
 

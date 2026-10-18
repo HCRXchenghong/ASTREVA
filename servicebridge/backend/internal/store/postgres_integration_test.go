@@ -553,3 +553,347 @@ func TestPostgresAILimits(t *testing.T) {
 		t.Fatalf("恢复默认限额失败：%v", err)
 	}
 }
+
+// TestPostgresServicePolicy 是客服策略单例的真实 PostgreSQL 集成测试：
+// 验证 ensureCoreTables 建表、未写入时回退默认值、单例写入/读回与归一化。
+func TestPostgresServicePolicy(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	// DELETE 成功本身即证明 service_policy 表已被 ensureCoreTables 创建。
+	if _, err := st.pool.Exec(ctx, `DELETE FROM service_policy`); err != nil {
+		t.Fatalf("清空 service_policy 失败（表缺失时必然失败）：%v", err)
+	}
+	defaults := st.ServicePolicy()
+	want := domain.DefaultServicePolicy()
+	if defaults.MaxWaitSeconds != want.MaxWaitSeconds ||
+		defaults.SLAFirstResponseSeconds != want.SLAFirstResponseSeconds ||
+		defaults.SLAIdleAction != want.SLAIdleAction ||
+		defaults.AIKeywordPriority != want.AIKeywordPriority ||
+		defaults.TakeoverPopupEnabled != want.TakeoverPopupEnabled {
+		t.Fatalf("未写入时的默认策略不符：got=%+v want=%+v", defaults, want)
+	}
+
+	// 单例写入 + 读回 + 归一化。
+	updated, err := st.UpdateServicePolicy(domain.ServicePolicy{
+		QueueEnabled:         false,
+		MaxWaitSeconds:       123,
+		SLAIdleAction:        "bogus",
+		AIKeywordPriority:    domain.AIKeywordPriorityAIOnly,
+		AutoCloseIdleMinutes: 99999999,
+		UnattendedReply:      "  请稍候  ",
+	})
+	if err != nil {
+		t.Fatalf("写入策略失败：%v", err)
+	}
+	if updated.QueueEnabled || updated.MaxWaitSeconds != 123 || updated.UnattendedReply != "请稍候" {
+		t.Fatalf("策略读回不符：%+v", updated)
+	}
+	if updated.SLAIdleAction != domain.SLAIdleActionAI {
+		t.Fatalf("非法枚举应回落 ai：%q", updated.SLAIdleAction)
+	}
+	if updated.AutoCloseIdleMinutes != domain.ServicePolicyMaxAutoCloseIdleMinutesLimit {
+		t.Fatalf("超上限应收敛：%d", updated.AutoCloseIdleMinutes)
+	}
+	if updated.UpdatedAt == nil {
+		t.Fatal("策略 updated_at 未写入")
+	}
+	// 单例约束：再次写入仍只有一行。
+	if _, err := st.UpdateServicePolicy(domain.DefaultServicePolicy()); err != nil {
+		t.Fatalf("覆盖写入策略失败：%v", err)
+	}
+	var rows int
+	if err := st.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM service_policy`).Scan(&rows); err != nil {
+		t.Fatalf("统计策略行失败：%v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("service_policy 应为单例，实际 %d 行", rows)
+	}
+}
+
+// TestPostgresQueueBlacklistAndChannels 覆盖排队、黑名单、提醒渠道与 SMTP 的真实读写与级联清理。
+func TestPostgresQueueBlacklistAndChannels(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	st, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	suffix := time.Now().Format("150405.000000")
+	agent, err := st.CreateAgent(domain.Agent{
+		Account: "sp_it_" + suffix,
+		Name:    "策略集成客服",
+		Group:   "default",
+		Status:  domain.AgentOnline,
+	}, "IntegrationTest-123")
+	if err != nil {
+		t.Fatalf("创建客服失败：%v", err)
+	}
+
+	// ---------- 排队 ----------
+	visitor, err := st.CreateVisitorConversation("203.0.113.201", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建会话失败：%v", err)
+	}
+	conversationID := visitor.Conversation.ID
+	if _, err := st.EnqueueConversation(domain.QueuedConversation{ConversationID: "conv_missing"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("不存在的会话入队应返回 ErrNotFound，实际 %v", err)
+	}
+	first, err := st.EnqueueConversation(domain.QueuedConversation{
+		ConversationID: conversationID, GroupName: "售前", Priority: 3, Reason: "capacity",
+	})
+	if err != nil {
+		t.Fatalf("入队失败：%v", err)
+	}
+	if first.Reason != domain.QueueReasonCapacity || first.GroupName != "售前" {
+		t.Fatalf("入队记录不符：%+v", first)
+	}
+	again, err := st.EnqueueConversation(domain.QueuedConversation{
+		ConversationID: conversationID, GroupName: "VIP", Priority: 9, Reason: "manual",
+	})
+	if err != nil {
+		t.Fatalf("重复入队失败：%v", err)
+	}
+	if !again.EnqueuedAt.Equal(first.EnqueuedAt) {
+		t.Fatalf("重复入队应保留原入队时间：%v -> %v", first.EnqueuedAt, again.EnqueuedAt)
+	}
+	if again.Priority != 9 || again.GroupName != "VIP" {
+		t.Fatalf("重复入队应更新优先级/分组：%+v", again)
+	}
+	queue := st.QueueList()
+	if len(queue) == 0 || queue[0].ConversationID != conversationID {
+		t.Fatalf("排队列表不符：%+v", queue)
+	}
+	if err := st.DequeueConversation(conversationID); err != nil {
+		t.Fatalf("出队失败：%v", err)
+	}
+	if err := st.DequeueConversation(conversationID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("重复出队应返回 ErrNotFound，实际 %v", err)
+	}
+
+	// 会话删除应级联清理排队记录。
+	if _, err := st.EnqueueConversation(domain.QueuedConversation{ConversationID: conversationID, Reason: "offline"}); err != nil {
+		t.Fatalf("再次入队失败：%v", err)
+	}
+	adminSession := domain.AuthSession{Kind: domain.AccountAdmin, AccountID: "admin_it"}
+	if _, _, err := st.CloseConversation(adminSession, conversationID); err != nil {
+		t.Fatalf("关闭会话失败：%v", err)
+	}
+	if err := st.DeleteConversation(adminSession, conversationID); err != nil {
+		t.Fatalf("删除会话失败：%v", err)
+	}
+	var queued int
+	if err := st.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM conversation_queue WHERE conversation_id=$1`, conversationID).Scan(&queued); err != nil {
+		t.Fatalf("统计排队记录失败：%v", err)
+	}
+	if queued != 0 {
+		t.Fatal("会话删除后排队记录应被级联清理")
+	}
+
+	// ---------- 会话新增列（SLA / 排队分组）读写 ----------
+	second, err := st.CreateVisitorConversation("203.0.113.202", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建会话失败：%v", err)
+	}
+	secondID := second.Conversation.ID
+	if _, err := st.pool.Exec(ctx, `
+		UPDATE conversations
+		SET first_response_at=now(), last_agent_reply_at=now(), sla_state='idle', queue_group='售后'
+		WHERE id=$1
+	`, secondID); err != nil {
+		t.Fatalf("写入会话新增列失败（列缺失时必然失败）：%v", err)
+	}
+	reloaded, ok := st.Conversation(secondID)
+	if !ok {
+		t.Fatal("读回会话失败")
+	}
+	if reloaded.FirstResponseAt == nil || reloaded.LastAgentReplyAt == nil ||
+		reloaded.SLAState != "idle" || reloaded.QueueGroup != "售后" {
+		t.Fatalf("会话新增列读写不符：%+v", reloaded)
+	}
+
+	// ---------- 黑名单 ----------
+	value := "vis_it_" + suffix
+	entry, err := st.AddBlacklist(domain.BlacklistEntry{Kind: "visitor", Value: value, Reason: "集成测试", CreatedBy: "admin_it"})
+	if err != nil {
+		t.Fatalf("新增黑名单失败：%v", err)
+	}
+	if _, ok := st.MatchBlacklist("visitor", value); !ok {
+		t.Fatal("黑名单应命中")
+	}
+	if _, err := st.AddBlacklist(domain.BlacklistEntry{Kind: "visitor", Value: value}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("重复添加应返回 ErrConflict，实际 %v", err)
+	}
+	if _, err := st.AddBlacklist(domain.BlacklistEntry{Kind: "ip", Value: "203.0.113.250:53100"}); err != nil {
+		t.Fatalf("新增 IP 黑名单失败：%v", err)
+	}
+	if _, ok := st.MatchBlacklist("ip", "203.0.113.250"); !ok {
+		t.Fatal("IP 黑名单应命中（忽略端口）")
+	}
+	past := time.Now().UTC().Add(-time.Minute)
+	expired, err := st.AddBlacklist(domain.BlacklistEntry{Kind: "account", Value: "acc_it_" + suffix, ExpiresAt: &past})
+	if err != nil {
+		t.Fatalf("新增过期黑名单失败：%v", err)
+	}
+	if _, ok := st.MatchBlacklist("account", "acc_it_"+suffix); ok {
+		t.Fatal("过期黑名单应视为未命中")
+	}
+	// 命中过期项时应顺手删除该行。
+	var expiredRows int
+	if err := st.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM service_blacklist WHERE id=$1`, expired.ID).Scan(&expiredRows); err != nil {
+		t.Fatalf("统计过期黑名单失败：%v", err)
+	}
+	if expiredRows != 0 {
+		t.Fatal("过期黑名单应在命中时被清理")
+	}
+	if list := st.BlacklistList("visitor"); len(list) == 0 {
+		t.Fatal("按 kind 查询黑名单应有结果")
+	}
+	if err := st.DeleteBlacklist(entry.ID); err != nil {
+		t.Fatalf("删除黑名单失败：%v", err)
+	}
+	if err := st.DeleteBlacklist(entry.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("重复删除应返回 ErrNotFound，实际 %v", err)
+	}
+
+	// ---------- 提醒渠道（密钥加密入库 + 合并语义 + 上限 + 级联清理）----------
+	token := "123456:IntegrationSecretToken"
+	channel, err := st.CreateAgentAlertChannel(agent.ID, "telegram", map[string]string{"token": token, "chat_id": "10086"})
+	if err != nil {
+		t.Fatalf("创建提醒渠道失败：%v", err)
+	}
+	if channel.Config["token"] != token {
+		t.Fatalf("读回的渠道配置应解密为明文：%+v", channel.Config)
+	}
+	// 入库必须是密文：config_ciphertext 不能包含明文 token。
+	var ciphertext string
+	if err := st.pool.QueryRow(ctx, `SELECT config_ciphertext FROM agent_alert_channels WHERE id=$1`, channel.ID).Scan(&ciphertext); err != nil {
+		t.Fatalf("读取渠道密文失败：%v", err)
+	}
+	if strings.Contains(ciphertext, token) || !strings.HasPrefix(ciphertext, "enc:v1:") {
+		t.Fatalf("渠道配置必须以 AES-256-GCM 密文入库：%q", ciphertext)
+	}
+	if single, ok := st.AgentAlertChannel(channel.ID); !ok || single.Config["token"] != token {
+		t.Fatalf("按 ID 读取渠道失败：%+v %v", single, ok)
+	}
+
+	// 合并语义：只传 chat_id 时 token 保留。
+	merged, err := st.UpdateAgentAlertChannel(channel.ID, domain.AgentAlertChannelPatch{}, &map[string]string{"chat_id": "10010"})
+	if err != nil {
+		t.Fatalf("合并更新渠道失败：%v", err)
+	}
+	if merged.Config["token"] != token || merged.Config["chat_id"] != "10010" {
+		t.Fatalf("合并更新结果不符：%+v", merged.Config)
+	}
+	disabled := false
+	updatedChannel, err := st.UpdateAgentAlertChannel(channel.ID, domain.AgentAlertChannelPatch{Enabled: &disabled}, nil)
+	if err != nil {
+		t.Fatalf("更新渠道开关失败：%v", err)
+	}
+	if updatedChannel.Enabled || updatedChannel.Config["token"] != token {
+		t.Fatalf("更新开关不应改密钥：%+v", updatedChannel)
+	}
+
+	// 上限 3 个：第 4 个 400/ErrInvalidInput。
+	if _, err := st.CreateAgentAlertChannel(agent.ID, "bark", map[string]string{"key": "bark-it-1"}); err != nil {
+		t.Fatalf("创建 bark 渠道失败：%v", err)
+	}
+	if _, err := st.CreateAgentAlertChannel(agent.ID, "email", map[string]string{"address": "it@example.com"}); err != nil {
+		t.Fatalf("创建 email 渠道失败：%v", err)
+	}
+	if _, err := st.CreateAgentAlertChannel(agent.ID, "bark", map[string]string{"key": "bark-it-2"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("第 4 个渠道应返回 ErrInvalidInput，实际 %v", err)
+	}
+	if err := st.DeleteAgentAlertChannel(channel.ID); err != nil {
+		t.Fatalf("删除渠道失败：%v", err)
+	}
+	if err := st.DeleteAgentAlertChannel(channel.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("重复删除应返回 ErrNotFound，实际 %v", err)
+	}
+	// 删除客服应级联清理其提醒渠道。
+	if _, err := st.DeleteAgent(agent.ID); err != nil {
+		t.Fatalf("删除客服失败：%v", err)
+	}
+	var channelRows int
+	if err := st.pool.QueryRow(ctx, `SELECT COUNT(*)::int FROM agent_alert_channels WHERE agent_id=$1`, agent.ID).Scan(&channelRows); err != nil {
+		t.Fatalf("统计渠道失败：%v", err)
+	}
+	if channelRows != 0 {
+		t.Fatal("删除客服后提醒渠道应被级联清理")
+	}
+
+	// ---------- SMTP 设置（单例 + 密码密文 + password 语义）----------
+	if _, err := st.pool.Exec(ctx, `DELETE FROM alert_smtp_settings`); err != nil {
+		t.Fatalf("清空 alert_smtp_settings 失败（表缺失时必然失败）：%v", err)
+	}
+	if settings := st.AlertSMTPSettings(); settings.Port != domain.DefaultAlertSMTPPort {
+		t.Fatalf("SMTP 默认端口应为 %d，实际 %d", domain.DefaultAlertSMTPPort, settings.Port)
+	}
+	password := "it-smtp-secret-1234"
+	stored, err := st.UpdateAlertSMTPSettings(domain.AlertSMTPSettings{
+		Host:        "smtp.example.com",
+		Port:        587,
+		Username:    "bot@example.com",
+		FromAddress: "bot@example.com",
+		UseTLS:      true,
+	}, &password)
+	if err != nil {
+		t.Fatalf("写入 SMTP 设置失败：%v", err)
+	}
+	if stored.PasswordMasked != domain.MaskSecretValue(password) || stored.Password != password {
+		t.Fatalf("SMTP 读回不符：%+v", stored)
+	}
+	var smtpCiphertext string
+	if err := st.pool.QueryRow(ctx, `SELECT password_ciphertext FROM alert_smtp_settings WHERE id=1`).Scan(&smtpCiphertext); err != nil {
+		t.Fatalf("读取 SMTP 密文失败：%v", err)
+	}
+	if strings.Contains(smtpCiphertext, password) || !strings.HasPrefix(smtpCiphertext, "enc:v1:") {
+		t.Fatalf("SMTP 密码必须以 AES-256-GCM 密文入库：%q", smtpCiphertext)
+	}
+	// password==nil 不改密码。
+	if _, err := st.UpdateAlertSMTPSettings(domain.AlertSMTPSettings{
+		Host: "smtp2.example.com", Port: 587, FromAddress: "bot@example.com",
+	}, nil); err != nil {
+		t.Fatalf("更新 SMTP（不改密码）失败：%v", err)
+	}
+	if got := st.AlertSMTPSettings(); got.Password != password || got.Host != "smtp2.example.com" {
+		t.Fatalf("nil 语义不符：%+v", got)
+	}
+	// password=="" 清除。
+	empty := ""
+	if _, err := st.UpdateAlertSMTPSettings(domain.AlertSMTPSettings{
+		Host: "smtp2.example.com", Port: 587, FromAddress: "bot@example.com",
+	}, &empty); err != nil {
+		t.Fatalf("清除 SMTP 密码失败：%v", err)
+	}
+	if got := st.AlertSMTPSettings(); got.Password != "" || got.PasswordMasked != "" {
+		t.Fatalf("清除语义不符：%+v", got)
+	}
+	// 非法端口返回 ErrInvalidInput。
+	if _, err := st.UpdateAlertSMTPSettings(domain.AlertSMTPSettings{Port: 70000}, nil); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("非法端口应返回 ErrInvalidInput，实际 %v", err)
+	}
+}

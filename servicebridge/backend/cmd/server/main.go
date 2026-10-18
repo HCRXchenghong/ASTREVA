@@ -61,7 +61,7 @@ func main() {
 		logger.Info("redis event bus enabled", "addr", cfg.RedisAddr, "channel", cfg.RedisChannel)
 	}
 	service := app.NewService(dataStore, hub, logger)
-	service.SetNotifier(buildNotifier(cfg, logger))
+	service.SetNotifier(buildNotifier(cfg, logger, dataStore))
 	mux := httpx.NewRouter(cfg, logger, service)
 
 	server := &http.Server{
@@ -120,6 +120,9 @@ func buildStore(ctx context.Context, cfg config.Config, options store.Options, l
 
 // buildNotifier 返回按后台配置发送的推送通道；未配置任何通道时只记录日志。
 // FCMEndpoint 保留为兼容旧部署的配置项，实际端点由服务账号/项目号推导。
-func buildNotifier(cfg config.Config, logger *slog.Logger) notify.Notifier {
-	return notify.NewProvider(logger)
+// email 提醒渠道的 SMTP 参数每次都从 alert_smtp_settings 单例读取，管理员改完立即生效。
+func buildNotifier(cfg config.Config, logger *slog.Logger, dataStore store.Store) notify.Notifier {
+	provider := notify.NewProvider(logger)
+	provider.SetSMTPProvider(dataStore.AlertSMTPSettings)
+	return provider
 }

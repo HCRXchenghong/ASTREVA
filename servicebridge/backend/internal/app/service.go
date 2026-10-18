@@ -65,6 +65,14 @@ func (s *Service) Store() store.Store {
 	return s.store
 }
 
+// Notifier 返回当前通知通道，供 HTTP 层发送提醒渠道测试消息。
+func (s *Service) Notifier() notify.Notifier {
+	if s.notifier == nil {
+		return notify.DisabledNotifier{}
+	}
+	return s.notifier
+}
+
 func (s *Service) Hub() *realtime.Hub {
 	return s.hub
 }

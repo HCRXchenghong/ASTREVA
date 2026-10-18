@@ -60,6 +60,13 @@ type MemoryStore struct {
 	knowledgeSettings domain.KnowledgeSettings
 
 	aiLimits domain.AILimits
+
+	// 批次 4：客服策略 / 排队 / 黑名单 / 提醒渠道 / SMTP（本期只做存储与接口）。
+	servicePolicy domain.ServicePolicy
+	queue         map[string]domain.QueuedConversation
+	blacklist     map[string]domain.BlacklistEntry
+	alertChannels map[string]*domain.AgentAlertChannel
+	alertSMTP     domain.AlertSMTPSettings
 }
 
 type Options struct {
@@ -96,6 +103,12 @@ func NewMemoryStore(options Options) *MemoryStore {
 		knowledgeSettings: domain.DefaultKnowledgeSettings(),
 		// AI 限额默认开启但阈值宽松，与改造前（无限制）的实际体验保持一致。
 		aiLimits: domain.DefaultAILimits(),
+		// 客服策略默认值与表结构一致；本批次不接线计时器，因此不影响现有流转。
+		servicePolicy: domain.DefaultServicePolicy(),
+		queue:         map[string]domain.QueuedConversation{},
+		blacklist:     map[string]domain.BlacklistEntry{},
+		alertChannels: map[string]*domain.AgentAlertChannel{},
+		alertSMTP:     domain.DefaultAlertSMTPSettings(),
 		contacts: domain.ContactSettings{
 			// 联系方式与欢迎语默认全部为空：真实内容必须由管理员在后台配置，
 			// 与 PostgreSQL 未配置时的行为保持一致。
@@ -967,6 +980,12 @@ func (s *MemoryStore) DeleteAgent(id string) (domain.Agent, error) {
 			rating.AssignedAgentID = ""
 		}
 	}
+	// 与 PostgreSQL 的外键 ON DELETE CASCADE 对齐：删除客服时清理其提醒渠道。
+	for channelID, channel := range s.alertChannels {
+		if channel.AgentID == id {
+			delete(s.alertChannels, channelID)
+		}
+	}
 	delete(s.agentsByAccount, agent.Account)
 	delete(s.agentsByID, id)
 	deleted.Status = domain.AgentOffline
@@ -1308,6 +1327,8 @@ func (s *MemoryStore) DeleteConversation(actor domain.AuthSession, conversationI
 	}
 	delete(s.conversations, conversationID)
 	delete(s.messages, conversationID)
+	// 与 PostgreSQL 的外键 ON DELETE CASCADE 对齐：删除会话时清理排队记录。
+	delete(s.queue, conversationID)
 	delete(s.ratings, conversationID)
 	return nil
 }

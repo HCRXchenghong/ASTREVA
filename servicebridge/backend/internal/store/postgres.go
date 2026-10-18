@@ -26,7 +26,7 @@ const (
 
 	adminColumns        = `id, account, name, password_hash, created_at`
 	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), COALESCE(device_platform, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate, COALESCE(preferences::text, '{}')`
-	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, COALESCE(detected_lang, ''), COALESCE(reply_lang_override, ''), reply_lang_override_at, COALESCE(language_stats::text, '{}'), last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
+	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, COALESCE(detected_lang, ''), COALESCE(reply_lang_override, ''), reply_lang_override_at, COALESCE(language_stats::text, '{}'), last_message, last_message_at, unread_for_agent, unread_for_visitor, first_response_at, last_agent_reply_at, COALESCE(sla_state, ''), COALESCE(queue_group, ''), created_at, updated_at`
 	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id, COALESCE(detected_lang, ''), COALESCE(author_lang, ''), COALESCE(translation_status, ''), COALESCE(knowledge_entry_ids::text, '[]')`
 	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
 	auditColumns        = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
@@ -217,6 +217,59 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			CONSTRAINT ai_limits_singleton CHECK (id=1)
 		)`,
+		// ===== 客服策略（批次 4）：本期只建表/补列 + 管理接口，不接线计时器 =====
+		// 客服策略单例：未写入时由 ServicePolicy() 返回 DefaultServicePolicy()。
+		`CREATE TABLE IF NOT EXISTS service_policy (
+			id SMALLINT PRIMARY KEY DEFAULT 1, queue_enabled BOOLEAN NOT NULL DEFAULT true,
+			max_wait_seconds INTEGER NOT NULL DEFAULT 600,
+			sla_first_response_seconds INTEGER NOT NULL DEFAULT 60,
+			sla_idle_minutes INTEGER NOT NULL DEFAULT 5,
+			sla_idle_action TEXT NOT NULL DEFAULT 'ai',
+			auto_close_idle_minutes INTEGER NOT NULL DEFAULT 30,
+			ai_keyword_priority TEXT NOT NULL DEFAULT 'keyword_first',
+			unattended_enabled BOOLEAN NOT NULL DEFAULT true,
+			unattended_reply TEXT NOT NULL DEFAULT '',
+			takeover_popup_enabled BOOLEAN NOT NULL DEFAULT true,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT service_policy_singleton CHECK (id=1),
+			CONSTRAINT service_policy_sla_idle_action_check CHECK (sla_idle_action IN ('ai','reassign')),
+			CONSTRAINT service_policy_ai_keyword_priority_check CHECK (ai_keyword_priority IN ('keyword_first','ai_first','keyword_only','ai_only'))
+		)`,
+		// 排队队列：会话删除时级联清理，避免悬挂排队记录。
+		`CREATE TABLE IF NOT EXISTS conversation_queue (
+			conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+			group_name TEXT NOT NULL DEFAULT '',
+			priority INTEGER NOT NULL DEFAULT 0,
+			enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			reason TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversation_queue_order ON conversation_queue(priority DESC, enqueued_at ASC)`,
+		`CREATE TABLE IF NOT EXISTS service_blacklist (
+			id TEXT PRIMARY KEY, kind TEXT NOT NULL, value TEXT NOT NULL,
+			reason TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '',
+			expires_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			UNIQUE (kind, value),
+			CONSTRAINT service_blacklist_kind_check CHECK (kind IN ('visitor','ip','account'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_service_blacklist_kind ON service_blacklist(kind, created_at DESC)`,
+		// 提醒渠道：密钥（token/key/address）整体 JSON 后 AES-256-GCM 加密入库；客服删除时级联清理。
+		`CREATE TABLE IF NOT EXISTS agent_alert_channels (
+			id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+			kind TEXT NOT NULL, config_ciphertext TEXT NOT NULL DEFAULT '',
+			enabled BOOLEAN NOT NULL DEFAULT true,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT agent_alert_channels_kind_check CHECK (kind IN ('telegram','bark','email'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_alert_channels_agent ON agent_alert_channels(agent_id)`,
+		// 全局 SMTP 发信设置（email 渠道使用）：密码密文入库，接口只回掩码。
+		`CREATE TABLE IF NOT EXISTS alert_smtp_settings (
+			id SMALLINT PRIMARY KEY DEFAULT 1, host TEXT NOT NULL DEFAULT '',
+			port INTEGER NOT NULL DEFAULT 587, username TEXT NOT NULL DEFAULT '',
+			password_ciphertext TEXT NOT NULL DEFAULT '', from_address TEXT NOT NULL DEFAULT '',
+			use_tls BOOLEAN NOT NULL DEFAULT false, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT alert_smtp_settings_singleton CHECK (id=1),
+			CONSTRAINT alert_smtp_settings_port_check CHECK (port BETWEEN 1 AND 65535)
+		)`,
 		`CREATE TABLE IF NOT EXISTS business_hours (
 			id SMALLINT PRIMARY KEY DEFAULT 1, timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai', start_time TEXT NOT NULL DEFAULT '09:00',
 			end_time TEXT NOT NULL DEFAULT '18:00', enabled BOOLEAN NOT NULL DEFAULT true,
@@ -241,6 +294,11 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS translation_status TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS knowledge_entry_ids JSONB NOT NULL DEFAULT '[]'::jsonb`,
 		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'::jsonb`,
+		// 批次 4：SLA 计时器/排队分组所需列（本期只落库，不参与会话流转）。
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMPTZ`,
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_agent_reply_at TIMESTAMPTZ`,
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS sla_state TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS queue_group TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, statement := range statements {
 		if _, err := s.pool.Exec(ctx, statement); err != nil {
@@ -3211,6 +3269,8 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 	var remarkUpdatedAt sql.NullTime
 	var lastMessageAt sql.NullTime
 	var replyLangOverrideAt sql.NullTime
+	var firstResponseAt sql.NullTime
+	var lastAgentReplyAt sql.NullTime
 	var languageStatsJSON string
 	err := row.Scan(
 		&out.ID,
@@ -3232,6 +3292,10 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 		&lastMessageAt,
 		&out.UnreadForAgent,
 		&out.UnreadForVisitor,
+		&firstResponseAt,
+		&lastAgentReplyAt,
+		&out.SLAState,
+		&out.QueueGroup,
 		&out.CreatedAt,
 		&out.UpdatedAt,
 	)
@@ -3243,6 +3307,12 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 	}
 	if replyLangOverrideAt.Valid {
 		out.ReplyLangOverrideAt = &replyLangOverrideAt.Time
+	}
+	if firstResponseAt.Valid {
+		out.FirstResponseAt = &firstResponseAt.Time
+	}
+	if lastAgentReplyAt.Valid {
+		out.LastAgentReplyAt = &lastAgentReplyAt.Time
 	}
 	if stats := parseLanguageStatsJSON(languageStatsJSON); len(stats) > 0 {
 		out.LanguageStats = stats
