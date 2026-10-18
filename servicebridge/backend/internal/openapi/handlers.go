@@ -94,6 +94,8 @@ func (s *Service) createConversation(w http.ResponseWriter, r *http.Request, api
 	var req struct {
 		ExternalUserID string `json:"external_user_id"`
 		Lang           string `json:"lang"`
+		// VisitorRef 是官网埋点写入的访客 ID，作为画像聚合键；缺失/非法时忽略。
+		VisitorRef string `json:"visitor_ref"`
 	}
 	if r.Body != nil {
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
@@ -108,7 +110,7 @@ func (s *Service) createConversation(w http.ResponseWriter, r *http.Request, api
 		return
 	}
 	ip, ipSource := s.resolveIP(r)
-	session, err := s.app.CreateVisitorConversation(ip, appSource(apiApp.ID), req.Lang, ipSource, req.ExternalUserID)
+	session, err := s.app.CreateVisitorConversationWithRef(ip, appSource(apiApp.ID), req.Lang, ipSource, req.ExternalUserID, req.VisitorRef)
 	if err != nil {
 		mapStoreError(w, err)
 		return

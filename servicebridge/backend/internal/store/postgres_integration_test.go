@@ -1617,6 +1617,153 @@ func TestPostgresVisitorProfiles(t *testing.T) {
 	_ = st.DeleteVisitorProfile(secondID)
 }
 
+// TestPostgresConversationProfileVisitorID 是会话画像键（conversations.profile_visitor_id）
+// 的真实 PostgreSQL 集成测试：验证 ensureCoreTables 的建表/补列、写入往返、按画像键反查会话
+// 以及"会话清空后按画像键清理画像"。
+func TestPostgresConversationProfileVisitorID(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	// 1) 列存在且类型为 TEXT（新库由 CREATE TABLE、历史库由 ALTER 补齐）。
+	var dataType string
+	if err := st.pool.QueryRow(ctx, `
+		SELECT data_type FROM information_schema.columns
+		WHERE table_name='conversations' AND column_name='profile_visitor_id'
+	`).Scan(&dataType); err != nil {
+		t.Fatalf("ensureCoreTables 未补齐 conversations.profile_visitor_id 列：%v", err)
+	}
+	if dataType != "text" {
+		t.Fatalf("profile_visitor_id 类型 = %q，want text", dataType)
+	}
+
+	// 2) 写入往返：建会话带上画像键，按会话读取与原始 SQL 读取都必须一致。
+	ref := "av_pg_it_" + time.Now().Format("150405.000000")
+	session, err := st.CreateVisitorConversationWithProfile("203.0.113.11", "web", "ar", "direct", "", ref)
+	if err != nil {
+		t.Fatalf("带画像键建会话失败：%v", err)
+	}
+	conversationID := session.Conversation.ID
+	if session.Conversation.ProfileVisitorID != ref {
+		t.Fatalf("返回会话画像键 = %q，want %q", session.Conversation.ProfileVisitorID, ref)
+	}
+	if session.Conversation.ProfileKey() != ref {
+		t.Fatalf("ProfileKey() = %q，want %q", session.Conversation.ProfileKey(), ref)
+	}
+	read, ok := st.Conversation(conversationID)
+	if !ok || read.ProfileVisitorID != ref {
+		t.Fatalf("按 id 读回画像键不符：%+v", read)
+	}
+	var rawRef string
+	if err := st.pool.QueryRow(ctx, `SELECT profile_visitor_id FROM conversations WHERE id=$1`, conversationID).Scan(&rawRef); err != nil {
+		t.Fatalf("原始 SQL 读画像键失败：%v", err)
+	}
+	if rawRef != ref {
+		t.Fatalf("原始 SQL 画像键 = %q，want %q", rawRef, ref)
+	}
+	// 列表读取路径（同一 scanned 列序）不能因新列而错位。
+	found := false
+	for _, item := range st.AllConversations() {
+		if item.ID != conversationID {
+			continue
+		}
+		found = true
+		if item.ProfileVisitorID != ref || item.VisitorID != session.Conversation.VisitorID {
+			t.Fatalf("列表读取字段错位：%+v", item)
+		}
+	}
+	if !found {
+		t.Fatal("AllConversations 未返回刚创建的会话，可能列序不匹配")
+	}
+
+	// 3) 按画像键反查该访客的全部会话。
+	conversations := st.ConversationsForVisitor(ref)
+	if len(conversations) != 1 || conversations[0].ID != conversationID {
+		t.Fatalf("ConversationsForVisitor(%s) = %+v", ref, conversations)
+	}
+
+	// 4) 非法/超长画像键被清洗为空串，且不影响建会话。
+	invalid, err := st.CreateVisitorConversationWithProfile("203.0.113.12", "web", "ar", "direct", "", "av bad/ref!!")
+	if err != nil {
+		t.Fatalf("非法画像键不应影响建会话：%v", err)
+	}
+	if invalid.Conversation.ProfileVisitorID != "" {
+		t.Fatalf("非法画像键应被清洗为空串：%q", invalid.Conversation.ProfileVisitorID)
+	}
+	if invalid.Conversation.ProfileKey() != invalid.Conversation.VisitorID {
+		t.Fatalf("非法画像键应回落引擎 visitor_id：%q", invalid.Conversation.ProfileKey())
+	}
+	long, err := st.CreateVisitorConversationWithProfile("203.0.113.13", "web", "ar", "direct", "", strings.Repeat("a", 65))
+	if err != nil {
+		t.Fatalf("超长画像键不应影响建会话：%v", err)
+	}
+	if long.Conversation.ProfileVisitorID != "" {
+		t.Fatalf("超长画像键应被清洗为空串：%q", long.Conversation.ProfileVisitorID)
+	}
+
+	// 5) 画像清理：带画像键的会话删除后，该画像键下已无会话，画像应一并清理。
+	if _, err := st.UpdateVisitorProfile(ref, func(profile *domain.VisitorProfile) error {
+		profile.Visits = 1
+		return nil
+	}); err != nil {
+		t.Fatalf("写入画像键画像失败：%v", err)
+	}
+	admin := domain.AuthSession{Kind: domain.AccountAdmin, AccountID: "admin_it"}
+	if _, _, err := st.CloseConversation(admin, conversationID); err != nil {
+		t.Fatalf("关闭会话失败：%v", err)
+	}
+	if err := st.DeleteConversation(admin, conversationID); err != nil {
+		t.Fatalf("删除会话失败：%v", err)
+	}
+	if _, ok := st.VisitorProfile(ref); ok {
+		t.Fatal("画像键下已无会话，画像应随数据保留策略清理")
+	}
+
+	// 收尾：清掉非法键用例创建的会话，避免残留。
+	for _, id := range []string{invalid.Conversation.ID, long.Conversation.ID} {
+		_, _, _ = st.CloseConversation(admin, id)
+		_ = st.DeleteConversation(admin, id)
+	}
+
+	// 6) 历史库升级路径：手工删列模拟旧库，重开存储时 ensureCoreTables 的幂等
+	// ALTER 必须补回该列（并在补列之后再建索引，否则启动会直接失败）。
+	if _, err := st.pool.Exec(ctx, `ALTER TABLE conversations DROP COLUMN IF EXISTS profile_visitor_id`); err != nil {
+		t.Fatalf("模拟历史库删列失败：%v", err)
+	}
+	legacy, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("历史库重开失败（幂等补列/建索引有问题）：%v", err)
+	}
+	defer legacy.Close()
+	var restored bool
+	if err := legacy.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name='conversations' AND column_name='profile_visitor_id'
+		)
+	`).Scan(&restored); err != nil {
+		t.Fatalf("查询补列结果失败：%v", err)
+	}
+	if !restored {
+		t.Fatal("历史库升级后未补回 conversations.profile_visitor_id 列")
+	}
+}
+
 func intPtr(value int) *int    { return &value }
 func boolPtr(value bool) *bool { return &value }
 

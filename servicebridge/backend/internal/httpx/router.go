@@ -137,7 +137,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		}
 		ipInfo := resolveClientIP(r, trustedProxies)
 		// 带上请求头：CDN 注入的国家码（CF-IPCountry 等）是画像最优先的地理来源。
-		session, err := service.CreateVisitorConversationWithGeo(ipInfo.IP, req.Source, req.Lang, ipInfo.Source, "", r.Header)
+		session, err := service.CreateVisitorConversationWithGeo(ipInfo.IP, req.Source, req.Lang, ipInfo.Source, "", req.VisitorRef, r.Header)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -2286,6 +2286,9 @@ type appReleaseUpdateRequest struct {
 type createConversationRequest struct {
 	Source string `json:"source"`
 	Lang   string `json:"lang"`
+	// VisitorRef 是官网埋点写入的访客 ID（astreva_visitor_id），作为画像聚合键；
+	// 缺失/非法/超长时由存储层清洗为空串，行为与不提供完全一致。
+	VisitorRef string `json:"visitor_ref"`
 }
 
 type setStatusRequest struct {

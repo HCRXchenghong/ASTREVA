@@ -1,9 +1,11 @@
 // Package geo 实现访客 IP 的三级地理来源解析（零第三方依赖）：
 //
-//	CDN 头 → 本地 GeoLite2 CSV 目录 → 后台配置的第三方 IP 库
+//	CDN 头 → 本地地理库 → 后台配置的第三方 IP 库
 //
 // 三级都未命中时返回 false，调用方保持地理字段为空（只按 Accept-Language 推断语言）。
-// 本地库用 GeoLite2 官方 CSV（Blocks + Locations），惰性加载、进程内缓存、二分查找；
+// 本地库支持两种形态：GeoLite2 官方 CSV 目录（Blocks + Locations，二分查找），
+// 或 .mmdb 文件（内置最小 MMDB 读取器，见 mmdb.go）；两者都是惰性加载、进程内
+// 缓存，产出的 GeoRecord 形状一致（Basis 统一为 geoip）。
 // 第三方库带超时、按 IP 缓存（含负缓存），失败静默降级。
 package geo
 
@@ -20,10 +22,8 @@ import (
 
 // 解析错误：本地库不可用时只记录一次警告，绝不影响会话。
 var (
-	// ErrMMDBNotSupported 表示配置的是 mmdb 文件；本构建不含 mmdb 解析库。
-	ErrMMDBNotSupported = errors.New("当前构建未包含 mmdb 解析库，请使用 GeoLite2 CSV 目录或配置第三方 IP 库")
-	// ErrLocalDBUnavailable 表示本地 CSV 目录缺失或格式错误。
-	ErrLocalDBUnavailable = errors.New("本地 GeoLite2 CSV 库不可用")
+	// ErrLocalDBUnavailable 表示本地地理库（CSV 目录或 .mmdb 文件）缺失或格式错误。
+	ErrLocalDBUnavailable = errors.New("本地地理库不可用")
 )
 
 // cdnCountryHeaders 是按优先级排列的 CDN 国家码头（大小写不敏感）。
@@ -69,7 +69,7 @@ func RecordFromCDN(header http.Header) (domain.GeoRecord, bool) {
 
 // Config 是一次解析所需的运行时配置（来自 visitor_profile_settings 单例）。
 type Config struct {
-	// GeoIPDir 是 GeoLite2 CSV 目录；以 .mmdb 结尾时返回明确的"不支持"错误。
+	// GeoIPDir 是本地地理库路径：既可以是 GeoLite2 CSV 目录，也可以是 .mmdb 文件。
 	GeoIPDir string
 	// ThirdPartyURL 必须包含 {ip} 占位（可选 {key}）；为空表示未配置第三方库。
 	ThirdPartyURL string
@@ -112,7 +112,7 @@ func NewResolver() *Resolver {
 	return &Resolver{cache: map[string]cacheEntry{}, now: time.Now}
 }
 
-// Resolve 按 CDN 头 → 本地 CSV → 第三方 的顺序解析访客 IP。
+// Resolve 按 CDN 头 → 本地地理库（CSV 目录或 .mmdb） → 第三方 的顺序解析访客 IP。
 // 返回 false 表示三级都未命中（调用方保持地理字段为空）。
 func (r *Resolver) Resolve(ctx context.Context, cfg Config, ip string, header http.Header) (domain.GeoRecord, bool) {
 	if record, ok := RecordFromCDN(header); ok {
@@ -130,7 +130,7 @@ func (r *Resolver) Resolve(ctx context.Context, cfg Config, ip string, header ht
 	if record, ok := r.cached(cacheKey); ok {
 		return record, true
 	}
-	// 本地 CSV 库：加载失败只降级，不影响后续第三方来源。
+	// 本地库：加载失败只降级，不影响后续第三方来源。
 	if local, err := r.localStore(cfg.GeoIPDir); err == nil {
 		if record, ok := local.Lookup(ip); ok {
 			r.store(cacheKey, record, true, ttl)
@@ -146,7 +146,7 @@ func (r *Resolver) Resolve(ctx context.Context, cfg Config, ip string, header ht
 	return domain.GeoRecord{}, false
 }
 
-// LocalError 返回本地 CSV 库的加载错误（未配置时返回 nil）。
+// LocalError 返回本地库（CSV 目录或 .mmdb 文件）的加载错误（未配置时返回 nil）。
 // 应用层据此"记一次 warning"，并视为本地库不可用。
 func (r *Resolver) LocalError(geoIPDir string) error {
 	_, err := r.localStore(geoIPDir)
@@ -162,7 +162,7 @@ func (r *Resolver) LocalLoadedAt(geoIPDir string) time.Time {
 	return local.LoadedAt()
 }
 
-// localStore 按目录惰性构建（目录变化时重建）。
+// localStore 按路径惰性构建（路径变化时重建）；路径可以是 CSV 目录或 .mmdb 文件。
 func (r *Resolver) localStore(dir string) (*LocalStore, error) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {

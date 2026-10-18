@@ -16,17 +16,21 @@ import (
 	"customer-service/backend/internal/domain"
 )
 
-// LocalStore 是本地 GeoLite2 CSV 库（零依赖、惰性加载、进程内缓存）。
+// LocalStore 是本地地理库（零依赖、惰性加载、进程内缓存），支持两种形态：
 //
-// 期望目录下存在：
+//  1. 路径以 .mmdb 结尾 → 用内置最小 MMDB 读取器（见 mmdb.go）直接查二进制库；
 //
-//	GeoLite2-City-Blocks-IPv4.csv
-//	GeoLite2-City-Blocks-IPv6.csv
-//	GeoLite2-City-Locations-<lang>.csv   （语言文件择优：zh-CN → en → 任意一个）
+//  2. 其它 → 视为 GeoLite2 CSV 目录，期望目录下存在：
+//
+//     GeoLite2-City-Blocks-IPv4.csv
+//     GeoLite2-City-Blocks-IPv6.csv
+//     GeoLite2-City-Locations-<lang>.csv   （语言文件择优：zh-CN → en → 任意一个）
 //
 // Blocks 至少使用 network / geoname_id 两列；Locations 使用 geoname_id /
 // country_iso_code / country_name / subdivision_1_name / city_name / time_zone
 // （官方列名为 time_zone，同时兼容 timezone 写法）。
+//
+// 两种形态产出的 GeoRecord 形状一致（同样的字段与 Basis=geoip）。
 type LocalStore struct {
 	dir string
 
@@ -35,8 +39,10 @@ type LocalStore struct {
 	loadErr  error
 	loadedAt time.Time
 
-	v4 []v4Range
-	v6 []v6Range
+	// mmdb 非空表示当前是 .mmdb 形态（加载成功后只读，可并发查询）。
+	mmdb *MMDBReader
+	v4   []v4Range
+	v6   []v6Range
 }
 
 type location struct {
@@ -61,12 +67,12 @@ type v6Range struct {
 	loc     location
 }
 
-// NewLocalStore 创建本地 CSV 库句柄（不立即加载）。
+// NewLocalStore 创建本地库句柄（不立即加载）：dir 可以是 CSV 目录或 .mmdb 文件。
 func NewLocalStore(dir string) *LocalStore {
 	return &LocalStore{dir: strings.TrimSpace(dir)}
 }
 
-// Dir 返回配置的目录。
+// Dir 返回配置的路径（CSV 目录或 .mmdb 文件）。
 func (s *LocalStore) Dir() string { return s.dir }
 
 // LoadedAt 返回最近一次成功加载的时间。
@@ -83,7 +89,8 @@ func (s *LocalStore) LoadError() error {
 	return s.loadErr
 }
 
-// EnsureLoaded 首次调用时加载 CSV；失败只记录状态，不会重试、不会 panic。
+// EnsureLoaded 首次调用时加载本地库；失败只记录状态，不会重试、不会 panic。
+// .mmdb 文件走内置 MMDB 读取器，其它路径按 CSV 目录加载。
 func (s *LocalStore) EnsureLoaded() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -91,6 +98,17 @@ func (s *LocalStore) EnsureLoaded() error {
 		return s.loadErr
 	}
 	s.loaded = true
+	if isMMDBPath(s.dir) {
+		reader := NewMMDBReader(s.dir)
+		if err := reader.EnsureLoaded(); err != nil {
+			// 解析失败与 CSV 缺失同样的降级语义：只记一次 warning，视为本地库不可用。
+			s.loadErr = fmt.Errorf("%w：mmdb 文件 %s 解析失败（%w）", ErrLocalDBUnavailable, s.dir, err)
+			return s.loadErr
+		}
+		s.mmdb = reader
+		s.loadedAt = time.Now().UTC()
+		return nil
+	}
 	v4, v6, err := loadCSVDir(s.dir)
 	if err != nil {
 		s.loadErr = err
@@ -102,17 +120,22 @@ func (s *LocalStore) EnsureLoaded() error {
 	return nil
 }
 
-// Lookup 按 IP 二分查找本地库；未命中或库不可用时返回 false。
+// Lookup 按 IP 查询本地库；未命中或库不可用时返回 false。
 func (s *LocalStore) Lookup(ip string) (domain.GeoRecord, bool) {
 	if err := s.EnsureLoaded(); err != nil {
 		return domain.GeoRecord{}, false
 	}
+	s.mu.Lock()
+	// .mmdb 形态：加载后读取器只读，取出句柄后即可解锁并发查询。
+	if reader := s.mmdb; reader != nil {
+		s.mu.Unlock()
+		return reader.Lookup(ip)
+	}
+	defer s.mu.Unlock()
 	parsed := net.ParseIP(strings.TrimSpace(ip))
 	if parsed == nil {
 		return domain.GeoRecord{}, false
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if v4 := parsed.To4(); v4 != nil {
 		value := binary.BigEndian.Uint32(v4)
 		index := sort.Search(len(s.v4), func(i int) bool { return s.v4[i].start > value })
@@ -159,22 +182,16 @@ func (l location) record(basis string) domain.GeoRecord {
 }
 
 // loadCSVDir 加载目录下的 Blocks + Locations 并构建排序后的区间表。
+// 注意：.mmdb 由 LocalStore.EnsureLoaded 分派给 MMDBReader，不会走到这里。
 func loadCSVDir(dir string) ([]v4Range, []v6Range, error) {
 	if dir == "" {
 		return nil, nil, fmt.Errorf("%w：未配置 geoip_dir", ErrLocalDBUnavailable)
-	}
-	// 配置成 .mmdb 文件时给出明确错误，绝不 panic。
-	if strings.HasSuffix(strings.ToLower(dir), ".mmdb") {
-		return nil, nil, ErrMMDBNotSupported
 	}
 	info, err := os.Stat(dir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w：目录 %s 不可访问（%v）", ErrLocalDBUnavailable, dir, err)
 	}
 	if !info.IsDir() {
-		if strings.HasSuffix(strings.ToLower(dir), ".mmdb") {
-			return nil, nil, ErrMMDBNotSupported
-		}
 		return nil, nil, fmt.Errorf("%w：%s 不是目录", ErrLocalDBUnavailable, dir)
 	}
 	entries, err := os.ReadDir(dir)

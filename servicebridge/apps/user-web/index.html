@@ -848,6 +848,9 @@
         const STORAGE_KEYS = {
             visitorSession: 'customer_service_visitor_session_v1'
         };
+        // 官网埋点（admin-server）在访客同意后写入本域 localStorage 的访客 ID，
+        // 聊天挂件把它作为 visitor_ref 交给引擎，作为画像聚合键。
+        const VISITOR_REF_KEY = 'astreva_visitor_id';
         const ACTIVE_SESSION_TYPES = new Set(['AI', 'QUEUING', 'HUMAN']);
 
         // 常用 Emoji 列表
@@ -911,6 +914,22 @@
             } catch (err) {
                 clearVisitorSession();
                 return null;
+            }
+        }
+
+        // 读取官网埋点写入的访客 ID（astreva_visitor_id）作为画像聚合键。
+        // 未同意（官网未写入该键）、不存在或格式非法时返回空串，调用方不得携带 visitor_ref。
+        // 校验规则与后端 cleanProfileVisitorID 保持一致：<=64 个 [A-Za-z0-9_.-] 字符。
+        function readVisitorRef(storage) {
+            try {
+                const store = storage || window.localStorage;
+                const raw = store.getItem(VISITOR_REF_KEY);
+                if (typeof raw !== 'string') return '';
+                const value = raw.trim();
+                if (!value || value.length > 64 || !/^[A-Za-z0-9_.-]+$/.test(value)) return '';
+                return value;
+            } catch (err) {
+                return '';
             }
         }
 
@@ -2052,13 +2071,17 @@
         async function initConversation() {
             try {
                 await loadContactSettings();
+                const payload = {
+                    source: window.innerWidth >= 768 ? 'web_pc' : 'web_mobile',
+                    lang: window.__CHAT_LANG__ || 'zh'
+                };
+                // 画像聚合键：只有官网埋点已写入访客 ID（且通过校验）时才带上该字段。
+                const visitorRef = readVisitorRef();
+                if (visitorRef) payload.visitor_ref = visitorRef;
                 const resp = await fetch(`${State.apiBase}/api/visitor/conversations`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        source: window.innerWidth >= 768 ? 'web_pc' : 'web_mobile',
-                        lang: window.__CHAT_LANG__ || 'zh'
-                    })
+                    body: JSON.stringify(payload)
                 });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = await resp.json();

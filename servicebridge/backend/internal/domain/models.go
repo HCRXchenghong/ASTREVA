@@ -203,15 +203,19 @@ type AuditEvent struct {
 }
 
 type Conversation struct {
-	ID              string             `json:"id"`
-	VisitorID       string             `json:"visitor_id"`
-	VisitorIP       string             `json:"visitor_ip"`
-	VisitorIPSource string             `json:"visitor_ip_source,omitempty"`
-	VisitorRemark   string             `json:"visitor_remark"`
-	RemarkUpdatedBy string             `json:"remark_updated_by,omitempty"`
-	RemarkUpdatedAt *time.Time         `json:"remark_updated_at,omitempty"`
-	Status          ConversationStatus `json:"status"`
-	AssignedAgentID string             `json:"assigned_agent_id,omitempty"`
+	ID        string `json:"id"`
+	VisitorID string `json:"visitor_id"`
+	// ProfileVisitorID 是访客画像的聚合键：官网埋点写入的访客 ID（visitor_ref）。
+	// 未提供时保持空串，画像键由 ProfileKey() 回落到引擎自增的 VisitorID，
+	// 因此历史数据与既有行为完全不变。
+	ProfileVisitorID string             `json:"profile_visitor_id,omitempty"`
+	VisitorIP        string             `json:"visitor_ip"`
+	VisitorIPSource  string             `json:"visitor_ip_source,omitempty"`
+	VisitorRemark    string             `json:"visitor_remark"`
+	RemarkUpdatedBy  string             `json:"remark_updated_by,omitempty"`
+	RemarkUpdatedAt  *time.Time         `json:"remark_updated_at,omitempty"`
+	Status           ConversationStatus `json:"status"`
+	AssignedAgentID  string             `json:"assigned_agent_id,omitempty"`
 	// AssignedAgentName/AssignedAgentAvatar 是只读派生字段：按 AssignedAgentID 补齐，
 	// 供访客端展示真实客服，不落库、不参与写入。
 	AssignedAgentName   string `json:"assigned_agent_name,omitempty"`
@@ -240,6 +244,15 @@ type Conversation struct {
 	UnattendedNotifiedAt *time.Time `json:"unattended_notified_at,omitempty"`
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+// ProfileKey 返回该会话的访客画像聚合键：优先官网埋点的 visitor_ref（ProfileVisitorID），
+// 未提供时回落到引擎 visitor_id。所有画像读写都必须经此方法，保证两套 ID 命名空间统一。
+func (c Conversation) ProfileKey() string {
+	if key := strings.TrimSpace(c.ProfileVisitorID); key != "" {
+		return key
+	}
+	return strings.TrimSpace(c.VisitorID)
 }
 
 type Message struct {

@@ -26,6 +26,8 @@ const (
 	maxEntryReplyRunes    = 1000
 	maxRatingCommentRunes = 500
 	maxSystemPromptRunes  = 8000
+	// maxProfileVisitorIDRunes 是画像键（官网 visitor_ref）的长度上限。
+	maxProfileVisitorIDRunes = 64
 )
 
 func cleanRequiredText(value string, maxRunes int) (string, error) {
@@ -42,6 +44,25 @@ func cleanOptionalText(value string, maxRunes int) (string, error) {
 		return "", ErrInvalidInput
 	}
 	return value, nil
+}
+
+// cleanProfileVisitorID 清洗官网埋点写入的画像键（visitor_ref）：
+// 去首尾空白，超长（>64 字符）或含非 [A-Za-z0-9_.-] 字符时返回空串。
+// 调用方把空串视为"未提供"，直接忽略该字段，绝不因此拒绝建会话。
+func cleanProfileVisitorID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || runeLen(value) > maxProfileVisitorIDRunes {
+		return ""
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '_', r == '-', r == '.':
+		default:
+			return ""
+		}
+	}
+	return value
 }
 
 func validateAgentStatus(status domain.AgentStatus) error {

@@ -237,7 +237,14 @@ func (s *MemoryStore) AuthVisitor(token string) (domain.AuthSession, bool) {
 	return session, true
 }
 
+// CreateVisitorConversation 建访客会话（不带画像键），保留既有调用方行为。
 func (s *MemoryStore) CreateVisitorConversation(ip, source, lang, ipSource, remark string) (domain.VisitorSession, error) {
+	return s.CreateVisitorConversationWithProfile(ip, source, lang, ipSource, remark, "")
+}
+
+// CreateVisitorConversationWithProfile 建访客会话并把画像键写入会话。
+// profileVisitorID 会被清洗：非法/超长视为未提供（空串），不影响建会话。
+func (s *MemoryStore) CreateVisitorConversationWithProfile(ip, source, lang, ipSource, remark, profileVisitorID string) (domain.VisitorSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -267,19 +274,20 @@ func (s *MemoryStore) CreateVisitorConversation(ip, source, lang, ipSource, rema
 		CreatedAt: now,
 	}
 	conversation := &domain.Conversation{
-		ID:              conversationID,
-		VisitorID:       visitorID,
-		VisitorIP:       ip,
-		VisitorIPSource: strings.TrimSpace(ipSource),
-		VisitorRemark:   remark,
-		Status:          domain.ConversationWaiting,
-		Source:          source,
-		VisitorLang:     ai.NormalizeLang(lang, ai.LangZh),
-		LastMessage:     "新会话",
-		LastMessageAt:   &now,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-		UnreadForAgent:  0,
+		ID:               conversationID,
+		VisitorID:        visitorID,
+		ProfileVisitorID: cleanProfileVisitorID(profileVisitorID),
+		VisitorIP:        ip,
+		VisitorIPSource:  strings.TrimSpace(ipSource),
+		VisitorRemark:    remark,
+		Status:           domain.ConversationWaiting,
+		Source:           source,
+		VisitorLang:      ai.NormalizeLang(lang, ai.LangZh),
+		LastMessage:      "新会话",
+		LastMessageAt:    &now,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		UnreadForAgent:   0,
 	}
 
 	s.visitors[visitorID] = visitor
@@ -1367,8 +1375,8 @@ func (s *MemoryStore) DeleteConversation(actor domain.AuthSession, conversationI
 	// 与 PostgreSQL 的外键 ON DELETE CASCADE 对齐：删除会话时清理排队记录。
 	delete(s.queue, conversationID)
 	delete(s.ratings, conversationID)
-	// 画像随访客数据保留策略清理：该访客已无任何会话时一并删除画像。
-	s.pruneVisitorProfileLocked(conversation.VisitorID)
+	// 画像随访客数据保留策略清理：该画像键已无任何会话时一并删除画像。
+	s.pruneVisitorProfileLocked(conversation.ProfileKey())
 	return nil
 }
 

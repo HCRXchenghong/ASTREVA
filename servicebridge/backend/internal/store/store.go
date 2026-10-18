@@ -14,6 +14,9 @@ type Store interface {
 	AuthVisitor(token string) (domain.AuthSession, bool)
 
 	CreateVisitorConversation(ip, source, lang, ipSource, remark string) (domain.VisitorSession, error)
+	// CreateVisitorConversationWithProfile 与 CreateVisitorConversation 相同，
+	// 额外把画像键（官网埋点 visitor_ref）写入会话；传空串等价于不提供，行为与旧方法一致。
+	CreateVisitorConversationWithProfile(ip, source, lang, ipSource, remark, profileVisitorID string) (domain.VisitorSession, error)
 	UpdateVisitorLang(conversationID, lang string) (domain.Conversation, error)
 	AICacheProbe() domain.AICacheProbe
 	SaveAICacheProbe(probe domain.AICacheProbe)

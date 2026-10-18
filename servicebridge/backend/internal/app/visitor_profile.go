@@ -92,7 +92,7 @@ func (s *Service) VisitorProfileForConversation(conversationID string) (domain.V
 	if !ok {
 		return domain.VisitorProfileView{}, store.ErrNotFound
 	}
-	return s.VisitorProfileDetail(conversation.VisitorID)
+	return s.VisitorProfileDetail(conversation.ProfileKey())
 }
 
 // RefreshVisitorProfile 立即重算画像（地理 + 国籍 + code-switching + AI 摘要）。
@@ -192,25 +192,78 @@ func (s *Service) visitorProfileConversations(visitorID string) []domain.Visitor
 
 // ===== 采集 =====
 
-// CreateVisitorConversationWithGeo 与 CreateVisitorConversation 相同，
+// CreateVisitorConversationWithGeo 与 CreateVisitorConversationWithRef 相同，
 // 额外带上访客请求头：CDN 注入的国家码（CF-IPCountry 等）是最优先的地理来源。
-func (s *Service) CreateVisitorConversationWithGeo(ip, source, lang, ipSource, remark string, header http.Header) (domain.VisitorSession, error) {
-	session, err := s.CreateVisitorConversation(ip, source, lang, ipSource, remark)
+func (s *Service) CreateVisitorConversationWithGeo(ip, source, lang, ipSource, remark, visitorRef string, header http.Header) (domain.VisitorSession, error) {
+	session, err := s.CreateVisitorConversationWithRef(ip, source, lang, ipSource, remark, visitorRef)
 	if err != nil {
 		return domain.VisitorSession{}, err
 	}
-	s.trackVisitorVisit(session, header)
+	s.trackVisitorCreation(session, header)
 	return session, nil
 }
 
+// recordVisitorProfileOnCreate 在画像键来自官网 visitor_ref 时，建会话即同步 upsert 画像：
+// visits+1、last_seen_at 前进。画像关闭时不采集（隐私开关优先）。
+// 只做纯存储写入，地理/语言等重活留给异步采集，绝不阻塞建会话主流程。
+func (s *Service) recordVisitorProfileOnCreate(conversation domain.Conversation) {
+	if strings.TrimSpace(conversation.ProfileVisitorID) == "" {
+		return
+	}
+	if settings := s.store.VisitorProfileSettings(); !settings.Enabled {
+		return
+	}
+	key := conversation.ProfileKey()
+	now := time.Now().UTC()
+	if _, err := s.store.UpdateVisitorProfile(key, func(profile *domain.VisitorProfile) error {
+		profile.Visits++
+		if profile.LastSeenAt == nil || now.After(*profile.LastSeenAt) {
+			stamp := now
+			profile.LastSeenAt = &stamp
+		}
+		return nil
+	}); err != nil {
+		s.logger.Warn("创建访客画像失败", "visitor_id", key, "error", err)
+	}
+}
+
+// trackVisitorCreation 处理建会话时的画像采集：
+//   - 提供 visitor_ref（画像键≠引擎 visitor_id）时，visits 已在 recordVisitorProfileOnCreate
+//     同步记过，这里只异步补齐地理/语言/IP，绝不重复累计；
+//   - 未提供时行为与既有实现完全一致（异步建画像并 visits+1）。
+func (s *Service) trackVisitorCreation(session domain.VisitorSession, header http.Header) {
+	if strings.TrimSpace(session.Conversation.ProfileVisitorID) != "" {
+		s.trackVisitorVisitEnrichment(session, header)
+		return
+	}
+	// 未提供 visitor_ref：保持历史异步路径（visits+1 由 trackVisitorVisit 完成）。
+	s.trackVisitorVisit(session, header)
+}
+
 // trackVisitorVisit 异步记录一次访客到访（建会话）：绝不阻塞建会话主流程。
+// 画像键一律取 conversation.ProfileKey()（官网 visitor_ref 优先）。
 func (s *Service) trackVisitorVisit(session domain.VisitorSession, header http.Header) {
+	s.trackVisitorVisitWithVisit(session, header, true)
+}
+
+// trackVisitorVisitEnrichment 与 trackVisitorVisit 相同，但不重复累计 visits
+// （建会话时的同步 upsert 已经记过这一次到访）。
+func (s *Service) trackVisitorVisitEnrichment(session domain.VisitorSession, header http.Header) {
+	s.trackVisitorVisitWithVisit(session, header, false)
+}
+
+// trackVisitorVisitWithVisit 是到访采集的公共实现；countVisit=false 时只补齐地理/语言/IP。
+func (s *Service) trackVisitorVisitWithVisit(session domain.VisitorSession, header http.Header, countVisit bool) {
 	settings := s.store.VisitorProfileSettings()
 	if !settings.Enabled {
 		// 画像关闭：不采集、不发起第三方请求。
 		return
 	}
 	conversation := session.Conversation
+	visitorKey := conversation.ProfileKey()
+	if visitorKey == "" {
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), profileSummaryTimeout)
 		defer cancel()
@@ -220,7 +273,7 @@ func (s *Service) trackVisitorVisit(session domain.VisitorSession, header http.H
 		if geoOK {
 			geoBasis = geoRecord.Basis
 		}
-		if _, err := s.store.UpdateVisitorProfile(conversation.VisitorID, func(profile *domain.VisitorProfile) error {
+		if _, err := s.store.UpdateVisitorProfile(visitorKey, func(profile *domain.VisitorProfile) error {
 			if profile.Languages == nil {
 				profile.Languages = map[string]int{}
 			}
@@ -234,11 +287,13 @@ func (s *Service) trackVisitorVisit(session domain.VisitorSession, header http.H
 				profile.IPFirst = conversation.VisitorIP
 			}
 			profile.IPLast = conversation.VisitorIP
-			profile.Visits++
+			if countVisit {
+				profile.Visits++
+			}
 			refreshVisitorNationality(profile, geoBasis)
 			return nil
 		}); err != nil {
-			s.logger.Warn("记录访客到访失败", "visitor_id", conversation.VisitorID, "error", err)
+			s.logger.Warn("记录访客到访失败", "visitor_id", visitorKey, "error", err)
 		}
 	}()
 }
@@ -254,16 +309,17 @@ func (s *Service) trackVisitorMessage(conversation domain.Conversation, message 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), profileSummaryTimeout)
 		defer cancel()
+		visitorKey := conversation.ProfileKey()
 		_, due, err := s.applyVisitorMessage(ctx, settings, conversation, message, detectedTag)
 		if err != nil {
 			if !errors.Is(err, store.ErrNotFound) {
-				s.logger.Warn("更新访客画像失败", "visitor_id", conversation.VisitorID, "error", err)
+				s.logger.Warn("更新访客画像失败", "visitor_id", visitorKey, "error", err)
 			}
 			return
 		}
 		if due {
-			if err := s.runVisitorProfileSummary(ctx, conversation.VisitorID); err != nil {
-				s.logger.Warn("生成访客画像摘要失败", "visitor_id", conversation.VisitorID, "error", err)
+			if err := s.runVisitorProfileSummary(ctx, visitorKey); err != nil {
+				s.logger.Warn("生成访客画像摘要失败", "visitor_id", visitorKey, "error", err)
 			}
 		}
 	}()
@@ -275,13 +331,14 @@ func (s *Service) applyVisitorMessage(ctx context.Context, settings domain.Visit
 	if !settings.Enabled {
 		return domain.VisitorProfile{}, false, store.ErrNotFound
 	}
-	if strings.TrimSpace(conversation.VisitorID) == "" {
+	visitorKey := conversation.ProfileKey()
+	if visitorKey == "" {
 		return domain.VisitorProfile{}, false, store.ErrInvalidInput
 	}
 	// 网络调用（第三方 IP 库）在存储锁之外完成，命中缓存时零成本。
 	geoRecord, geoOK := s.resolveVisitorGeo(ctx, settings, conversation.VisitorIP, nil)
 	// code-switching 窗口：跨会话取该访客最近 N 条访客消息的语种。
-	recent := s.visitorRecentLanguageCodes(conversation.VisitorID, profileCodeSwitchingWindow, message.ServerMsgID, detectedTag)
+	recent := s.visitorRecentLanguageCodes(visitorKey, profileCodeSwitchingWindow, message.ServerMsgID, detectedTag)
 	languageCode := ai.NormalizeOptionalLang(detectedTag)
 	dialect := profileDialectTag(detectedTag)
 	geoBasis := ""
@@ -289,7 +346,7 @@ func (s *Service) applyVisitorMessage(ctx context.Context, settings domain.Visit
 		geoBasis = geoRecord.Basis
 	}
 
-	updated, err := s.store.UpdateVisitorProfile(conversation.VisitorID, func(profile *domain.VisitorProfile) error {
+	updated, err := s.store.UpdateVisitorProfile(visitorKey, func(profile *domain.VisitorProfile) error {
 		if profile.Languages == nil {
 			profile.Languages = map[string]int{}
 		}
@@ -328,8 +385,8 @@ func (s *Service) applyVisitorMessage(ctx context.Context, settings domain.Visit
 	return updated, due, nil
 }
 
-// resolveVisitorGeo 按三级顺序解析地理：CDN 头 → 本地 CSV → 第三方。
-// 本地库加载失败只记一次 warning（不影响会话），mmdb 配置返回明确错误。
+// resolveVisitorGeo 按三级顺序解析地理：CDN 头 → 本地地理库（CSV 目录或 .mmdb） → 第三方。
+// 本地库加载失败（含 .mmdb 解析失败）只记一次 warning 并降级，不影响会话。
 func (s *Service) resolveVisitorGeo(ctx context.Context, settings domain.VisitorProfileSettings, ip string, header http.Header) (domain.GeoRecord, bool) {
 	if s.profile == nil || s.profile.geo == nil {
 		return domain.GeoRecord{}, false

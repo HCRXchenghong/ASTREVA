@@ -113,15 +113,20 @@ func (s *MemoryStore) VisitorProfiles(query domain.VisitorProfileQuery) ([]domai
 	return matched[query.Offset:end], total
 }
 
-// ConversationsForVisitor 返回某访客的全部会话（创建时间倒序）。
+// ConversationsForVisitor 返回某访客画像键下的全部会话（创建时间倒序）。
+// 匹配 conversation.VisitorID（引擎 ID）或 ProfileVisitorID（官网 visitor_ref）：
+// 画像键可能是官网 ID，因此两者都要命中。
 func (s *MemoryStore) ConversationsForVisitor(visitorID string) []domain.Conversation {
 	visitorID = strings.TrimSpace(visitorID)
+	if visitorID == "" {
+		return []domain.Conversation{}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	out := make([]domain.Conversation, 0, 2)
 	for _, conversation := range s.conversations {
-		if conversation.VisitorID == visitorID {
+		if conversation.VisitorID == visitorID || conversation.ProfileVisitorID == visitorID {
 			out = append(out, *conversation)
 		}
 	}
@@ -143,14 +148,16 @@ func (s *MemoryStore) DeleteVisitorProfile(visitorID string) error {
 
 // pruneVisitorProfileLocked 在会话被删除后清理已无任何会话的访客画像，
 // 与"画像随访客数据保留策略清理"的要求对齐（调用方需持有写锁）。
-func (s *MemoryStore) pruneVisitorProfileLocked(visitorID string) {
-	if strings.TrimSpace(visitorID) == "" {
+// visitorKey 是画像键：引擎 visitor_id 或官网 visitor_ref，两者都参与存在性判断。
+func (s *MemoryStore) pruneVisitorProfileLocked(visitorKey string) {
+	visitorKey = strings.TrimSpace(visitorKey)
+	if visitorKey == "" {
 		return
 	}
 	for _, conversation := range s.conversations {
-		if conversation.VisitorID == visitorID {
+		if conversation.VisitorID == visitorKey || conversation.ProfileVisitorID == visitorKey {
 			return
 		}
 	}
-	delete(s.visitorProfiles, visitorID)
+	delete(s.visitorProfiles, visitorKey)
 }

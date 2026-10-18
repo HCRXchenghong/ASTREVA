@@ -305,13 +305,19 @@ func (s *PostgresStore) VisitorProfiles(query domain.VisitorProfileQuery) ([]dom
 	return out, total
 }
 
-// ConversationsForVisitor 返回某访客的全部会话（创建时间倒序）。
+// ConversationsForVisitor 返回某访客画像键下的全部会话（创建时间倒序）。
+// 匹配 visitor_id（引擎 ID）或 profile_visitor_id（官网 visitor_ref）：
+// 画像键可能是官网 ID，因此两者都要命中。
 func (s *PostgresStore) ConversationsForVisitor(visitorID string) []domain.Conversation {
+	visitorID = strings.TrimSpace(visitorID)
+	if visitorID == "" {
+		return []domain.Conversation{}
+	}
 	ctx, cancel := dbContext()
 	defer cancel()
 
-	rows, err := s.pool.Query(ctx, `SELECT `+conversationColumns+` FROM conversations WHERE visitor_id=$1 ORDER BY created_at DESC`,
-		strings.TrimSpace(visitorID))
+	rows, err := s.pool.Query(ctx, `SELECT `+conversationColumns+` FROM conversations WHERE visitor_id=$1 OR profile_visitor_id=$1 ORDER BY created_at DESC`,
+		visitorID)
 	if err != nil {
 		return nil
 	}
@@ -342,14 +348,17 @@ func (s *PostgresStore) DeleteVisitorProfile(visitorID string) error {
 }
 
 // pruneVisitorProfileTx 在事务内清理已无任何会话的访客画像。
-func (s *PostgresStore) pruneVisitorProfileTx(ctx context.Context, tx pgx.Tx, visitorID string) error {
-	visitorID = strings.TrimSpace(visitorID)
-	if visitorID == "" {
+// visitorKey 是画像键：引擎 visitor_id 或官网 visitor_ref，两种引用都参与存在性判断。
+func (s *PostgresStore) pruneVisitorProfileTx(ctx context.Context, tx pgx.Tx, visitorKey string) error {
+	visitorKey = strings.TrimSpace(visitorKey)
+	if visitorKey == "" {
 		return nil
 	}
 	_, err := tx.Exec(ctx, `
 		DELETE FROM visitor_profiles
-		WHERE visitor_id=$1 AND NOT EXISTS (SELECT 1 FROM conversations WHERE conversations.visitor_id=$1)
-	`, visitorID)
+		WHERE visitor_id=$1 AND NOT EXISTS (
+			SELECT 1 FROM conversations WHERE conversations.visitor_id=$1 OR conversations.profile_visitor_id=$1
+		)
+	`, visitorKey)
 	return err
 }

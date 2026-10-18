@@ -243,15 +243,25 @@ func (s *Service) SubmitRating(conversationID string, score int, tags []string, 
 	return rating, nil
 }
 
+// CreateVisitorConversation 建访客会话（不带画像键），保留既有调用方行为。
 func (s *Service) CreateVisitorConversation(ip, source, lang, ipSource, remark string) (domain.VisitorSession, error) {
+	return s.CreateVisitorConversationWithRef(ip, source, lang, ipSource, remark, "")
+}
+
+// CreateVisitorConversationWithRef 建访客会话，并把官网埋点的 visitor_ref 作为画像聚合键。
+// visitor_ref 为空/非法时行为与 CreateVisitorConversation 完全一致（画像键=引擎 visitor_id）。
+func (s *Service) CreateVisitorConversationWithRef(ip, source, lang, ipSource, remark, visitorRef string) (domain.VisitorSession, error) {
 	// 黑名单：建会话前按 ip 与"账号"（开放 API 的外部用户 ID 落在 remark 上）拦截。
 	if err := s.checkBlacklist("", ip, remark); err != nil {
 		return domain.VisitorSession{}, err
 	}
-	session, err := s.store.CreateVisitorConversation(ip, source, lang, ipSource, remark)
+	session, err := s.store.CreateVisitorConversationWithProfile(ip, source, lang, ipSource, remark, visitorRef)
 	if err != nil {
 		return domain.VisitorSession{}, err
 	}
+	// 官网 visitor_ref 作为画像键时：建会话即同步 upsert 画像（visits+1、last_seen_at），
+	// 让"只浏览后打开聊天"的访客也立即有画像；地理/语言随后由异步采集补齐。
+	s.recordVisitorProfileOnCreate(session.Conversation)
 	visitorLang := ai.NormalizeLang(session.Conversation.VisitorLang, ai.LangZh)
 	for i := range session.InitialMessages {
 		s.translateInitialMessageForVisitor(session.Conversation.ID, visitorLang, &session.InitialMessages[i])

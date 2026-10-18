@@ -26,7 +26,7 @@ const (
 
 	adminColumns           = `id, account, name, password_hash, created_at`
 	agentColumns           = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), COALESCE(device_platform, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate, COALESCE(preferences::text, '{}')`
-	conversationColumns    = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, COALESCE(detected_lang, ''), COALESCE(reply_lang_override, ''), reply_lang_override_at, COALESCE(language_stats::text, '{}'), last_message, last_message_at, unread_for_agent, unread_for_visitor, first_response_at, last_agent_reply_at, COALESCE(sla_state, ''), COALESCE(queue_group, ''), unattended_notified_at, created_at, updated_at`
+	conversationColumns    = `id, visitor_id, COALESCE(profile_visitor_id, ''), visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, COALESCE(detected_lang, ''), COALESCE(reply_lang_override, ''), reply_lang_override_at, COALESCE(language_stats::text, '{}'), last_message, last_message_at, unread_for_agent, unread_for_visitor, first_response_at, last_agent_reply_at, COALESCE(sla_state, ''), COALESCE(queue_group, ''), unattended_notified_at, created_at, updated_at`
 	messageColumns         = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id, COALESCE(detected_lang, ''), COALESCE(author_lang, ''), COALESCE(translation_status, ''), COALESCE(knowledge_entry_ids::text, '[]')`
 	ratingColumns          = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
 	auditColumns           = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
@@ -116,6 +116,7 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS conversations (
 			id TEXT PRIMARY KEY, visitor_id TEXT NOT NULL REFERENCES visitors(id), visitor_ip INET NOT NULL, visitor_remark TEXT NOT NULL,
+			profile_visitor_id TEXT NOT NULL DEFAULT '',
 			remark_updated_by TEXT NOT NULL DEFAULT '', remark_updated_at TIMESTAMPTZ, status TEXT NOT NULL,
 			assigned_agent_id TEXT REFERENCES agents(id), source TEXT NOT NULL DEFAULT 'web', last_message TEXT NOT NULL DEFAULT '',
 			last_message_at TIMESTAMPTZ, unread_for_agent INTEGER NOT NULL DEFAULT 0, unread_for_visitor INTEGER NOT NULL DEFAULT 0,
@@ -335,6 +336,10 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at)`,
 		// ===== 二期列补齐：既有数据库在启动时自动升级，缺失列会导致会话/消息查询直接报错 =====
 		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS detected_lang TEXT NOT NULL DEFAULT ''`,
+		// 画像聚合键：官网埋点写入的 visitor_ref；空串表示沿用引擎 visitor_id（历史行为不变）。
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS profile_visitor_id TEXT NOT NULL DEFAULT ''`,
+		// 列补齐后再建索引（历史库首次启动时该列由上一条 ALTER 添加）。
+		`CREATE INDEX IF NOT EXISTS idx_conversations_profile_visitor ON conversations(profile_visitor_id) WHERE profile_visitor_id <> ''`,
 		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reply_lang_override TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reply_lang_override_at TIMESTAMPTZ`,
 		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS language_stats JSONB NOT NULL DEFAULT '{}'::jsonb`,
@@ -422,10 +427,18 @@ func (s *PostgresStore) AuthVisitor(token string) (domain.AuthSession, bool) {
 	return session, ok
 }
 
+// CreateVisitorConversation 建访客会话（不带画像键），保留既有调用方行为。
 func (s *PostgresStore) CreateVisitorConversation(ip, source, lang, ipSource, remark string) (domain.VisitorSession, error) {
+	return s.CreateVisitorConversationWithProfile(ip, source, lang, ipSource, remark, "")
+}
+
+// CreateVisitorConversationWithProfile 建访客会话并把画像键写入会话。
+// profileVisitorID 会被清洗：非法/超长视为未提供（空串），不影响建会话。
+func (s *PostgresStore) CreateVisitorConversationWithProfile(ip, source, lang, ipSource, remark, profileVisitorID string) (domain.VisitorSession, error) {
 	ctx, cancel := dbContext()
 	defer cancel()
 
+	profileVisitorID = cleanProfileVisitorID(profileVisitorID)
 	var out domain.VisitorSession
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		now := dbNow()
@@ -461,27 +474,28 @@ func (s *PostgresStore) CreateVisitorConversation(ip, source, lang, ipSource, re
 		}
 
 		conversation := domain.Conversation{
-			ID:              conversationID,
-			VisitorID:       visitorID,
-			VisitorIP:       ip,
-			VisitorIPSource: strings.TrimSpace(ipSource),
-			VisitorRemark:   remark,
-			Status:          domain.ConversationWaiting,
-			Source:          source,
-			VisitorLang:     ai.NormalizeLang(lang, ai.LangZh),
-			LastMessage:     "新会话",
-			LastMessageAt:   &now,
-			UnreadForAgent:  0,
-			CreatedAt:       now,
-			UpdatedAt:       now,
+			ID:               conversationID,
+			VisitorID:        visitorID,
+			ProfileVisitorID: profileVisitorID,
+			VisitorIP:        ip,
+			VisitorIPSource:  strings.TrimSpace(ipSource),
+			VisitorRemark:    remark,
+			Status:           domain.ConversationWaiting,
+			Source:           source,
+			VisitorLang:      ai.NormalizeLang(lang, ai.LangZh),
+			LastMessage:      "新会话",
+			LastMessageAt:    &now,
+			UnreadForAgent:   0,
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO conversations (
-				id, visitor_id, visitor_ip, visitor_ip_source, visitor_remark, status, source, visitor_lang,
+				id, visitor_id, profile_visitor_id, visitor_ip, visitor_ip_source, visitor_remark, status, source, visitor_lang,
 				last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at
 			)
-			VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, $9, $10, 0, 0, $11, $12)
-		`, conversation.ID, conversation.VisitorID, conversation.VisitorIP, conversation.VisitorIPSource, conversation.VisitorRemark, conversation.Status, conversation.Source, conversation.VisitorLang, conversation.LastMessage, conversation.LastMessageAt, conversation.CreatedAt, conversation.UpdatedAt); err != nil {
+			VALUES ($1, $2, $3, $4::inet, $5, $6, $7, $8, $9, $10, $11, 0, 0, $12, $13)
+		`, conversation.ID, conversation.VisitorID, conversation.ProfileVisitorID, conversation.VisitorIP, conversation.VisitorIPSource, conversation.VisitorRemark, conversation.Status, conversation.Source, conversation.VisitorLang, conversation.LastMessage, conversation.LastMessageAt, conversation.CreatedAt, conversation.UpdatedAt); err != nil {
 			return err
 		}
 
@@ -1202,8 +1216,8 @@ func (s *PostgresStore) DeleteConversation(actor domain.AuthSession, conversatio
 		if _, err = tx.Exec(ctx, `DELETE FROM conversations WHERE id=$1`, conversationID); err != nil {
 			return err
 		}
-		// 画像随访客数据保留策略清理：该访客已无任何会话时一并删除画像。
-		return s.pruneVisitorProfileTx(ctx, tx, conversation.VisitorID)
+		// 画像随访客数据保留策略清理：该画像键已无任何会话时一并删除画像。
+		return s.pruneVisitorProfileTx(ctx, tx, conversation.ProfileKey())
 	})
 }
 
@@ -3463,6 +3477,7 @@ func scanConversation(row scanTarget) (domain.Conversation, error) {
 	err := row.Scan(
 		&out.ID,
 		&out.VisitorID,
+		&out.ProfileVisitorID,
 		&out.VisitorIP,
 		&out.VisitorIPSource,
 		&out.VisitorRemark,

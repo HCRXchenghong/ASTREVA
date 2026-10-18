@@ -255,7 +255,7 @@ func TestVisitorProfileCDNHeaderWins(t *testing.T) {
 	header := http.Header{}
 	header.Set("CF-IPCountry", "CN")
 
-	session, err := service.CreateVisitorConversationWithGeo("203.0.113.9", "web", "zh", "direct", "", header)
+	session, err := service.CreateVisitorConversationWithGeo("203.0.113.9", "web", "zh", "direct", "", "", header)
 	if err != nil {
 		t.Fatalf("建会话失败：%v", err)
 	}

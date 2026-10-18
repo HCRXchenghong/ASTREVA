@@ -388,3 +388,42 @@ func TestRequireConversationOwnership(t *testing.T) {
 		t.Fatal("api conversation should be owned by its app")
 	}
 }
+
+// TestOpenAPIConversationVisitorRef 覆盖开放 API 接受可选 visitor_ref 并立即建画像。
+func TestOpenAPIConversationVisitorRef(t *testing.T) {
+	env := newTestEnv(t)
+	_, apiKey := env.createApp(t, "画像对接平台")
+	const ref = "av_openapi_ref_0001"
+
+	status, payload := env.do(t, http.MethodPost, "/open/v1/conversations", apiKey, map[string]any{
+		"lang": "zh", "visitor_ref": ref,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create conversation status = %d payload = %v", status, payload)
+	}
+	conversation := payload["conversation"].(map[string]any)
+	if conversation["profile_visitor_id"] != ref {
+		t.Fatalf("会话画像键 = %v，want %q", conversation["profile_visitor_id"], ref)
+	}
+	profile, ok := env.store.VisitorProfile(ref)
+	if !ok {
+		t.Fatal("开放 API 建会话后画像应立即存在")
+	}
+	if profile.Visits != 1 {
+		t.Fatalf("开放 API 建会话后 visits = %d，want 1", profile.Visits)
+	}
+
+	// 非法 visitor_ref：忽略且不影响建会话。
+	status, payload = env.do(t, http.MethodPost, "/open/v1/conversations", apiKey, map[string]any{
+		"lang": "zh", "visitor_ref": "av bad/ref!!",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("非法 visitor_ref 不应影响建会话：status = %d payload = %v", status, payload)
+	}
+	if _, exists := payload["conversation"].(map[string]any)["profile_visitor_id"]; exists {
+		t.Fatalf("非法 visitor_ref 应被忽略：%v", payload["conversation"])
+	}
+	if _, ok := env.store.VisitorProfile("av bad/ref!!"); ok {
+		t.Fatal("非法 visitor_ref 不应创建画像")
+	}
+}

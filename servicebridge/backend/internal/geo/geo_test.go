@@ -3,6 +3,7 @@ package geo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -163,7 +164,8 @@ func TestLocalStoreUnavailableAndMMDB(t *testing.T) {
 		t.Fatal("目录不存在应返回错误")
 	}
 
-	// 配置为 .mmdb：必须返回明确错误而不是 panic。
+	// 配置为 .mmdb 但内容非法：必须返回解析错误而不是 panic，
+	// 且不能再出现旧的"未包含 mmdb 解析库"提示（该构建已内置最小 MMDB 读取器）。
 	mmdbPath := filepath.Join(t.TempDir(), "GeoLite2-City.mmdb")
 	if err := os.WriteFile(mmdbPath, []byte("fake"), 0o644); err != nil {
 		t.Fatalf("写入 mmdb 桩失败：%v", err)
@@ -171,13 +173,22 @@ func TestLocalStoreUnavailableAndMMDB(t *testing.T) {
 	mmdbStore := NewLocalStore(mmdbPath)
 	err := mmdbStore.EnsureLoaded()
 	if err == nil {
-		t.Fatal("mmdb 配置应返回不支持错误")
+		t.Fatal("非法 mmdb 内容应返回解析错误")
 	}
-	if !strings.Contains(err.Error(), "当前构建未包含 mmdb 解析库") {
-		t.Fatalf("mmdb 错误文案不符：%v", err)
+	if strings.Contains(err.Error(), "未包含 mmdb 解析库") {
+		t.Fatalf("不应再返回旧的\"未包含 mmdb 解析库\"提示：%v", err)
+	}
+	if !errors.Is(err, ErrLocalDBUnavailable) || !errors.Is(err, ErrMMDBInvalid) {
+		t.Fatalf("mmdb 错误应同时包装 ErrLocalDBUnavailable 与 ErrMMDBInvalid：%v", err)
 	}
 	if _, ok := mmdbStore.Lookup("1.2.3.4"); ok {
 		t.Fatal("mmdb 配置不应命中")
+	}
+
+	// .mmdb 文件不存在：同样只降级。
+	missingMMDB := NewLocalStore(filepath.Join(empty, "not-exists.mmdb"))
+	if err := missingMMDB.EnsureLoaded(); err == nil {
+		t.Fatal("mmdb 文件不存在应返回错误")
 	}
 }
 
