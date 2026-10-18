@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type AccountKind string
 
@@ -77,6 +80,7 @@ type Agent struct {
 	Password               string      `json:"-"`
 	Status                 AgentStatus `json:"status"`
 	DeviceToken            string      `json:"device_token,omitempty"`
+	DevicePlatform         string      `json:"device_platform,omitempty"`
 	MaxConversations       int         `json:"max_conversations"`
 	CurrentConversations   int         `json:"current_conversations"`
 	AvatarURL              string      `json:"avatar_url,omitempty"`
@@ -252,6 +256,105 @@ type BusinessHours struct {
 	Start    string `json:"start"`
 	End      string `json:"end"`
 	Enabled  bool   `json:"enabled"`
+	// OfflineReply 为非营业时间给访客的留言提示；为空时使用内置文案。
+	OfflineReply string `json:"offline_reply"`
+}
+
+// PushPlatform 是客服设备的推送平台，决定使用哪条推送通道。
+type PushPlatform string
+
+const (
+	PushPlatformAndroid PushPlatform = "android"
+	PushPlatformIOS     PushPlatform = "ios"
+)
+
+// PushSettings 是可在统一后台配置的推送参数。
+// 客户端可见的 Firebase 参数与仅服务端保存的密钥分开：
+// 带 json:"-" 的字段永远不会下发到浏览器或 App。
+type PushSettings struct {
+	FirebaseAPIKey            string `json:"firebase_api_key"`
+	FirebaseAppID             string `json:"firebase_app_id"`
+	FirebaseMessagingSenderID string `json:"firebase_messaging_sender_id"`
+	FirebaseProjectID         string `json:"firebase_project_id"`
+	FirebaseStorageBucket     string `json:"firebase_storage_bucket"`
+	FirebaseVapidKey          string `json:"firebase_vapid_key"`
+
+	// 服务端密钥：Firebase 服务账号 JSON（用于自动换取 OAuth2 令牌）
+	// 或直接提供的短期 access token；以及 APNs 的 .p8 私钥。
+	FCMServiceAccountJSON string `json:"-"`
+	FCMAccessToken        string `json:"-"`
+	APNsKeyP8             string `json:"-"`
+
+	APNsKeyID       string `json:"apns_key_id"`
+	APNsTeamID      string `json:"apns_team_id"`
+	APNsTopic       string `json:"apns_topic"`
+	APNsEnvironment string `json:"apns_environment"`
+
+	// 只读状态字段，供后台展示“是否已配置”和掩码。
+	FCMConfigured    bool       `json:"fcm_configured"`
+	APNsConfigured   bool       `json:"apns_configured"`
+	FCMSecretMasked  string     `json:"fcm_secret_masked"`
+	APNsSecretMasked string     `json:"apns_secret_masked"`
+	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
+}
+
+// FirebaseClientConfig 是下发给客服 App 的公开配置（不含任何服务端密钥）。
+type FirebaseClientConfig struct {
+	APIKey            string `json:"api_key"`
+	AppID             string `json:"app_id"`
+	MessagingSenderID string `json:"messaging_sender_id"`
+	ProjectID         string `json:"project_id"`
+	StorageBucket     string `json:"storage_bucket"`
+	VapidKey          string `json:"vapid_key"`
+}
+
+// PushEnabled 表示是否至少配置了一条可用的推送通道。
+func (p PushSettings) PushEnabled() bool {
+	return p.FCMConfigured || p.APNsConfigured
+}
+
+// ClientConfig 返回可安全下发给 App 的 Firebase 参数。
+func (p PushSettings) ClientConfig() FirebaseClientConfig {
+	return FirebaseClientConfig{
+		APIKey:            p.FirebaseAPIKey,
+		AppID:             p.FirebaseAppID,
+		MessagingSenderID: p.FirebaseMessagingSenderID,
+		ProjectID:         p.FirebaseProjectID,
+		StorageBucket:     p.FirebaseStorageBucket,
+		VapidKey:          p.FirebaseVapidKey,
+	}
+}
+
+// Normalize 根据密钥是否存在刷新“是否已配置”与掩码字段。
+// 两个存储实现都在读写后调用它，保证接口对外表现一致。
+func (p *PushSettings) Normalize() {
+	p.FCMConfigured = strings.TrimSpace(p.FCMServiceAccountJSON) != "" || strings.TrimSpace(p.FCMAccessToken) != ""
+	p.APNsConfigured = strings.TrimSpace(p.APNsKeyP8) != "" &&
+		strings.TrimSpace(p.APNsKeyID) != "" &&
+		strings.TrimSpace(p.APNsTeamID) != "" &&
+		strings.TrimSpace(p.APNsTopic) != ""
+	switch strings.ToLower(strings.TrimSpace(p.APNsEnvironment)) {
+	case "sandbox", "production":
+		p.APNsEnvironment = strings.ToLower(strings.TrimSpace(p.APNsEnvironment))
+	default:
+		p.APNsEnvironment = "production"
+	}
+	p.FCMSecretMasked = maskPushSecret(p.FCMServiceAccountJSON, p.FCMAccessToken)
+	p.APNsSecretMasked = maskPushSecret(p.APNsKeyP8, "")
+}
+
+func maskPushSecret(primary, fallback string) string {
+	value := strings.TrimSpace(primary)
+	if value == "" {
+		value = strings.TrimSpace(fallback)
+	}
+	if value == "" {
+		return ""
+	}
+	if len(value) <= 4 {
+		return "****"
+	}
+	return "****" + value[len(value)-4:]
 }
 
 type AuthSession struct {

@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -24,6 +25,7 @@ import (
 	"customer-service/backend/internal/app"
 	"customer-service/backend/internal/config"
 	"customer-service/backend/internal/domain"
+	"customer-service/backend/internal/notify"
 	"customer-service/backend/internal/openapi"
 	"customer-service/backend/internal/store"
 	"customer-service/backend/internal/upload"
@@ -232,11 +234,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		}
 		var req struct {
 			DeviceToken string `json:"device_token"`
+			Platform    string `json:"platform"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		agent, err := service.Store().RegisterAgentDeviceToken(session.AccountID, req.DeviceToken)
+		agent, err := service.Store().RegisterAgentDeviceToken(session.AccountID, req.DeviceToken, req.Platform)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -1175,6 +1178,98 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		}
 		recordAuditFromRequest(service, r, trustedProxies, "business_hours.update", "business_hours", "1", "更新营业时间")
 		writeJSON(w, http.StatusOK, updated)
+	})
+
+	// 推送配置：客户端 Firebase 参数与 APNs/FCM 密钥都在后台维护，改完立即生效。
+	mux.HandleFunc("GET /api/admin/push-settings", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		writeJSON(w, http.StatusOK, service.Store().PushSettings())
+	})
+
+	mux.HandleFunc("PATCH /api/admin/push-settings", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req struct {
+			FirebaseAPIKey            *string `json:"firebase_api_key"`
+			FirebaseAppID             *string `json:"firebase_app_id"`
+			FirebaseMessagingSenderID *string `json:"firebase_messaging_sender_id"`
+			FirebaseProjectID         *string `json:"firebase_project_id"`
+			FirebaseStorageBucket     *string `json:"firebase_storage_bucket"`
+			FirebaseVapidKey          *string `json:"firebase_vapid_key"`
+			FCMServiceAccountJSON     *string `json:"fcm_service_account_json"`
+			FCMAccessToken            *string `json:"fcm_access_token"`
+			APNsKeyP8                 *string `json:"apns_key_p8"`
+			APNsKeyID                 *string `json:"apns_key_id"`
+			APNsTeamID                *string `json:"apns_team_id"`
+			APNsTopic                 *string `json:"apns_topic"`
+			APNsEnvironment           *string `json:"apns_environment"`
+			ClearFCM                  *bool   `json:"clear_fcm"`
+			ClearAPNs                 *bool   `json:"clear_apns"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		next := service.Store().PushSettings()
+		apply := func(target *string, value *string) {
+			if value != nil {
+				*target = strings.TrimSpace(*value)
+			}
+		}
+		apply(&next.FirebaseAPIKey, req.FirebaseAPIKey)
+		apply(&next.FirebaseAppID, req.FirebaseAppID)
+		apply(&next.FirebaseMessagingSenderID, req.FirebaseMessagingSenderID)
+		apply(&next.FirebaseProjectID, req.FirebaseProjectID)
+		apply(&next.FirebaseStorageBucket, req.FirebaseStorageBucket)
+		apply(&next.FirebaseVapidKey, req.FirebaseVapidKey)
+		apply(&next.FCMServiceAccountJSON, req.FCMServiceAccountJSON)
+		apply(&next.FCMAccessToken, req.FCMAccessToken)
+		apply(&next.APNsKeyP8, req.APNsKeyP8)
+		apply(&next.APNsKeyID, req.APNsKeyID)
+		apply(&next.APNsTeamID, req.APNsTeamID)
+		apply(&next.APNsTopic, req.APNsTopic)
+		apply(&next.APNsEnvironment, req.APNsEnvironment)
+		if req.ClearFCM != nil && *req.ClearFCM {
+			next.FCMServiceAccountJSON = ""
+			next.FCMAccessToken = ""
+		}
+		if req.ClearAPNs != nil && *req.ClearAPNs {
+			next.APNsKeyP8 = ""
+		}
+		updated, err := service.Store().UpdatePushSettings(next)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "push_settings.update", "push_settings", "1", fmt.Sprintf(
+			"更新推送配置 fcm=%t apns=%t", updated.FCMConfigured, updated.APNsConfigured))
+		writeJSON(w, http.StatusOK, updated)
+	})
+
+	mux.HandleFunc("POST /api/admin/push-settings/test", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		diagnostics := notify.NewProvider(logger).Validate(ctx, service.Store().PushSettings())
+		recordAuditFromRequest(service, r, trustedProxies, "push_settings.tested", "push_settings", "1", "验证推送凭证")
+		writeJSON(w, http.StatusOK, map[string]any{"diagnostics": diagnostics})
+	})
+
+	// 客服 App 启动时拉取公开 Firebase 参数，不再依赖构建期 dart-define。
+	mux.HandleFunc("GET /api/app-config", func(w http.ResponseWriter, r *http.Request) {
+		settings := service.Store().PushSettings()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"firebase":     settings.ClientConfig(),
+			"push_enabled": settings.PushEnabled(),
+			"apns_enabled": settings.APNsConfigured,
+		})
 	})
 
 	// 开放接口（第三方平台接入）与 API 授权管理。

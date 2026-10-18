@@ -55,8 +55,10 @@ type Store interface {
 	UpdateAISettings(next domain.AISettings) (domain.AISettings, error)
 	BusinessHours() domain.BusinessHours
 	UpdateBusinessHours(next domain.BusinessHours) (domain.BusinessHours, error)
+	PushSettings() domain.PushSettings
+	UpdatePushSettings(next domain.PushSettings) (domain.PushSettings, error)
 	ChangePassword(session domain.AuthSession, currentPassword, newPassword string) error
-	RegisterAgentDeviceToken(agentID, deviceToken string) (domain.Agent, error)
+	RegisterAgentDeviceToken(agentID, deviceToken, platform string) (domain.Agent, error)
 
 	AppReleases(platform string) []domain.AppRelease
 	CreateAppRelease(next domain.AppRelease) (domain.AppRelease, error)

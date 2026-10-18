@@ -25,7 +25,7 @@ const (
 	defaultDBTimeout = 5 * time.Second
 
 	adminColumns        = `id, account, name, password_hash, created_at`
-	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate`
+	agentColumns        = `id, account, name, group_name, password_hash, status, COALESCE(device_token, ''), COALESCE(device_platform, ''), max_conversations, current_conversations, disabled_at, created_at, updated_at, avatar_url, manual_satisfaction_rate`
 	conversationColumns = `id, visitor_id, visitor_ip::text, visitor_ip_source, visitor_remark, remark_updated_by, remark_updated_at, status, COALESCE(assigned_agent_id, ''), source, visitor_lang, last_message, last_message_at, unread_for_agent, unread_for_visitor, created_at, updated_at`
 	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id`
 	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
@@ -162,7 +162,9 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS business_hours (
 			id SMALLINT PRIMARY KEY DEFAULT 1, timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai', start_time TEXT NOT NULL DEFAULT '09:00',
-			end_time TEXT NOT NULL DEFAULT '18:00', enabled BOOLEAN NOT NULL DEFAULT true, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			end_time TEXT NOT NULL DEFAULT '18:00', enabled BOOLEAN NOT NULL DEFAULT true,
+			offline_reply TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			CONSTRAINT business_hours_singleton CHECK (id=1)
 		)`,
 		`CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -1489,12 +1491,107 @@ func (s *PostgresStore) UpdateBusinessHours(next domain.BusinessHours) (domain.B
 		current.End = strings.TrimSpace(next.End)
 	}
 	current.Enabled = next.Enabled
+	current.OfflineReply = strings.TrimSpace(next.OfflineReply)
 	_, _ = s.pool.Exec(ctx, `
-		INSERT INTO business_hours (id, timezone, start_time, end_time, enabled, updated_at)
-		VALUES (1, $1, $2, $3, $4, $5)
-		ON CONFLICT (id) DO UPDATE SET timezone=EXCLUDED.timezone, start_time=EXCLUDED.start_time, end_time=EXCLUDED.end_time, enabled=EXCLUDED.enabled, updated_at=EXCLUDED.updated_at
-	`, current.Timezone, current.Start, current.End, current.Enabled, dbNow())
+		INSERT INTO business_hours (id, timezone, start_time, end_time, enabled, offline_reply, updated_at)
+		VALUES (1, $1, $2, $3, $4, $5, $6)
+		ON CONFLICT (id) DO UPDATE SET timezone=EXCLUDED.timezone, start_time=EXCLUDED.start_time, end_time=EXCLUDED.end_time, enabled=EXCLUDED.enabled, offline_reply=EXCLUDED.offline_reply, updated_at=EXCLUDED.updated_at
+	`, current.Timezone, current.Start, current.End, current.Enabled, current.OfflineReply, dbNow())
 	return current, nil
+}
+
+// pushSecretPayload 是 push_settings.encrypted_secrets 的明文结构，整体做 AES-GCM 加密。
+type pushSecretPayload struct {
+	FCMServiceAccountJSON string `json:"fcm_service_account_json"`
+	FCMAccessToken        string `json:"fcm_access_token"`
+	APNsKeyP8             string `json:"apns_key_p8"`
+}
+
+func (s *PostgresStore) PushSettings() domain.PushSettings {
+	ctx, cancel := dbContext()
+	defer cancel()
+	out, err := s.pushSettingsTx(ctx, s.pool)
+	if err != nil {
+		bootstrap := domain.PushSettings{FCMAccessToken: strings.TrimSpace(s.options.FCMAccessToken)}
+		bootstrap.Normalize()
+		return bootstrap
+	}
+	return out
+}
+
+func (s *PostgresStore) pushSettingsTx(ctx context.Context, exec dbTx) (domain.PushSettings, error) {
+	var publicRaw []byte
+	var encrypted string
+	var updated sql.NullTime
+	err := exec.QueryRow(ctx, `SELECT public_config, encrypted_secrets, updated_at FROM push_settings WHERE id=1`).
+		Scan(&publicRaw, &encrypted, &updated)
+	if errors.Is(err, pgx.ErrNoRows) {
+		out := domain.PushSettings{FCMAccessToken: strings.TrimSpace(s.options.FCMAccessToken)}
+		out.Normalize()
+		return out, nil
+	}
+	if err != nil {
+		return domain.PushSettings{}, err
+	}
+	var out domain.PushSettings
+	if len(publicRaw) > 0 {
+		_ = json.Unmarshal(publicRaw, &out)
+	}
+	if strings.TrimSpace(encrypted) != "" {
+		plain, revealErr := revealSecret(s.options.DataEncryptionKey, encrypted)
+		if revealErr != nil {
+			return domain.PushSettings{}, revealErr
+		}
+		var secrets pushSecretPayload
+		_ = json.Unmarshal([]byte(plain), &secrets)
+		out.FCMServiceAccountJSON = secrets.FCMServiceAccountJSON
+		out.FCMAccessToken = secrets.FCMAccessToken
+		out.APNsKeyP8 = secrets.APNsKeyP8
+	}
+	if updated.Valid {
+		stamp := updated.Time
+		out.UpdatedAt = &stamp
+	}
+	out.Normalize()
+	return out, nil
+}
+
+func (s *PostgresStore) UpdatePushSettings(next domain.PushSettings) (domain.PushSettings, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+	current, _ := s.pushSettingsTx(ctx, s.pool)
+	if err := validatePushSettings(next); err != nil {
+		return current, err
+	}
+	// json.Marshal 会通过 json:"-" 自动排除所有密钥字段。
+	publicRaw, err := json.Marshal(next)
+	if err != nil {
+		return current, err
+	}
+	secretRaw, err := json.Marshal(pushSecretPayload{
+		FCMServiceAccountJSON: strings.TrimSpace(next.FCMServiceAccountJSON),
+		FCMAccessToken:        strings.TrimSpace(next.FCMAccessToken),
+		APNsKeyP8:             strings.TrimSpace(next.APNsKeyP8),
+	})
+	if err != nil {
+		return current, err
+	}
+	encrypted, err := protectSecret(s.options.DataEncryptionKey, string(secretRaw))
+	if err != nil {
+		return current, err
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO push_settings (id, public_config, encrypted_secrets, updated_at)
+		VALUES (1, $1::jsonb, $2, now())
+		ON CONFLICT (id) DO UPDATE SET public_config=EXCLUDED.public_config, encrypted_secrets=EXCLUDED.encrypted_secrets, updated_at=now()
+	`, string(publicRaw), encrypted); err != nil {
+		return current, err
+	}
+	out, err := s.pushSettingsTx(ctx, s.pool)
+	if err != nil {
+		return current, err
+	}
+	return out, nil
 }
 
 func (s *PostgresStore) CreateAgent(next domain.Agent, password string) (domain.Agent, error) {
@@ -2334,8 +2431,8 @@ func (s *PostgresStore) aiSettingsTx(ctx context.Context, exec dbTx) (domain.AIS
 
 func (s *PostgresStore) businessHoursTx(ctx context.Context, exec dbTx) (domain.BusinessHours, error) {
 	var out domain.BusinessHours
-	err := exec.QueryRow(ctx, `SELECT timezone, start_time, end_time, enabled FROM business_hours WHERE id=1`).
-		Scan(&out.Timezone, &out.Start, &out.End, &out.Enabled)
+	err := exec.QueryRow(ctx, `SELECT timezone, start_time, end_time, enabled, COALESCE(offline_reply, '') FROM business_hours WHERE id=1`).
+		Scan(&out.Timezone, &out.Start, &out.End, &out.Enabled, &out.OfflineReply)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.BusinessHours{Timezone: "Asia/Shanghai", Start: "09:00", End: "18:00", Enabled: true}, nil
 	}
@@ -2435,6 +2532,15 @@ func (s *PostgresStore) seedDefaults(ctx context.Context) error {
 func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 	statements := []string{
 		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS device_token TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS device_platform TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE business_hours ADD COLUMN IF NOT EXISTS offline_reply TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS push_settings (
+			id SMALLINT PRIMARY KEY DEFAULT 1,
+			public_config JSONB NOT NULL DEFAULT '{}',
+			encrypted_secrets TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT push_settings_singleton CHECK (id=1)
+		)`,
 		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS visitor_lang TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS translations JSONB NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT ''`,
@@ -2565,6 +2671,7 @@ func scanAgent(row scanTarget) (domain.Agent, error) {
 		&out.Password,
 		&out.Status,
 		&out.DeviceToken,
+		&out.DevicePlatform,
 		&out.MaxConversations,
 		&out.CurrentConversations,
 		&disabled,
@@ -2936,7 +3043,7 @@ func (s *PostgresStore) DeleteAppRelease(id string) (domain.AppRelease, error) {
 	return current, nil
 }
 
-func (s *PostgresStore) RegisterAgentDeviceToken(agentID, deviceToken string) (domain.Agent, error) {
+func (s *PostgresStore) RegisterAgentDeviceToken(agentID, deviceToken, platform string) (domain.Agent, error) {
 	ctx, cancel := dbContext()
 	defer cancel()
 
@@ -2947,10 +3054,13 @@ func (s *PostgresStore) RegisterAgentDeviceToken(agentID, deviceToken string) (d
 	if agent.DisabledAt != nil {
 		return domain.Agent{}, ErrForbidden
 	}
-	if _, err := s.pool.Exec(ctx, `UPDATE agents SET device_token=$2, updated_at=$3 WHERE id=$1`, agentID, strings.TrimSpace(deviceToken), dbNow()); err != nil {
+	token := strings.TrimSpace(deviceToken)
+	normalizedPlatform := normalizePushPlatform(platform, token)
+	if _, err := s.pool.Exec(ctx, `UPDATE agents SET device_token=$2, device_platform=$3, updated_at=$4 WHERE id=$1`, agentID, token, normalizedPlatform, dbNow()); err != nil {
 		return domain.Agent{}, err
 	}
-	agent.DeviceToken = strings.TrimSpace(deviceToken)
+	agent.DeviceToken = token
+	agent.DevicePlatform = normalizedPlatform
 	return agent, nil
 }
 

@@ -40,6 +40,7 @@ func main() {
 		DataEncryptionKey:      cfg.DataEncryptionKey,
 		BootstrapAdminPassword: cfg.BootstrapAdminPassword,
 		BootstrapAgentPassword: cfg.BootstrapAgentPassword,
+		FCMAccessToken:         cfg.FCMAccessToken,
 	}
 	dataStore, closeStore, err := buildStore(startupCtx, cfg, storeOptions, logger)
 	if err != nil {
@@ -117,13 +118,8 @@ func buildStore(ctx context.Context, cfg config.Config, options store.Options, l
 	return memoryStore, func() {}, nil
 }
 
+// buildNotifier 返回按后台配置发送的推送通道；未配置任何通道时只记录日志。
+// FCMEndpoint 保留为兼容旧部署的配置项，实际端点由服务账号/项目号推导。
 func buildNotifier(cfg config.Config, logger *slog.Logger) notify.Notifier {
-	if strings.TrimSpace(cfg.FCMAccessToken) != "" {
-		return notify.FCMNotifier{
-			Endpoint:    cfg.FCMEndpoint,
-			AccessToken: cfg.FCMAccessToken,
-			Logger:      logger,
-		}
-	}
-	return notify.LoggingNotifier{Logger: logger}
+	return notify.NewProvider(logger)
 }

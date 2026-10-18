@@ -205,6 +205,8 @@ func (s *Service) CreateVisitorConversation(ip, source, lang, ipSource, remark s
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.created", Data: session.Conversation})
 	if session.Conversation.AssignedAgentID != "" {
 		s.hub.SendToAgent(session.Conversation.AssignedAgentID, realtime.Event{Event: "conversation.assigned", Data: session.Conversation})
+		// 新会话被静默分配给在线客服时也要推送，否则 App 在后台收不到任何提醒。
+		s.notifyAgent(session.Conversation)
 	}
 	return session, nil
 }
@@ -517,6 +519,8 @@ func (s *Service) TransferConversation(actor domain.AuthSession, conversationID,
 	if conversation.AssignedAgentID != "" {
 		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "conversation.assigned", Data: conversation})
 		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "message.receive", Data: AgentFacingMessage(msg)})
+		// 转接后通知新接手的客服（含后台推送）。
+		s.notifyAgent(conversation)
 	}
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: conversation})
 	return conversation, nil
@@ -685,17 +689,22 @@ func (s *Service) notifyAgent(conversation domain.Conversation) {
 	}
 	s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "agent.notification", Data: notification})
 	deviceToken := ""
+	devicePlatform := ""
 	for _, agent := range s.store.AllAgents() {
 		if agent.ID == conversation.AssignedAgentID {
 			deviceToken = strings.TrimSpace(agent.DeviceToken)
+			devicePlatform = strings.TrimSpace(agent.DevicePlatform)
 			break
 		}
 	}
+	pushSettings := s.store.PushSettings()
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := s.notifier.Notify(ctx, notify.Message{
-			AgentID:        deviceToken,
+		if err := s.notifier.Notify(ctx, pushSettings, notify.Message{
+			DeviceToken:    deviceToken,
+			Platform:       devicePlatform,
+			AgentID:        notification.AgentID,
 			ConversationID: notification.ConversationID,
 			Title:          notification.Title,
 			Body:           notification.Body,

@@ -752,3 +752,95 @@ func doJSON(t *testing.T, server http.Handler, method, path, token string, paylo
 	}
 	return out
 }
+
+func TestPushSettingsLifecycleAndAppConfig(t *testing.T) {
+	server := newTestRouter()
+
+	// 公开配置接口不需要登录，且不包含任何服务端密钥。
+	public := doJSON(t, server, http.MethodGet, "/api/app-config", "", nil, http.StatusOK)
+	if public["push_enabled"] != false {
+		t.Fatalf("expected push disabled by default, got %#v", public["push_enabled"])
+	}
+	if strings.Contains(recString(public), "service_account") || strings.Contains(recString(public), "PRIVATE KEY") {
+		t.Fatalf("public app config leaked secrets: %#v", public)
+	}
+
+	// 未登录不能读写推送配置。
+	doJSON(t, server, http.MethodGet, "/api/admin/push-settings", "", nil, http.StatusForbidden)
+
+	adminToken := loginForToken(t, server, "/api/admin/login", "superadmin", "123456")
+	serviceAccount := `{"client_email":"push@demo.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq\n-----END PRIVATE KEY-----\n","project_id":"demo-project"}`
+	updated := doJSON(t, server, http.MethodPatch, "/api/admin/push-settings", adminToken, map[string]any{
+		"firebase_api_key":             "AIzaDemo",
+		"firebase_app_id":              "1:123:android:abc",
+		"firebase_messaging_sender_id": "123456789",
+		"firebase_project_id":          "demo-project",
+		"fcm_service_account_json":     serviceAccount,
+		"apns_key_id":                  "KEYID123",
+		"apns_team_id":                 "TEAM123",
+		"apns_topic":                   "com.astreva.online_customer_service",
+		"apns_environment":             "production",
+	}, http.StatusOK)
+	if updated["fcm_configured"] != true {
+		t.Fatalf("expected fcm configured, got %#v", updated)
+	}
+	if strings.Contains(recString(updated), "MIIEvQIBADANBgkq") {
+		t.Fatalf("push settings response leaked the service account key: %#v", updated)
+	}
+	if mask, _ := updated["fcm_secret_masked"].(string); mask == "" || !strings.HasPrefix(mask, "****") {
+		t.Fatalf("expected masked secret, got %#v", updated["fcm_secret_masked"])
+	}
+
+	// 公开接口现在应下发 Firebase 客户端参数，但依然没有私钥。
+	public = doJSON(t, server, http.MethodGet, "/api/app-config", "", nil, http.StatusOK)
+	firebase, _ := public["firebase"].(map[string]any)
+	if firebase["project_id"] != "demo-project" || firebase["app_id"] != "1:123:android:abc" {
+		t.Fatalf("unexpected public firebase config: %#v", firebase)
+	}
+	if public["push_enabled"] != true {
+		t.Fatalf("expected push enabled after configuration, got %#v", public["push_enabled"])
+	}
+
+	// 非法 APNs 环境应被拒绝。
+	doJSON(t, server, http.MethodPatch, "/api/admin/push-settings", adminToken, map[string]any{
+		"apns_environment": "staging",
+	}, http.StatusBadRequest)
+
+	// 清空密钥后不再视为已配置。
+	cleared := doJSON(t, server, http.MethodPatch, "/api/admin/push-settings", adminToken, map[string]any{
+		"clear_fcm": true,
+	}, http.StatusOK)
+	if cleared["fcm_configured"] != false {
+		t.Fatalf("expected fcm cleared, got %#v", cleared)
+	}
+}
+
+func TestAgentDeviceTokenStoresPlatform(t *testing.T) {
+	server := newTestRouter()
+	agentToken := loginForToken(t, server, "/api/agent/login", "admin", "123456")
+	out := doJSON(t, server, http.MethodPost, "/api/agent/device-token", agentToken, map[string]any{
+		"device_token": "ios-device-token",
+		"platform":     "ios",
+	}, http.StatusOK)
+	agent, _ := out["agent"].(map[string]any)
+	if agent["device_platform"] != "ios" || agent["device_token"] != "ios-device-token" {
+		t.Fatalf("unexpected agent device fields: %#v", agent)
+	}
+	// 清空 token 时平台也应清空。
+	cleared := doJSON(t, server, http.MethodPost, "/api/agent/device-token", agentToken, map[string]any{
+		"device_token": "",
+		"platform":     "ios",
+	}, http.StatusOK)
+	clearedAgent, _ := cleared["agent"].(map[string]any)
+	if value, ok := clearedAgent["device_platform"]; ok && value != "" {
+		t.Fatalf("expected platform cleared with token, got %#v", clearedAgent)
+	}
+	if value, ok := clearedAgent["device_token"]; ok && value != "" {
+		t.Fatalf("expected device token cleared, got %#v", clearedAgent)
+	}
+}
+
+func recString(value any) string {
+	raw, _ := json.Marshal(value)
+	return string(raw)
+}

@@ -22,3 +22,6 @@ servicebridge/backend/uploads/
 
 # 生产数据库备份
 backups/
+
+# 本地 npm 缓存（避免使用系统 ~/.npm）
+.npm-cache/

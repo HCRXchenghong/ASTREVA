@@ -169,6 +169,9 @@ func validateBusinessHours(next domain.BusinessHours) error {
 			return ErrInvalidInput
 		}
 	}
+	if _, err := cleanOptionalText(next.OfflineReply, maxEntryReplyRunes); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -199,6 +202,54 @@ func validateRatingInput(tags []string, comment string) error {
 func validateClientMsgID(value string) error {
 	_, err := cleanOptionalText(value, maxClientMsgIDRunes)
 	return err
+}
+
+const (
+	maxFirebaseValueRunes = 512
+	maxPushSecretRunes    = 20000
+	maxAPNsTopicRunes     = 256
+)
+
+// normalizePushPlatform 归一化设备平台：令牌为空时平台也为空，其余只允许 android/ios。
+func normalizePushPlatform(platform, deviceToken string) string {
+	if strings.TrimSpace(deviceToken) == "" {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(platform), string(domain.PushPlatformIOS)) {
+		return string(domain.PushPlatformIOS)
+	}
+	return string(domain.PushPlatformAndroid)
+}
+
+// validatePushSettings 校验后台可配置的推送参数长度与枚举值。
+func validatePushSettings(next domain.PushSettings) error {
+	fields := []struct {
+		value string
+		max   int
+	}{
+		{next.FirebaseAPIKey, maxFirebaseValueRunes},
+		{next.FirebaseAppID, maxFirebaseValueRunes},
+		{next.FirebaseMessagingSenderID, maxFirebaseValueRunes},
+		{next.FirebaseProjectID, maxFirebaseValueRunes},
+		{next.FirebaseStorageBucket, maxFirebaseValueRunes},
+		{next.FirebaseVapidKey, maxFirebaseValueRunes},
+		{next.APNsKeyID, maxFirebaseValueRunes},
+		{next.APNsTeamID, maxFirebaseValueRunes},
+		{next.APNsTopic, maxAPNsTopicRunes},
+		{next.FCMServiceAccountJSON, maxPushSecretRunes},
+		{next.FCMAccessToken, maxPushSecretRunes},
+		{next.APNsKeyP8, maxPushSecretRunes},
+	}
+	for _, field := range fields {
+		if _, err := cleanOptionalText(field.value, field.max); err != nil {
+			return err
+		}
+	}
+	env := strings.ToLower(strings.TrimSpace(next.APNsEnvironment))
+	if env != "" && env != "sandbox" && env != "production" {
+		return ErrInvalidInput
+	}
+	return nil
 }
 
 func isSafePublicURL(value string) bool {

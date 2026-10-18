@@ -49,6 +49,7 @@ type MemoryStore struct {
 	ai           domain.AISettings
 	cacheProbe   domain.AICacheProbe
 	business     domain.BusinessHours
+	push         domain.PushSettings
 }
 
 type Options struct {
@@ -59,6 +60,8 @@ type Options struct {
 	DataEncryptionKey      string
 	BootstrapAdminPassword string
 	BootstrapAgentPassword string
+	// FCMAccessToken 是可选的启动引导值：数据库里没有推送配置时用它兜底。
+	FCMAccessToken string
 }
 
 func NewMemoryStore(options Options) *MemoryStore {
@@ -100,7 +103,11 @@ func NewMemoryStore(options Options) *MemoryStore {
 			End:      "18:00",
 			Enabled:  true,
 		},
+		push: domain.PushSettings{
+			FCMAccessToken: strings.TrimSpace(options.FCMAccessToken),
+		},
 	}
+	s.push.Normalize()
 	s.appReleases = map[string]*domain.AppRelease{}
 
 	admin := &domain.AdminUser{
@@ -701,7 +708,7 @@ func (s *MemoryStore) UpdateAgent(id string, next domain.Agent) (domain.Agent, e
 	return *agent, nil
 }
 
-func (s *MemoryStore) RegisterAgentDeviceToken(agentID, deviceToken string) (domain.Agent, error) {
+func (s *MemoryStore) RegisterAgentDeviceToken(agentID, deviceToken, platform string) (domain.Agent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -713,6 +720,7 @@ func (s *MemoryStore) RegisterAgentDeviceToken(agentID, deviceToken string) (dom
 		return domain.Agent{}, ErrForbidden
 	}
 	agent.DeviceToken = strings.TrimSpace(deviceToken)
+	agent.DevicePlatform = normalizePushPlatform(platform, agent.DeviceToken)
 	agent.Updated = time.Now().UTC()
 	return *agent, nil
 }
@@ -1632,7 +1640,30 @@ func (s *MemoryStore) UpdateBusinessHours(next domain.BusinessHours) (domain.Bus
 		s.business.End = strings.TrimSpace(next.End)
 	}
 	s.business.Enabled = next.Enabled
+	if strings.TrimSpace(next.OfflineReply) != "" {
+		s.business.OfflineReply = strings.TrimSpace(next.OfflineReply)
+	}
 	return s.business, nil
+}
+
+func (s *MemoryStore) PushSettings() domain.PushSettings {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.push
+}
+
+func (s *MemoryStore) UpdatePushSettings(next domain.PushSettings) (domain.PushSettings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := validatePushSettings(next); err != nil {
+		return s.push, err
+	}
+	next.Normalize()
+	s.push = next
+	now := time.Now().UTC()
+	s.push.UpdatedAt = &now
+	return s.push, nil
 }
 
 func (s *MemoryStore) revokeAuthSessionsLocked(kind domain.AccountKind, accountID string) {

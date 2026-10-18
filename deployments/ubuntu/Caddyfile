@@ -1,81 +1,89 @@
-# ASTREVA internal edge: host nginx terminates TLS and forwards to 127.0.0.1:8090.
+# ASTREVA edge: Caddy 直接监听 80/443，自动申请并续期证书。
+# 域名与证书邮箱全部来自容器环境变量（SITE_DOMAIN / ADMIN_DOMAIN / SERVICE_DOMAIN / ACME_EMAIL），
+# 由 deployments/ubuntu/.env.ubuntu 提供，避免仓库里写死域名或重复生成配置导致漂移。
 {
-  auto_https off
-  admin off
-  # 信任本机 nginx（127.0.0.1）：保留并追加其传来的 X-Forwarded-For，
-  # 否则 Caddy 会用自身对端地址覆盖转发链，后端拿不到真实访客 IP（含 IPv6）。
-  # 注意：nginx 通过 Docker 端口映射连接 Caddy，Caddy 实际看到的对端是
-  # Docker 网桥网关（172.19.0.1），因此需信任整个 172.16.0.0/12 内网段。
-  servers {
-    trusted_proxies static 127.0.0.1/32 ::1/128 172.16.0.0/12
-  }
+	email {$ACME_EMAIL}
+	admin off
 }
 
-http://www.astreva.ltd {
-  encode zstd gzip
-  header {
-    X-Content-Type-Options "nosniff"
-    Referrer-Policy "strict-origin-when-cross-origin"
-    Permissions-Policy "camera=(), microphone=(), geolocation=()"
-  }
+# 官网
+{$SITE_DOMAIN} {
+	encode zstd gzip
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
 
-  handle /site-admin-api/leads {
-    reverse_proxy admin-server:1337
-  }
+	# 咨询单由官网域名直连后台，避免跨域与预检。
+	handle /site-admin-api/leads {
+		reverse_proxy admin-server:1337
+	}
 
-  handle {
-    reverse_proxy frontend:80
-  }
+	handle {
+		reverse_proxy frontend:80
+	}
 }
 
-http://manage.astreva.ltd {
-  encode zstd gzip
-  header {
-    X-Content-Type-Options "nosniff"
-    Referrer-Policy "strict-origin-when-cross-origin"
-    Permissions-Policy "camera=(), microphone=(), geolocation=()"
-  }
+# 统一后台
+{$ADMIN_DOMAIN} {
+	encode zstd gzip
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
 
-  reverse_proxy admin-server:1337
+	reverse_proxy admin-server:1337
 }
 
-http://api.astreva.ltd {
-  encode zstd gzip
-  header {
-    X-Content-Type-Options "nosniff"
-    Referrer-Policy "strict-origin-when-cross-origin"
-    Permissions-Policy "camera=(), microphone=(), geolocation=()"
-  }
+# 客服引擎 + 访客端 + 开放接口
+{$SERVICE_DOMAIN} {
+	encode zstd gzip
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
 
-  handle /api/* {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
+	handle /api/* {
+		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+	}
 
-  handle /api {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
+	handle /api {
+		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+	}
 
-  handle /ws* {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
+	handle /ws* {
+		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+	}
 
-  handle /uploads/* {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
+	# 第三方平台开放接口（API Key 鉴权），必须与访客端页面区分开。
+	handle /open/* {
+		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+	}
 
-  handle /readyz {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
+	handle /open {
+		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+	}
 
-  handle /healthz {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
+	handle /uploads/* {
+		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+	}
 
-  handle /metrics {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
+	handle /readyz {
+		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+	}
 
-  handle {
-    reverse_proxy servicebridge-user-web:80
-  }
+	handle /healthz {
+		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+	}
+
+	handle /metrics {
+		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
+	}
+
+	handle {
+		reverse_proxy servicebridge-user-web:80
+	}
 }

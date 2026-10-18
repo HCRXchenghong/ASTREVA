@@ -2201,6 +2201,16 @@ function renderAdminPage(bootstrap, options = {}) {
 </html>`;
 }
 
+/**
+ * 判断解析后的绝对路径是否真的位于 root 目录内。
+ * 必须带 path.sep，否则 /a/public-evil 会被 /a/public 前缀误判为合法。
+ */
+function isInsideRoot(root, file) {
+  const base = path.resolve(root);
+  const resolved = path.resolve(file);
+  return resolved === base || resolved.startsWith(base + path.sep);
+}
+
 async function serveFile(res, file, cache = false) {
   const safeFile = path.normalize(file);
   if (!existsSync(safeFile)) {
@@ -2344,7 +2354,13 @@ async function handleAdminApi(req, res, pathname) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', PUBLIC_ORIGIN);
-    const pathname = decodeURIComponent(url.pathname);
+    let pathname;
+    try {
+      pathname = decodeURIComponent(url.pathname);
+    } catch {
+      send(res, 400, 'bad request');
+      return;
+    }
 
     if (pathname === '/site-admin-api/leads') {
       if (!applyLeadCors(req, res)) {
@@ -2358,19 +2374,21 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname.startsWith('/assets/')) {
-      const file = path.join(ROOT, 'frontend', 'public', pathname);
+      const publicRoot = path.join(ROOT, 'frontend', 'public');
+      const file = path.join(publicRoot, pathname);
+      if (!isInsideRoot(publicRoot, file)) return send(res, 403, 'forbidden');
       return serveFile(res, file, true);
     }
     if (pathname.startsWith('/site-admin-assets/')) {
       const relative = pathname.slice('/site-admin-assets/'.length);
-      const file = path.join(ROOT, 'admin-server', 'public', relative);
       const publicRoot = path.join(ROOT, 'admin-server', 'public');
-      if (!file.startsWith(publicRoot)) return send(res, 403, 'forbidden');
+      const file = path.join(publicRoot, relative);
+      if (!isInsideRoot(publicRoot, file)) return send(res, 403, 'forbidden');
       return serveFile(res, file, false);
     }
     if (pathname.startsWith('/uploads/site-admin/')) {
       const file = path.join(ROOT, pathname);
-      if (!file.startsWith(UPLOAD_DIR)) return send(res, 403, 'forbidden');
+      if (!isInsideRoot(UPLOAD_DIR, file)) return send(res, 403, 'forbidden');
       return serveFile(res, file, false);
     }
     if (pathname === '/openapi.json' && req.method === 'GET') {

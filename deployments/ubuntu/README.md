@@ -4,15 +4,17 @@
 
 ## 准备
 
-1. 将 `SITE_DOMAIN`、`ADMIN_DOMAIN`、`SERVICE_DOMAIN` 的 DNS A/AAAA 记录指向服务器。
-2. 放通 TCP `80` 和 `443`，安装 Docker Engine 与 Compose。
+1. 将 `SITE_DOMAIN`、`ADMIN_DOMAIN`、`SERVICE_DOMAIN` 的 DNS A/AAAA 记录指向服务器（Caddy 需要公网可达才能完成 ACME 校验）。
+2. 放通 TCP `80`、`443`（以及 UDP `443` 启用 HTTP/3），并确保这两个端口没有被宿主机上的 nginx/apache 等占用；安装 Docker Engine 与 Compose。
 3. 复制并填写配置：
 
 ```bash
 cp deployments/ubuntu/.env.ubuntu.example deployments/ubuntu/.env.ubuntu
 ```
 
-所有 `change-me`、`example.com` 必须替换。三个域名要与 `CORS_ALLOWED_ORIGINS`、`FRAME_ANCESTORS` 和 `UPLOAD_PUBLIC_BASE_URL` 一致。
+所有 `change-me`、`example.com` 必须替换。三个域名要与 `CORS_ALLOWED_ORIGINS`、`FRAME_ANCESTORS` 和 `UPLOAD_PUBLIC_BASE_URL` 一致。`MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD` 也是必填项（即使使用外部对象存储，避免空口令容器）。
+
+后台素材使用对象存储：`S3_ENDPOINT` 必须同时被服务器和管理员浏览器访问（预签名直传由浏览器直接 PUT），生产推荐 Cloudflare R2 / OSS / S3 等外部存储；仓库内置的 MinIO 只监听宿主机回环，仅适合本机验证。
 
 ## 操作
 
@@ -23,7 +25,7 @@ scripts/ubuntu-one-click.sh logs
 scripts/ubuntu-one-click.sh down
 ```
 
-脚本会校验关键变量，运行时生成 `deployments/ubuntu/Caddyfile`，构建镜像并等待四个公开入口通过检查。Caddy 自动签发和续期证书。
+脚本会校验关键变量与 80/443 端口占用，构建镜像并等待三个域名的 HTTPS 入口通过检查。`deployments/ubuntu/Caddyfile` 使用环境变量（`{$SITE_DOMAIN}` 等）生成站点，由 Caddy 直接终止 TLS 并自动签发、续期证书；仓库不再在运行时改写该文件，避免配置漂移。
 
 ## 地址
 

@@ -6,7 +6,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY_DIR="$ROOT_DIR/deployments/ubuntu"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.ubuntu.yml"
 ENV_FILE="${ASTREVA_UBUNTU_ENV:-$DEPLOY_DIR/.env.ubuntu}"
-GENERATED_CADDYFILE="$DEPLOY_DIR/Caddyfile"
 STACK_NAME="${ASTREVA_STACK_NAME:-astreva-ubuntu}"
 
 ACTION="${1:-up}"
@@ -83,100 +82,21 @@ strip() {
   echo "$value"
 }
 
-write_caddyfile() {
-  cat > "$GENERATED_CADDYFILE" <<EOF
-{
-  email $ACME_EMAIL
-}
 
-http:// {
-  redir https://{host}{uri}
-}
-
-$SITE_DOMAIN {
-  encode zstd gzip
-  header {
-    X-Content-Type-Options "nosniff"
-    Referrer-Policy "strict-origin-when-cross-origin"
-    Permissions-Policy "camera=(), microphone=(), geolocation=()"
-  }
-
-  handle /site-admin-api/leads {
-    reverse_proxy admin-server:1337
-  }
-
-  handle {
-    reverse_proxy frontend:80
-  }
-}
-
-$ADMIN_DOMAIN {
-  encode zstd gzip
-  header {
-    X-Content-Type-Options "nosniff"
-    Referrer-Policy "strict-origin-when-cross-origin"
-    Permissions-Policy "camera=(), microphone=(), geolocation=()"
-  }
-
-  reverse_proxy admin-server:1337
-}
-
-$SERVICE_DOMAIN {
-  encode zstd gzip
-  header {
-    X-Content-Type-Options "nosniff"
-    Referrer-Policy "strict-origin-when-cross-origin"
-    Permissions-Policy "camera=(), microphone=(), geolocation=()"
-  }
-
-  handle /api/* {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
-
-  handle /api {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
-
-  handle /ws* {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
-
-  handle /uploads/* {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
-
-  handle /readyz {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
-
-  handle /healthz {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
-
-  handle /metrics {
-    reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-  }
-
-  handle {
-    reverse_proxy servicebridge-user-web:80
-  }
-}
-EOF
-}
-
-wait_for_http() {
-  local label="$1"
-  local url="$2"
+wait_for_https() {
+  local domain="$1"
+  local path="$2"
   local i=0
 
-  while ((i < 30)); do
-    if curl -fsS -H "Host: $label" --max-time 3 "$url" >/dev/null; then
+  while ((i < 60)); do
+    if curl -fsS --resolve "$domain:443:127.0.0.1" --max-time 5 "https://$domain$path" >/dev/null; then
       return 0
     fi
-    sleep 2
+    sleep 3
     ((i += 1))
   done
-  echo "等待超时: $label" >&2
+  echo "等待超时: https://$domain$path" >&2
+  echo "证书签发或服务启动失败，请确认 DNS 已指向本机、80/443 已放通；排查：docker compose logs caddy" >&2
   return 1
 }
 
@@ -268,6 +188,8 @@ need_var TRUSTED_PROXY_CIDRS
 need_var REBUILD_WEBHOOK_SECRET
 need_var ADMIN_2FA_SESSION_SECRET
 need_var METRICS_BEARER_TOKEN
+need_var MINIO_ROOT_USER
+need_var MINIO_ROOT_PASSWORD
 
 if [[ "${CORS_ALLOWED_ORIGINS}" == "*" || "${TRUSTED_PROXY_CIDRS}" == "*" ]]; then
   echo "CORS_ALLOWED_ORIGINS / TRUSTED_PROXY_CIDRS 不能使用 *，请配置具体网段/域名" >&2
@@ -280,6 +202,7 @@ validate_secret AGENT_BOOTSTRAP_PASSWORD 12
 validate_secret REBUILD_WEBHOOK_SECRET 16
 validate_secret ADMIN_2FA_SESSION_SECRET 24
 validate_secret METRICS_BEARER_TOKEN 24
+validate_secret MINIO_ROOT_PASSWORD 16
 
 ADMIN_MEDIA_DRIVER="${ADMIN_MEDIA_DRIVER:-s3}"
 if [[ "$ADMIN_MEDIA_DRIVER" != "s3" ]]; then
@@ -324,7 +247,6 @@ ADMIN_ORIGIN="https://$ADMIN_DOMAIN"
 SERVICE_ORIGIN="https://$SERVICE_DOMAIN"
 DATABASE_URL="${DATABASE_URL:-postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@postgres:5432/$POSTGRES_DB?sslmode=disable}"
 
-write_caddyfile
 
 export PUBLIC_SITE_URL="$SITE_ORIGIN"
 export PUBLIC_ADMIN_URL="$ADMIN_ORIGIN"
@@ -367,19 +289,29 @@ export ADMIN_2FA_SESSION_SECRET
 export ADMIN_2FA_ISSUER
 export ADMIN_2FA_SESSION_TTL_MS
 
+# Caddy 直接监听 80/443 并自动签发证书，先确认端口未被其它服务占用（如宿主机 nginx/apache）。
+if command -v ss >/dev/null 2>&1; then
+  for port in 80 443; do
+    if ss -ltn "sport = :$port" 2>/dev/null | tail -n +2 | grep -q .; then
+      echo "端口 $port 已被占用；Caddy 需要独占 80/443，请先停掉占用进程" >&2
+      exit 1
+    fi
+  done
+fi
+
 compose_action up -d --build
 
 echo "等待反代入口可访问..."
-wait_for_http "$SITE_DOMAIN" "http://127.0.0.1/"
-wait_for_http "$ADMIN_DOMAIN" "http://127.0.0.1/admin-2fa"
-wait_for_http "$SERVICE_DOMAIN" "http://127.0.0.1/readyz"
-wait_for_http "$SERVICE_DOMAIN" "http://127.0.0.1/?embed=1"
+wait_for_https "$SITE_DOMAIN" "/"
+wait_for_https "$ADMIN_DOMAIN" "/admin-2fa"
+wait_for_https "$SERVICE_DOMAIN" "/readyz"
+wait_for_https "$SERVICE_DOMAIN" "/?embed=1"
 
 echo "启动完成"
 echo "主站: $SITE_ORIGIN"
 echo "后台: $ADMIN_ORIGIN/site-admin/"
 echo "客服: $SERVICE_ORIGIN/?embed=1"
 echo "客服接口: $SERVICE_ORIGIN/api"
-echo "证书: Caddy 自动签发并自动续签（需域名 DNS 指向本机 80/443）"
+echo "证书: Caddy 直接监听 80/443 自动签发并续期（需域名 DNS 指向本机且 80/443 放通）"
 echo "停止: scripts/ubuntu-one-click.sh down"
 echo "查看: scripts/ubuntu-one-click.sh logs [service_name]"
