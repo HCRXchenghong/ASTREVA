@@ -58,7 +58,7 @@ func (s *Service) resolveConversationLanguage(conversation domain.Conversation, 
 	}
 	if messageType == domain.MessageText {
 		if detection.Code != "" {
-			decision.DetectedLang = detection.Code
+			decision.DetectedLang = detectedLanguageTag(detection)
 			stats[detection.Code]++
 		}
 		decision.Changed = true
@@ -80,6 +80,19 @@ func (s *Service) resolveConversationLanguage(conversation domain.Conversation, 
 		}
 	}
 	return decision
+}
+
+// detectedLanguageTag 返回用于落库的检测结果标签：有方言证据时保留 BCP-47 标签
+// （如 es-419、ar-Gulf、zh-Hant），否则使用基础语言码。标准简体中文仍记作 zh，
+// 避免改变既有 detected_lang 语义。
+func detectedLanguageTag(result ai.LanguageResult) string {
+	if result.Tag == "" {
+		return result.Code
+	}
+	if result.Dialect == "" || result.Tag == "zh-Hans" {
+		return result.Code
+	}
+	return result.Tag
 }
 
 // recentVisitorLanguages 读取会话内最近的访客文本消息语种（时间正序）。

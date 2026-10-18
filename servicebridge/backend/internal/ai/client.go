@@ -295,8 +295,8 @@ func (c *Client) responses(ctx context.Context, settings domain.AISettings, syst
 
 func (c *Client) anthropicMessages(ctx context.Context, settings domain.AISettings, systemPrompt string, history []HistoryTurn, userText string) (string, error) {
 	type contentBlock struct {
-		Type         string          `json:"type"`
-		Text         string          `json:"text"`
+		Type         string             `json:"type"`
+		Text         string             `json:"text"`
 		CacheControl *map[string]string `json:"cache_control,omitempty"`
 	}
 	ephemeral := map[string]string{"type": "ephemeral"}
@@ -457,10 +457,10 @@ func (c *Client) probeResponses(ctx context.Context, settings domain.AISettings)
 	text := probeText()
 	mkBody := func() map[string]any {
 		return map[string]any{
-			"model":               nonEmpty(settings.Model, "gpt-4o-mini"),
-			"temperature":         0,
-			"max_output_tokens":   1,
-			"input":               text,
+			"model":             nonEmpty(settings.Model, "gpt-4o-mini"),
+			"temperature":       0,
+			"max_output_tokens": 1,
+			"input":             text,
 		}
 	}
 	if _, err := c.probeRequest(ctx, url, settings, mkBody()); err != nil {

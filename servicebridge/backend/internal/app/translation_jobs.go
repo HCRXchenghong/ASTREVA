@@ -16,6 +16,8 @@ type translationJob struct {
 	targetLang     string
 	messageType    domain.MessageType
 	content        string
+	// styleHint 是目标语言的风格提示（方言模式），为空时按标准语翻译。
+	styleHint string
 	// agentID 非空表示"访客消息→客服"方向：译文就绪后通知该客服。
 	agentID string
 	// visitorFacing 为真表示"客服消息→访客"方向：译文就绪后投递给访客。
@@ -37,7 +39,7 @@ func staticTranslation(sourceLang, targetLang string, messageType domain.Message
 
 // finishTranslation 异步执行翻译并更新消息与两端视图。
 func (s *Service) finishTranslation(job translationJob) {
-	translations := s.translateMessage(job.sourceLang, job.targetLang, job.messageType, job.content)
+	translations := s.translateMessageWithStyle(job.sourceLang, job.targetLang, job.messageType, job.content, job.styleHint)
 	status := "failed"
 	if text := strings.TrimSpace(translations[job.targetLang]); text != "" {
 		status = "done"

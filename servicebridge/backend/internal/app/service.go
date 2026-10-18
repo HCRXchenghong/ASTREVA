@@ -324,9 +324,16 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 	// 翻译源语言用"这条消息实际使用的语言"，而不是会话初始语言。
 	// 固定文案走静态映射，其余走异步翻译：访客先收到原文，客服端先看到原文+「翻译中」，
 	// 译文就绪后原地更新（避免把访客的发送请求阻塞在翻译上）。
+	// 当前负责客服关闭了"访客消息自动译成中文"时，完全跳过翻译（原文仍正常投递）。
+	preferences := s.agentPreferences(conversation.AssignedAgentID)
+	autoTranslateIncoming := prefBool(preferences.AutoTranslateIncoming)
 	translations, needsAI := staticTranslation(language.DetectedLang, ai.LangZh, messageType, content)
 	status := messageTranslationState(language.DetectedLang, ai.LangZh, messageType, content)
-	if needsAI {
+	if !autoTranslateIncoming {
+		translations = nil
+		needsAI = false
+		status = "skipped"
+	} else if needsAI {
 		translations = nil
 	}
 	result, err := s.store.AddVisitorMessage(conversationID, clientMsgID, content, messageType, translations)
@@ -380,6 +387,7 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 			targetLang:     ai.LangZh,
 			messageType:    messageType,
 			content:        content,
+			styleHint:      s.translationStyleHint(preferences, result.Conversation, ai.LangZh),
 			agentID:        result.Conversation.AssignedAgentID,
 		})
 	}
@@ -492,9 +500,16 @@ func (s *Service) AddAgentMessage(agentID, conversationID, clientMsgID, content 
 		authorLang = ai.DetectLanguage(content).Code
 	}
 	// 客服可以写任何语言：源语言=检测结果，目标语言=访客当前语言。
+	// 客服关闭了"我的消息自动译成访客语言"时，直接按访客视图投递原文（这是客服自己的选择）。
+	preferences := s.agentPreferences(agentID)
+	autoTranslateOutgoing := prefBool(preferences.AutoTranslateOutgoing)
 	translations, needsAI := staticTranslation(authorLang, visitorLang, messageType, content)
 	status := messageTranslationState(authorLang, visitorLang, messageType, content)
-	if needsAI {
+	if !autoTranslateOutgoing {
+		translations = nil
+		needsAI = false
+		status = "skipped"
+	} else if needsAI {
 		translations = nil
 	}
 	result, err := s.store.AddAgentMessage(agentID, conversationID, clientMsgID, content, messageType, translations)
@@ -516,6 +531,7 @@ func (s *Service) AddAgentMessage(agentID, conversationID, clientMsgID, content 
 			targetLang:     visitorLang,
 			messageType:    messageType,
 			content:        content,
+			styleHint:      s.translationStyleHint(preferences, conversation, visitorLang),
 			agentID:        agentID,
 			visitorFacing:  true,
 		})
@@ -941,6 +957,11 @@ func (s *Service) translateToChinese(sourceLang string, messageType domain.Messa
 
 // translateMessage 通用译文生成：源语言与目标语言相同、不可翻译类型或翻译失败时返回 nil。
 func (s *Service) translateMessage(sourceLang, targetLang string, messageType domain.MessageType, content string) map[string]string {
+	return s.translateMessageWithStyle(sourceLang, targetLang, messageType, content, "")
+}
+
+// translateMessageWithStyle 在通用译文生成的基础上附加目标语言风格提示（方言模式）。
+func (s *Service) translateMessageWithStyle(sourceLang, targetLang string, messageType domain.MessageType, content, styleHint string) map[string]string {
 	sourceLang = ai.NormalizeLang(sourceLang, ai.LangZh)
 	targetLang = ai.NormalizeLang(targetLang, ai.LangZh)
 	if sourceLang == targetLang || !isTranslatableMessageType(messageType) || strings.TrimSpace(content) == "" {
@@ -951,7 +972,7 @@ func (s *Service) translateMessage(sourceLang, targetLang string, messageType do
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
 	defer cancel()
-	translated, err := s.ai.Translate(ctx, s.store.AISettings(), content, sourceLang, targetLang)
+	translated, err := s.ai.TranslateWithStyle(ctx, s.store.AISettings(), content, sourceLang, targetLang, styleHint)
 	if err != nil || strings.TrimSpace(translated) == "" {
 		s.logger.Warn("translate message failed", "source", sourceLang, "target", targetLang, "error", err)
 		return nil

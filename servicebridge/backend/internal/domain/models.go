@@ -81,11 +81,11 @@ const (
 // AgentPreferences 是客服账号级的翻译与辅助偏好。
 // 使用指针字段区分"未设置"与显式 false，读取时通过 WithDefaults 填充默认值。
 type AgentPreferences struct {
-	AutoTranslateIncoming *bool  `json:"auto_translate_incoming,omitempty"`       // 访客消息自动译成中文，默认 true
-	AutoTranslateOutgoing *bool  `json:"auto_translate_outgoing,omitempty"`       // 我的消息自动译成访客语言，默认 true
+	AutoTranslateIncoming *bool  `json:"auto_translate_incoming,omitempty"`        // 访客消息自动译成中文，默认 true
+	AutoTranslateOutgoing *bool  `json:"auto_translate_outgoing,omitempty"`        // 我的消息自动译成访客语言，默认 true
 	ReviewTranslation     *bool  `json:"review_translation_before_send,omitempty"` // 发送前确认/编辑译文，默认 true
-	DialectMode           string `json:"translation_dialect_mode,omitempty"`      // "standard"（默认）| "dialect"
-	AISuggestReplies      *bool  `json:"ai_suggest_replies,omitempty"`            // AI 推荐发送内容，默认 true
+	DialectMode           string `json:"translation_dialect_mode,omitempty"`       // "standard"（默认）| "dialect"
+	AISuggestReplies      *bool  `json:"ai_suggest_replies,omitempty"`             // AI 推荐发送内容，默认 true
 }
 
 // NormalizeDialectMode 归一化方言模式：空或非法值一律回落到 standard。

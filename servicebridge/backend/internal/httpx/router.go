@@ -330,6 +330,109 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		writeJSON(w, http.StatusOK, buildAgentRatingSummary(agent, summary))
 	})
 
+	mux.HandleFunc("GET /api/agent/preferences", func(w http.ResponseWriter, r *http.Request) {
+		session, err := service.AuthFromRequest(r)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if session.Kind != domain.AccountAgent {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		preferences, err := service.Store().AgentPreferences(session.AccountID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"preferences": preferences.WithDefaults()})
+	})
+
+	mux.HandleFunc("PATCH /api/agent/preferences", func(w http.ResponseWriter, r *http.Request) {
+		session, err := service.AuthFromRequest(r)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if session.Kind != domain.AccountAgent {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		// 指针字段表示"本次是否提供"：未提供的字段保持原值。
+		var req struct {
+			AutoTranslateIncoming *bool   `json:"auto_translate_incoming"`
+			AutoTranslateOutgoing *bool   `json:"auto_translate_outgoing"`
+			ReviewTranslation     *bool   `json:"review_translation_before_send"`
+			DialectMode           *string `json:"translation_dialect_mode"`
+			AISuggestReplies      *bool   `json:"ai_suggest_replies"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		current, err := service.Store().AgentPreferences(session.AccountID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		next := current.WithDefaults()
+		if req.AutoTranslateIncoming != nil {
+			next.AutoTranslateIncoming = req.AutoTranslateIncoming
+		}
+		if req.AutoTranslateOutgoing != nil {
+			next.AutoTranslateOutgoing = req.AutoTranslateOutgoing
+		}
+		if req.ReviewTranslation != nil {
+			next.ReviewTranslation = req.ReviewTranslation
+		}
+		if req.AISuggestReplies != nil {
+			next.AISuggestReplies = req.AISuggestReplies
+		}
+		if req.DialectMode != nil {
+			if !domain.ValidDialectMode(*req.DialectMode) {
+				writeError(w, fmt.Errorf("%w: translation_dialect_mode 只允许 standard 或 dialect", store.ErrInvalidInput))
+				return
+			}
+			next.DialectMode = domain.NormalizeDialectMode(*req.DialectMode)
+		}
+		updated, err := service.Store().UpdateAgentPreferences(session.AccountID, next)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"preferences": updated.WithDefaults()})
+	})
+
+	// 发送前译文预览：只翻译，不创建任何消息。
+	mux.HandleFunc("POST /api/agent/translate-preview", func(w http.ResponseWriter, r *http.Request) {
+		session, err := service.AuthFromRequest(r)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if session.Kind != domain.AccountAgent {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req struct {
+			ConversationID string `json:"conversation_id"`
+			Content        string `json:"content"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		preview, err := service.TranslatePreview(r.Context(), session.AccountID, req.ConversationID, req.Content)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrInvalidInput) || errors.Is(err, store.ErrForbidden) {
+				writeError(w, err)
+				return
+			}
+			// 翻译失败：只报错，不写库、不产生消息。
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "translation_failed", "message": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, preview)
+	})
+
 	mux.HandleFunc("POST /api/account/password", func(w http.ResponseWriter, r *http.Request) {
 		session, err := service.AuthFromRequest(r)
 		if err != nil {
