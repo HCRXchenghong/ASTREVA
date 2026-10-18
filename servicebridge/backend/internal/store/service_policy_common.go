@@ -90,3 +90,42 @@ func copyStringMap(source map[string]string) map[string]string {
 	}
 	return out
 }
+
+// autoReplyPath 描述一次访客消息在"关键词 vs AI"上的自动回复路径。
+type autoReplyPath struct {
+	// keywordAllowed 表示允许命中配置的关键词规则并直接回复。
+	keywordAllowed bool
+	// tryAI 表示允许把消息交给 AI 生成回复（NeedAI=true）。
+	tryAI bool
+}
+
+// resolveAutoReplyPath 按 ai_keyword_priority 计算关键词与 AI 的先后关系，
+// 四种模式的判定集中在这里，便于单测。
+//
+// aiEnabled 是既有可用性判定（AI 已启用且模式非 manual_only），keyword_first 的现行为依赖它；
+// aiConfigured 表示上游地址与密钥都已配置（确实能向上游发请求），
+// 用于 ai_first / ai_only 的"AI 不可用则回退关键词"语义。
+func resolveAutoReplyPath(priority string, aiEnabled, aiConfigured bool) autoReplyPath {
+	switch domain.NormalizeAIKeywordPriority(priority) {
+	case domain.AIKeywordPriorityAIFirst:
+		// 先 AI：可用时忽略关键词规则；不可用时才走关键词。
+		if aiEnabled && aiConfigured {
+			return autoReplyPath{keywordAllowed: false, tryAI: true}
+		}
+		return autoReplyPath{keywordAllowed: true, tryAI: false}
+	case domain.AIKeywordPriorityKeywordOnly:
+		// 只走关键词：永不请求 AI。
+		return autoReplyPath{keywordAllowed: true, tryAI: false}
+	case domain.AIKeywordPriorityAIOnly:
+		// 只走 AI：忽略关键词规则，AI 不可用时不再回退关键词。
+		return autoReplyPath{keywordAllowed: false, tryAI: aiEnabled && aiConfigured}
+	default:
+		// keyword_first：现行为——命中关键词即回复并短路 AI，未命中才请求 AI。
+		return autoReplyPath{keywordAllowed: true, tryAI: aiEnabled}
+	}
+}
+
+// aiUpstreamConfigured 判断 AI 上游是否具备可调用配置（地址 + 密钥缺一不可）。
+func aiUpstreamConfigured(settings domain.AISettings) bool {
+	return strings.TrimSpace(settings.BaseURL) != "" && strings.TrimSpace(settings.APIKey) != ""
+}

@@ -62,6 +62,11 @@ func main() {
 	}
 	service := app.NewService(dataStore, hub, logger)
 	service.SetNotifier(buildNotifier(cfg, logger, dataStore))
+	// SLA 巡检（首响超时 / 待回复回退 / 静默自动关闭）：间隔取 SERVICE_POLICY_TICK_SECONDS，
+	// 默认 30 秒、最小 5 秒；进程退出时优雅停止。
+	policyTick := app.PolicyTickInterval()
+	service.StartPolicyLoop(policyTick)
+	logger.Info("service policy sweep loop started", "interval", policyTick.String())
 	mux := httpx.NewRouter(cfg, logger, service)
 
 	server := &http.Server{
@@ -91,6 +96,8 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	service.StopPolicyLoop()
 
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Error("server shutdown failed", "error", err)

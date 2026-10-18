@@ -138,6 +138,18 @@ type Store interface {
 	// 递增客服并发并把会话移出排队队列，不改变会话状态。
 	// 会话已被他人负责、已结束、客服非在线或已达并发上限时返回 ErrConflict。
 	AssignConversationToAgent(conversationID, agentID string) (domain.Conversation, error)
+	// SetConversationSLAState 只更新会话的 sla_state 标记（含 updated_at），
+	// 供 SLA 巡检记录 first_response / idle，保证同一超时只告警一次。
+	SetConversationSLAState(conversationID, state string) (domain.Conversation, error)
+	// ReturnConversationToAI 把会话交回 AI 接待（状态置 ai_serving，保留负责客服便于追溯）。
+	// 用于策略 sla_idle_action=ai；不改变 assigned_agent_id 与 sla_state（后者是巡检幂等标记）。
+	ReturnConversationToAI(conversationID string) (domain.Conversation, error)
+	// ReassignConversation 用于策略 sla_idle_action=reassign 的存储能力：
+	//   - targetAgentID 非空：把会话从当前客服转给目标客服（递减原客服并发、递增目标并发），
+	//     不改变会话状态（与既有转接语义一致）；目标客服不可用时返回 ErrConflict；
+	//   - targetAgentID 为空：释放当前客服并把会话置为未分配（assigned → human_requested），
+	//     交由应用层重新入队。
+	ReassignConversation(conversationID, targetAgentID string) (domain.Conversation, error)
 	// AddUnattendedNotice 落库一条无人值守兜底系统消息并记录 unattended_notified_at。
 	// 同一会话已发送过时返回 ErrConflict，保证"每个会话只发一次"在重启后依然成立。
 	AddUnattendedNotice(conversationID, content string, translations map[string]string) (domain.Message, domain.Conversation, error)

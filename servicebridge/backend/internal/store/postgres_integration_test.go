@@ -1051,6 +1051,117 @@ func TestPostgresTakeoverAssignAndUnattended(t *testing.T) {
 	}
 }
 
+// TestPostgresSLAStateAndReassign 覆盖 SLA 巡检用到的存储能力（真实 PostgreSQL）：
+// sla_state 写入、交回 AI、转接其他客服与释放回队，以及客服回复写入 SLA 时间戳。
+func TestPostgresSLAStateAndReassign(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	st, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	if _, err := st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false}); err != nil {
+		t.Fatalf("更新营业时间失败：%v", err)
+	}
+	suffix := time.Now().Format("150405.000000")
+	agentA := createIntegrationAgent(t, st, "sla_it_a_"+suffix)
+	agentB := createIntegrationAgent(t, st, "sla_it_b_"+suffix)
+
+	currentConversations := func(agentID string) int {
+		t.Helper()
+		var current int
+		if err := st.pool.QueryRow(ctx, `SELECT current_conversations FROM agents WHERE id=$1`, agentID).Scan(&current); err != nil {
+			t.Fatalf("读取客服并发失败：%v", err)
+		}
+		return current
+	}
+
+	visitor, err := st.CreateVisitorConversation("203.0.113.231", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建会话失败：%v", err)
+	}
+	conversationID := visitor.Conversation.ID
+	if _, err := st.TakeoverConversation(agentA.ID, conversationID); err != nil {
+		t.Fatalf("接管失败：%v", err)
+	}
+
+	// sla_state 往返（巡检幂等标记）。
+	state, err := st.SetConversationSLAState(conversationID, domain.ConversationSLAStateIdle)
+	if err != nil {
+		t.Fatalf("写入 sla_state 失败：%v", err)
+	}
+	if state.SLAState != domain.ConversationSLAStateIdle {
+		t.Fatalf("sla_state 应为 idle，实际 %q", state.SLAState)
+	}
+
+	// 交回 AI：状态置 ai_serving，保留负责客服与 sla_state 幂等标记。
+	aiServing, err := st.ReturnConversationToAI(conversationID)
+	if err != nil {
+		t.Fatalf("交回 AI 失败：%v", err)
+	}
+	if aiServing.Status != domain.ConversationAIServing {
+		t.Fatalf("交回 AI 后状态应为 ai_serving，实际 %q", aiServing.Status)
+	}
+	if aiServing.AssignedAgentID != agentA.ID || aiServing.SLAState != domain.ConversationSLAStateIdle {
+		t.Fatalf("交回 AI 应保留负责客服与 sla_state：%+v", aiServing)
+	}
+
+	// 客服真实回复：写入 first_response_at / last_agent_reply_at 并清空 sla_state。
+	if _, err := st.AddAgentMessage(agentA.ID, conversationID, "sla-it-reply", "您好，为您跟进。", domain.MessageText, nil); err != nil {
+		t.Fatalf("客服回复失败：%v", err)
+	}
+	replied, ok := st.Conversation(conversationID)
+	if !ok {
+		t.Fatal("会话应存在")
+	}
+	if replied.FirstResponseAt == nil || replied.LastAgentReplyAt == nil {
+		t.Fatalf("客服回复后应写入 SLA 时间戳：%+v", replied)
+	}
+	if replied.SLAState != "" {
+		t.Fatalf("客服回复后应清空 sla_state，实际 %q", replied.SLAState)
+	}
+
+	// 转接给其他客服：并发从 A 转移到 B。
+	moved, err := st.ReassignConversation(conversationID, agentB.ID)
+	if err != nil {
+		t.Fatalf("SLA 转接失败：%v", err)
+	}
+	if moved.AssignedAgentID != agentB.ID {
+		t.Fatalf("转接后应分配给 B，实际 %q", moved.AssignedAgentID)
+	}
+	if got := currentConversations(agentA.ID); got != 0 {
+		t.Fatalf("转接后 A 的并发应为 0，实际 %d", got)
+	}
+	if got := currentConversations(agentB.ID); got != 1 {
+		t.Fatalf("转接后 B 的并发应为 1，实际 %d", got)
+	}
+
+	// 释放回队：清空分配、状态回到 human_requested、并发归零。
+	released, err := st.ReassignConversation(conversationID, "")
+	if err != nil {
+		t.Fatalf("SLA 释放失败：%v", err)
+	}
+	if released.AssignedAgentID != "" {
+		t.Fatalf("释放后应无负责客服，实际 %q", released.AssignedAgentID)
+	}
+	if released.Status != domain.ConversationHumanRequested {
+		t.Fatalf("释放后状态应为 human_requested，实际 %q", released.Status)
+	}
+	if got := currentConversations(agentB.ID); got != 0 {
+		t.Fatalf("释放后 B 的并发应为 0，实际 %d", got)
+	}
+}
+
 // createIntegrationAgent 建一个在线客服（集成测试辅助）。
 func createIntegrationAgent(t *testing.T, st *PostgresStore, account string) domain.Agent {
 	t.Helper()

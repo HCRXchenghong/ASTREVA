@@ -38,6 +38,8 @@ type Service struct {
 	watching *watchRegistry
 	// alertLinkHint 是提醒渠道正文里的会话链接前缀（PUBLIC_ADMIN_URL），为空则不下发链接。
 	alertLinkHint string
+	// policyLoop 是 SLA 巡检 ticker 的运行状态（见 service_policy_sla.go），可优雅停止。
+	policyLoop *policyLoopRunner
 }
 
 func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Service {
@@ -51,6 +53,7 @@ func NewService(store store.Store, hub *realtime.Hub, logger *slog.Logger) *Serv
 		limitTracker:            newLimitTracker(),
 		limitTexts:              newLimitTextTranslator(),
 		watching:                newWatchRegistry(),
+		policyLoop:              &policyLoopRunner{},
 	}
 }
 

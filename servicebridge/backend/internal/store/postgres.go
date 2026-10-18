@@ -913,6 +913,15 @@ func (s *PostgresStore) AddAgentMessage(agentID, conversationID, clientMsgID, co
 		if err := s.touchConversationTx(ctx, tx, &conversation, conversationPreviewText(messageType, content), false, input.CreatedAt); err != nil {
 			return err
 		}
+		// SLA 计时：首次真实回复写入 first_response_at，每次回复更新 last_agent_reply_at，
+		// 并清空 sla_state（该会话已发生的超时告警重新计时）。
+		if _, err := tx.Exec(ctx, `
+			UPDATE conversations
+			SET first_response_at=COALESCE(first_response_at, $2), last_agent_reply_at=$2, sla_state=''
+			WHERE id=$1
+		`, conversationID, input.CreatedAt); err != nil {
+			return err
+		}
 		latest, err := s.conversationByIDForUpdateTx(ctx, tx, conversationID)
 		if err != nil {
 			return err
@@ -2799,40 +2808,51 @@ func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, co
 		return nil, false, nil
 	}
 
-	rules, err := s.keywordRules(ctx, tx)
-	if err != nil {
-		return nil, false, err
-	}
-	for _, rule := range rules {
-		if !rule.Enabled || !keywordMatches(rule, normalized) {
-			continue
-		}
-		if rule.Action == "handoff" {
-			return requestHuman()
-		}
-		messageType := domain.MessageText
-		if rule.Action == "telephone" {
-			messageType = domain.MessageContactTelephone
-		}
-		if rule.Action == "whatsapp" {
-			messageType = domain.MessageContactWhatsApp
-		}
-		if rule.Action == "telegram" {
-			messageType = domain.MessageContactTelegram
-		}
-		msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", messageType, rule.Reply, nil)
-		if err != nil {
-			return nil, false, err
-		}
-		return append(generated, msg), false, nil
-	}
-
+	// 关键词与 AI 的先后由策略 ai_keyword_priority 决定；判定集中在 resolveAutoReplyPath。
+	// keyword_first（默认）完全保持既有行为：先关键词、命中即短路，未命中才请求 AI。
 	aiSettings, err := s.aiSettingsTx(ctx, tx)
 	if err != nil {
 		return nil, false, err
 	}
-	if !aiSettings.Enabled || aiSettings.Mode == domain.AIModeManualOnly {
-		// AI 不可用且当前非营业时间：记录留言并进入人工队列，同样只提示一次。
+	policy, err := s.servicePolicyTx(ctx, tx)
+	if err != nil {
+		return nil, false, err
+	}
+	aiEnabled := aiSettings.Enabled && aiSettings.Mode != domain.AIModeManualOnly
+	path := resolveAutoReplyPath(policy.AIKeywordPriority, aiEnabled, aiUpstreamConfigured(aiSettings))
+	if path.keywordAllowed {
+		rules, err := s.keywordRules(ctx, tx)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, rule := range rules {
+			if !rule.Enabled || !keywordMatches(rule, normalized) {
+				continue
+			}
+			if rule.Action == "handoff" {
+				return requestHuman()
+			}
+			messageType := domain.MessageText
+			if rule.Action == "telephone" {
+				messageType = domain.MessageContactTelephone
+			}
+			if rule.Action == "whatsapp" {
+				messageType = domain.MessageContactWhatsApp
+			}
+			if rule.Action == "telegram" {
+				messageType = domain.MessageContactTelegram
+			}
+			msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", messageType, rule.Reply, nil)
+			if err != nil {
+				return nil, false, err
+			}
+			return append(generated, msg), false, nil
+		}
+	}
+
+	if !path.tryAI {
+		// AI 不可用（未启用/manual_only/上游未配置）或模式为 keyword_only / ai_only：
+		// 不请求 AI；当前非营业时间且无人接待时记录留言并进入人工队列，同样只提示一次。
 		business, err := s.businessHoursTx(ctx, tx)
 		if err != nil {
 			return nil, false, err

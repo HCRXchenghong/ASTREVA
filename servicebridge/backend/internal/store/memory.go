@@ -1170,6 +1170,14 @@ func (s *MemoryStore) AddAgentMessage(agentID, conversationID, clientMsgID, cont
 	}
 	input := s.createMessageLocked(conversationID, clientMsgID, domain.SenderAgent, agentID, messageType, content, translations)
 	s.touchConversationLocked(conversation, conversationPreviewText(messageType, content), false, input.CreatedAt)
+	// SLA 计时：首次真实回复写入 first_response_at，每次回复更新 last_agent_reply_at，
+	// 并清空 sla_state（该会话已发生的超时告警重新计时）。
+	repliedAt := input.CreatedAt
+	if conversation.FirstResponseAt == nil {
+		conversation.FirstResponseAt = &repliedAt
+	}
+	conversation.LastAgentReplyAt = &repliedAt
+	conversation.SLAState = ""
 	return MessageResult{Input: input, Conversation: *conversation}, nil
 }
 
@@ -2176,30 +2184,36 @@ func (s *MemoryStore) generateAutoRepliesLocked(conversation *domain.Conversatio
 		return nil, false
 	}
 
-	for _, rule := range s.keywordRules {
-		if !rule.Enabled || !keywordMatches(rule, normalized) {
-			continue
+	// 关键词与 AI 的先后由策略 ai_keyword_priority 决定；判定集中在 resolveAutoReplyPath。
+	// keyword_first（默认）完全保持既有行为：先关键词、命中即短路，未命中才请求 AI。
+	path := resolveAutoReplyPath(s.servicePolicy.AIKeywordPriority, s.aiReplyAvailableLocked(), aiUpstreamConfigured(s.ai))
+	if path.keywordAllowed {
+		for _, rule := range s.keywordRules {
+			if !rule.Enabled || !keywordMatches(rule, normalized) {
+				continue
+			}
+			if rule.Action == "handoff" {
+				return requestHuman()
+			}
+			messageType := domain.MessageText
+			if rule.Action == "telephone" {
+				messageType = domain.MessageContactTelephone
+			}
+			if rule.Action == "whatsapp" {
+				messageType = domain.MessageContactWhatsApp
+			}
+			if rule.Action == "telegram" {
+				messageType = domain.MessageContactTelegram
+			}
+			msg := s.createMessageLocked(conversation.ID, "", domain.SenderSystem, "system", messageType, rule.Reply, nil)
+			generated = append(generated, msg)
+			return generated, false
 		}
-		if rule.Action == "handoff" {
-			return requestHuman()
-		}
-		messageType := domain.MessageText
-		if rule.Action == "telephone" {
-			messageType = domain.MessageContactTelephone
-		}
-		if rule.Action == "whatsapp" {
-			messageType = domain.MessageContactWhatsApp
-		}
-		if rule.Action == "telegram" {
-			messageType = domain.MessageContactTelegram
-		}
-		msg := s.createMessageLocked(conversation.ID, "", domain.SenderSystem, "system", messageType, rule.Reply, nil)
-		generated = append(generated, msg)
-		return generated, false
 	}
 
-	if !s.aiReplyAvailableLocked() {
-		// AI 不可用且当前非营业时间：记录留言并进入人工队列，同样只提示一次。
+	if !path.tryAI {
+		// AI 不可用（未启用/manual_only/上游未配置）或模式为 keyword_only / ai_only：
+		// 不请求 AI；当前非营业时间且无人接待时记录留言并进入人工队列，同样只提示一次。
 		if !s.businessOpenLocked(now) && conversation.AssignedAgentID == "" && conversation.Status != domain.ConversationHumanRequested {
 			conversation.Status = domain.ConversationHumanRequested
 			conversation.UpdatedAt = now

@@ -376,3 +376,16 @@ App 的「AI 建议」按钮同样按两者共同启用/禁用；控制台「客
 7. **队列接口字段**：`GET /api/admin/service-queue` 每项含 `conversation_id, group_name, priority, enqueued_at, wait_seconds, reason, visitor_name`。
 8. **渠道掩码字段**：渠道列表/详情同时返回字符串 `masked`（主密钥掩码）与 `config_masked`（各字段掩码），并带信封 `max_channels`。
 9. `first_response_at` 的写入属 SLA 计时器接线（下一波 2b）；在那之前"未首响"等同于"无人工首响记录"。
+
+### A6 SLA 巡检与优先级的实现语义（接线 2b）
+
+- **巡检入口**：`RunPolicySweep(now)`（可单测、确定性），生产由 `StartPolicyLoop/StopPolicyLoop` 驱动，间隔取 `SERVICE_POLICY_TICK_SECONDS`（默认 30s、非法回落、最小 5s），服务关闭时优雅停止。
+- **首响**：`first_response_at` 由客服**首次真实回复**写入（`AddAgentMessage` 内，幂等早退路径不写）；接管时会重置为空。首响起算点 = `max(创建时间, 最后访客消息时间)`（无 `assigned_at` 列，属已知近似）。
+- **待回复（idle）**：以"最后一条未被回复的访客消息"计时（比 `last_agent_reply_at` 更严格，避免客服久前回复、访客刚发消息就误告警）。
+- **幂等**：`sla_state` 记录 `first_response` / `idle`，**仅状态变化时**推送 `conversation.sla`、派发提醒渠道、写审计与日志。
+- **idle 动作**：
+  - `ai`：交回 AI 接待（`ai_serving`，保留 assigned 便于追溯）。**保留 `sla_state='idle'`**——若清空，`first_response_at` 仍为空会每轮重复首响告警；客服真实回复或接管时才清空。
+  - `reassign`：同分组优先、排除原客服、转移并发；**无候选时入队**而非立即 drain（刚释放的并发会让原客服成为唯一候选、被立刻分回）。
+- **自动关闭**：`auto_close_idle_minutes>0` 且双方静默超阈值 → 走既有结束流程（访客可评价），审计 `conversation.auto_closed`，不重复关闭。
+- **优先级四模式**：判定集中在纯函数 `resolveAutoReplyPath(priority, aiEnabled, aiConfigured)`；`keyword_first` 完全保持历史行为。
+  **已知限制**：`ai_first`/`ai_only` 判断"上游是否已配置"时看的是**全局 `ai_settings`**（store 层看不到能力绑定）；若只通过「AI 管理 → 能力绑定」提供上游（全局 Key 为空），这两种模式会退化为关键词。修复方向：由应用层把"能力绑定是否可用"传入该判定（列入后续优化）。

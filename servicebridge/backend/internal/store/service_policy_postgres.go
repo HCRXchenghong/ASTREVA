@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -417,6 +418,161 @@ func (s *PostgresStore) AssignConversationToAgent(conversationID, agentID string
 		return nil
 	})
 	return out, err
+}
+
+// SetConversationSLAState 只更新会话的 sla_state 标记，供 SLA 巡检做幂等记录。
+func (s *PostgresStore) SetConversationSLAState(conversationID, state string) (domain.Conversation, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	row := s.pool.QueryRow(ctx, `
+		UPDATE conversations SET sla_state=$2, updated_at=$3
+		WHERE id=$1
+		RETURNING `+conversationColumns, strings.TrimSpace(conversationID), strings.TrimSpace(state), dbNow())
+	conversation, err := scanConversation(row)
+	if err != nil {
+		return domain.Conversation{}, mapNoRows(err)
+	}
+	return s.fillConversationAgent(ctx, s.pool, conversation)
+}
+
+// ReturnConversationToAI 把会话交回 AI 接待：状态置 ai_serving，保留负责客服便于追溯。
+// 刻意不清空 sla_state：它是"本会话本状态已告警"的幂等标记，客服真实回复/接管时才会清空。
+func (s *PostgresStore) ReturnConversationToAI(conversationID string) (domain.Conversation, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	var out domain.Conversation
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		conversation, err := s.conversationByIDForUpdateTx(ctx, tx, strings.TrimSpace(conversationID))
+		if err != nil {
+			return mapNoRows(err)
+		}
+		if conversation.Status == domain.ConversationClosed {
+			return ErrForbidden
+		}
+		row := tx.QueryRow(ctx, `
+			UPDATE conversations SET status=$2, updated_at=$3
+			WHERE id=$1
+			RETURNING `+conversationColumns, conversation.ID, domain.ConversationAIServing, dbNow())
+		updated, err := scanConversation(row)
+		if err != nil {
+			return err
+		}
+		filled, err := s.fillConversationAgent(ctx, tx, updated)
+		if err != nil {
+			return err
+		}
+		out = filled
+		return nil
+	})
+	return out, err
+}
+
+// ReassignConversation 是 sla_idle_action=reassign 的存储能力：
+// targetAgentID 非空时转给该客服（不改变会话状态）；为空时释放当前客服并把会话置为
+// 未分配的 human_requested，交由应用层重新入队。
+func (s *PostgresStore) ReassignConversation(conversationID, targetAgentID string) (domain.Conversation, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	targetAgentID = strings.TrimSpace(targetAgentID)
+	var out domain.Conversation
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		conversation, err := s.conversationByIDForUpdateTx(ctx, tx, strings.TrimSpace(conversationID))
+		if err != nil {
+			return mapNoRows(err)
+		}
+		if conversation.Status == domain.ConversationClosed {
+			return ErrConflict
+		}
+		now := dbNow()
+		if targetAgentID == "" {
+			// 释放：把并发还给原客服，会话回到"等待人工"，由应用层入队。
+			if conversation.AssignedAgentID != "" {
+				if _, err := tx.Exec(ctx, `
+					UPDATE agents SET current_conversations=GREATEST(current_conversations-1, 0), updated_at=$2
+					WHERE id=$1
+				`, conversation.AssignedAgentID, now); err != nil {
+					return err
+				}
+			}
+			status := conversation.Status
+			if status == domain.ConversationAssigned {
+				status = domain.ConversationHumanRequested
+			}
+			row := tx.QueryRow(ctx, `
+				UPDATE conversations SET assigned_agent_id=NULL, status=$2, updated_at=$3
+				WHERE id=$1
+				RETURNING `+conversationColumns, conversation.ID, status, now)
+			updated, err := scanConversation(row)
+			if err != nil {
+				return err
+			}
+			filled, err := s.fillConversationAgent(ctx, tx, updated)
+			if err != nil {
+				return err
+			}
+			out = filled
+			return nil
+		}
+		if conversation.AssignedAgentID == targetAgentID {
+			// 幂等：已经在目标客服名下。
+			out = conversation
+			return nil
+		}
+		target, err := s.agentByIDForUpdateTx(ctx, tx, targetAgentID)
+		if err != nil || target.DisabledAt != nil || target.Status != domain.AgentOnline {
+			return ErrConflict
+		}
+		// 原子占位：目标客服仍有并发额度时才允许转接，失败即回滚。
+		tag, err := tx.Exec(ctx, `
+			UPDATE agents SET current_conversations=current_conversations+1, updated_at=$2
+			WHERE id=$1 AND current_conversations < max_conversations
+		`, target.ID, now)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrConflict
+		}
+		if conversation.AssignedAgentID != "" {
+			if _, err := tx.Exec(ctx, `
+				UPDATE agents SET current_conversations=GREATEST(current_conversations-1, 0), updated_at=$2
+				WHERE id=$1
+			`, conversation.AssignedAgentID, now); err != nil {
+				return err
+			}
+		}
+		row := tx.QueryRow(ctx, `
+			UPDATE conversations SET assigned_agent_id=$2, updated_at=$3
+			WHERE id=$1
+			RETURNING `+conversationColumns, conversation.ID, targetAgentID, now)
+		updated, err := scanConversation(row)
+		if err != nil {
+			return err
+		}
+		filled, err := s.fillConversationAgent(ctx, tx, updated)
+		if err != nil {
+			return err
+		}
+		out = filled
+		return nil
+	})
+	return out, err
+}
+
+// servicePolicyTx 在事务内读取策略单例；未写入时返回默认值。
+func (s *PostgresStore) servicePolicyTx(ctx context.Context, exec dbTx) (domain.ServicePolicy, error) {
+	row := exec.QueryRow(ctx, `SELECT `+servicePolicyColumns+` FROM service_policy WHERE id=1`)
+	policy, err := scanServicePolicy(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.DefaultServicePolicy(), nil
+		}
+		return domain.ServicePolicy{}, err
+	}
+	return policy, nil
 }
 
 // AddUnattendedNotice 落库无人值守兜底系统消息并记录 unattended_notified_at；

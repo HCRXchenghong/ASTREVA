@@ -192,11 +192,34 @@ func (s *Service) drainQueue() []domain.Conversation {
 // selectQueueTarget 选择一个可承接该分组的在线客服：优先并发数最少，其次 ID 稳定排序。
 // 分组为空表示不限制分组。
 func (s *Service) selectQueueTarget(group string) (domain.Agent, bool) {
+	return s.selectAvailableAgent(group, "")
+}
+
+// selectReassignTarget 为 SLA 空闲转接选择目标客服：优先同分组，其次不限分组；
+// 永远排除当前负责客服（转接语义是"转给其他在线客服"）。
+func (s *Service) selectReassignTarget(group, excludeAgentID string) (domain.Agent, bool) {
+	if target, ok := s.selectAvailableAgent(group, excludeAgentID); ok {
+		return target, true
+	}
 	group = strings.TrimSpace(group)
+	if group == "" {
+		return domain.Agent{}, false
+	}
+	return s.selectAvailableAgent("", excludeAgentID)
+}
+
+// selectAvailableAgent 选择一个在线、未禁用、未达并发的客服；excludeAgentID 非空时排除该客服。
+// 选择规则：并发数最少优先，其次 ID 稳定排序（保证可预测）。
+func (s *Service) selectAvailableAgent(group, excludeAgentID string) (domain.Agent, bool) {
+	group = strings.TrimSpace(group)
+	excludeAgentID = strings.TrimSpace(excludeAgentID)
 	var selected domain.Agent
 	found := false
 	for _, agent := range s.store.AllAgents() {
 		if agent.Status != domain.AgentOnline || agent.DisabledAt != nil {
+			continue
+		}
+		if excludeAgentID != "" && agent.ID == excludeAgentID {
 			continue
 		}
 		if agent.CurrentConversations >= agent.MaxConversations {

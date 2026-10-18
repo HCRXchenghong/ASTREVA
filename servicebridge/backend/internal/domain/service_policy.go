@@ -21,6 +21,13 @@ const (
 	SLAIdleActionReassign = "reassign" // 转其他在线客服
 )
 
+// 会话的 SLA 状态标记（conversations.sla_state），用于巡检幂等：
+// 同一会话的同一超时只告警一次，客服真实回复或接管时清空重新计时。
+const (
+	ConversationSLAStateFirstResponse = "first_response" // 已就首响超时告警
+	ConversationSLAStateIdle          = "idle"           // 已就待回复超时告警并执行回退
+)
+
 // 会话进入排队队列的原因。
 const (
 	QueueReasonCapacity = "capacity" // 并发已满

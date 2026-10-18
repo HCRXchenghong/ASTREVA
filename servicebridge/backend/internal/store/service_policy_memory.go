@@ -254,6 +254,91 @@ func (s *MemoryStore) AssignConversationToAgent(conversationID, agentID string) 
 	return *conversation, nil
 }
 
+// SetConversationSLAState 只更新会话的 sla_state 标记，供 SLA 巡检做幂等记录。
+func (s *MemoryStore) SetConversationSLAState(conversationID, state string) (domain.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	conversation, ok := s.conversations[strings.TrimSpace(conversationID)]
+	if !ok {
+		return domain.Conversation{}, ErrNotFound
+	}
+	conversation.SLAState = strings.TrimSpace(state)
+	conversation.UpdatedAt = time.Now().UTC()
+	return *conversation, nil
+}
+
+// ReturnConversationToAI 把会话交回 AI 接待：状态置 ai_serving，保留负责客服便于追溯。
+// 刻意不清空 sla_state：它是"本会话本状态已告警"的幂等标记，客服真实回复/接管时才会清空。
+func (s *MemoryStore) ReturnConversationToAI(conversationID string) (domain.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	conversation, ok := s.conversations[strings.TrimSpace(conversationID)]
+	if !ok {
+		return domain.Conversation{}, ErrNotFound
+	}
+	if conversation.Status == domain.ConversationClosed {
+		return domain.Conversation{}, ErrForbidden
+	}
+	conversation.Status = domain.ConversationAIServing
+	conversation.UpdatedAt = time.Now().UTC()
+	return *conversation, nil
+}
+
+// ReassignConversation 是 sla_idle_action=reassign 的存储能力：
+// targetAgentID 非空时转给该客服（不改变会话状态）；为空时释放当前客服并把会话置为
+// 未分配的 human_requested，交由应用层重新入队。
+func (s *MemoryStore) ReassignConversation(conversationID, targetAgentID string) (domain.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	conversation, ok := s.conversations[strings.TrimSpace(conversationID)]
+	if !ok {
+		return domain.Conversation{}, ErrNotFound
+	}
+	if conversation.Status == domain.ConversationClosed {
+		return domain.Conversation{}, ErrConflict
+	}
+	targetAgentID = strings.TrimSpace(targetAgentID)
+	now := time.Now().UTC()
+	if targetAgentID == "" {
+		// 释放：把并发还给原客服，会话回到"等待人工"，由应用层入队。
+		if old := s.agentsByID[conversation.AssignedAgentID]; old != nil && old.CurrentConversations > 0 {
+			old.CurrentConversations--
+			old.Updated = now
+		}
+		if conversation.Status == domain.ConversationAssigned {
+			conversation.Status = domain.ConversationHumanRequested
+		}
+		conversation.AssignedAgentID = ""
+		s.fillAssignedAgentLocked(conversation)
+		conversation.UpdatedAt = now
+		return *conversation, nil
+	}
+	if conversation.AssignedAgentID == targetAgentID {
+		// 幂等：已经在目标客服名下。
+		return *conversation, nil
+	}
+	target, ok := s.agentsByID[targetAgentID]
+	if !ok || target.DisabledAt != nil || target.Status != domain.AgentOnline {
+		return domain.Conversation{}, ErrConflict
+	}
+	if target.CurrentConversations >= target.MaxConversations {
+		return domain.Conversation{}, ErrConflict
+	}
+	if old := s.agentsByID[conversation.AssignedAgentID]; old != nil && old.CurrentConversations > 0 {
+		old.CurrentConversations--
+		old.Updated = now
+	}
+	target.CurrentConversations++
+	target.Updated = now
+	conversation.AssignedAgentID = targetAgentID
+	s.fillAssignedAgentLocked(conversation)
+	conversation.UpdatedAt = now
+	return *conversation, nil
+}
+
 // AddUnattendedNotice 落库无人值守兜底话术并记录发送时间；已发送过返回 ErrConflict。
 // 这里刻意不调整会话已读计数：兜底话术是系统提示，不应替客服"已读"访客消息。
 func (s *MemoryStore) AddUnattendedNotice(conversationID, content string, translations map[string]string) (domain.Message, domain.Conversation, error) {
