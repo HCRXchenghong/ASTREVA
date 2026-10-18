@@ -212,3 +212,21 @@ Prometheus 之外单独配置，并将 `docs/OPERATIONS.md` 作为 runbook 入�
 - 审计日志应接入集中日志系统并设置保存周期；发布队列与审计事件接口见上表。
 - 客服长连接的容量结论必须来自 `servicebridge/scripts/loadtest/README.md` 的阶梯压测实测记录；
   有压测工具不代表已经达到容量。
+
+## 真实 PostgreSQL 集成测试（可选，建议上线前执行一次）
+
+Go 客服引擎的 Postgres 存储会**在启动时自动补齐新增列**（`ensureCoreTables` 里的 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`），
+不依赖 `migrations/001_init.sql`。为避免"只在内存存储跑过、上线才发现列缺失"这类问题，提供了一个真实库集成测试：
+
+```bash
+docker run --rm -d --name astreva-pg-test -e POSTGRES_PASSWORD=test \
+  -e POSTGRES_DB=astreva_test -p 55432:5432 postgres:16-alpine
+sleep 3
+cd servicebridge/backend
+TEST_DATABASE_URL='postgres://postgres:test@127.0.0.1:55432/astreva_test?sslmode=disable' \
+  GOCACHE="${TMPDIR:-/tmp}/astreva-go-cache" go test ./internal/store/ -run TestPostgresAgentPreferences -count=1 -v
+docker rm -f astreva-pg-test
+```
+
+覆盖：客服偏好 JSONB 读写与默认值、会话语言状态（detected_lang/reply_lang_override/language_stats）、
+消息语种元数据、消息历史分页（`PagedMessages`）以及历史库自动升级路径。

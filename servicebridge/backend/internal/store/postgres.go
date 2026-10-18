@@ -174,6 +174,15 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_auth_sessions_account ON auth_sessions(kind, account_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at)`,
+		// ===== 二期列补齐：既有数据库在启动时自动升级，缺失列会导致会话/消息查询直接报错 =====
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS detected_lang TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reply_lang_override TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reply_lang_override_at TIMESTAMPTZ`,
+		`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS language_stats JSONB NOT NULL DEFAULT '{}'::jsonb`,
+		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS detected_lang TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS author_lang TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE messages ADD COLUMN IF NOT EXISTS translation_status TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'::jsonb`,
 	}
 	for _, statement := range statements {
 		if _, err := s.pool.Exec(ctx, statement); err != nil {
@@ -544,8 +553,11 @@ func (s *PostgresStore) PagedMessages(conversationID string, limit int, beforeSe
 		limit = 50
 	}
 	beforeServerMsgID = strings.TrimSpace(beforeServerMsgID)
+	// 注意：外层必须用 page.*，不能重复列出 messageColumns ——
+	// 子查询的输出列名是表达式名（如 coalesce），外层再引用 translations/detected_lang
+	// 这类原始列名会报 "column does not exist"，而这里历史上会吞掉错误返回空页。
 	rows, err := s.pool.Query(ctx, `
-		SELECT `+messageColumns+`
+		SELECT page.*
 		FROM (
 			SELECT `+messageColumns+`
 			FROM messages
@@ -561,7 +573,7 @@ func (s *PostgresStore) PagedMessages(conversationID string, limit int, beforeSe
 			ORDER BY created_at DESC, server_msg_id DESC
 			LIMIT $3
 		) page
-		ORDER BY created_at ASC, server_msg_id ASC
+		ORDER BY page.created_at ASC, page.server_msg_id ASC
 	`, conversationID, beforeServerMsgID, limit+1)
 	if err != nil {
 		return MessagePage{}
