@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"customer-service/backend/internal/ai"
 	"customer-service/backend/internal/domain"
@@ -55,6 +57,28 @@ func newTranslationService(t *testing.T) (*Service, store.Store, *int32) {
 	return NewService(st, realtime.NewHub(), slog.Default()), st, calls
 }
 
+// waitForTranslation 轮询等待异步翻译落地（不阻塞消息投递是本期的设计目标）。
+func waitForTranslation(t *testing.T, st store.Store, conversationID, serverMsgID, targetLang string) domain.Message {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, msg := range st.Messages(conversationID) {
+			if msg.ServerMsgID != serverMsgID {
+				continue
+			}
+			if text := strings.TrimSpace(msg.Translations[targetLang]); text != "" {
+				return msg
+			}
+			if msg.TranslationStatus == "failed" {
+				t.Fatalf("翻译状态为 failed：%+v", msg)
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("等待 %s 译文超时（server_msg_id=%s）", targetLang, serverMsgID)
+	return domain.Message{}
+}
+
 func TestVisitorMessageTranslatedWithDetectedLanguage(t *testing.T) {
 	service, st, calls := newTranslationService(t)
 	visitor, err := st.CreateVisitorConversation("192.0.2.90", "web", "es", "direct", "")
@@ -67,18 +91,24 @@ func TestVisitorMessageTranslatedWithDetectedLanguage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add visitor message: %v", err)
 	}
-	if atomic.LoadInt32(calls) == 0 {
-		t.Fatal("西班牙语消息应触发一次翻译调用")
-	}
-	if got := result.Input.Translations[ai.LangZh]; got != "中文译文1" {
-		t.Fatalf("中文译文 = %q, want %q", got, "中文译文1")
+	// 消息先落库并即时下发：此时译文尚未就绪，状态必须是 pending（访客不会被翻译阻塞）。
+	if result.Input.TranslationStatus != "pending" {
+		t.Fatalf("初始 translation_status = %q, want pending", result.Input.TranslationStatus)
 	}
 	if result.Input.DetectedLang != ai.LangEs {
 		t.Fatalf("detected_lang = %q, want %q", result.Input.DetectedLang, ai.LangEs)
 	}
-	if result.Input.TranslationStatus != "done" {
-		t.Fatalf("translation_status = %q, want done", result.Input.TranslationStatus)
+	translated := waitForTranslation(t, st, conversationID, result.Input.ServerMsgID, ai.LangZh)
+	if atomic.LoadInt32(calls) == 0 {
+		t.Fatal("西班牙语消息应触发一次翻译调用")
 	}
+	if got := translated.Translations[ai.LangZh]; got != "中文译文1" {
+		t.Fatalf("中文译文 = %q, want %q", got, "中文译文1")
+	}
+	if translated.TranslationStatus != "done" {
+		t.Fatalf("translation_status = %q, want done", translated.TranslationStatus)
+	}
+	result.Input = translated
 	// 客服侧视图：默认中文译文 + 原文放到 OriginalContent（供「查看原文」）。
 	agentView := AgentFacingMessage(result.Input)
 	if agentView.Content != "中文译文1" {
@@ -198,10 +228,11 @@ func TestAgentMessageTranslatedFromDetectedAuthorLanguage(t *testing.T) {
 	if result.Input.AuthorLang != ai.LangZh {
 		t.Fatalf("客服消息 author_lang = %q, want zh", result.Input.AuthorLang)
 	}
-	if result.Input.Translations[ai.LangEn] == "" {
-		t.Fatalf("应生成英语译文，translations=%v", result.Input.Translations)
+	if result.Input.TranslationStatus != "pending" {
+		t.Fatalf("初始 translation_status = %q, want pending", result.Input.TranslationStatus)
 	}
-	view := VisitorFacingMessageForLang(result.Input, ai.LangEn)
+	translated := waitForTranslation(t, st, conversationID, result.Input.ServerMsgID, ai.LangEn)
+	view := VisitorFacingMessageForLang(translated, ai.LangEn)
 	if view.Content == "您好，这款产品支持定制尺寸。" {
 		t.Fatal("访客不应看到客服的中文原文")
 	}

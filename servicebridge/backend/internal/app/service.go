@@ -322,14 +322,20 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 		content = humanRequestText(visitorLang)
 	}
 	// 翻译源语言用"这条消息实际使用的语言"，而不是会话初始语言。
-	translations := s.translateToChinese(language.DetectedLang, messageType, content)
+	// 固定文案走静态映射，其余走异步翻译：访客先收到原文，客服端先看到原文+「翻译中」，
+	// 译文就绪后原地更新（避免把访客的发送请求阻塞在翻译上）。
+	translations, needsAI := staticTranslation(language.DetectedLang, ai.LangZh, messageType, content)
+	status := messageTranslationState(language.DetectedLang, ai.LangZh, messageType, content)
+	if needsAI {
+		translations = nil
+	}
 	result, err := s.store.AddVisitorMessage(conversationID, clientMsgID, content, messageType, translations)
 	if err != nil {
 		return store.MessageResult{}, err
 	}
 	// 记录语种与翻译状态，供客服端展示语种标签与「查看原文」。
 	if updated, metaErr := s.store.SetMessageLanguageMeta(conversationID, result.Input.ServerMsgID,
-		language.DetectedLang, language.DetectedLang, translationStatusFor(language.DetectedLang, ai.LangZh, translations)); metaErr == nil {
+		language.DetectedLang, language.DetectedLang, status); metaErr == nil {
 		result.Input = updated
 	}
 	if language.Changed {
@@ -365,6 +371,17 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 		// 访客端显示"AI 正在回复"输入指示，AI 消息送达或生成结束时关闭。
 		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.typing", Data: map[string]any{"sender_type": "ai", "typing": true}})
 		go s.generateAIReply(conversationID, result.Input.ServerMsgID, result.AIText, visitorLang)
+	}
+	if needsAI {
+		s.queueTranslation(translationJob{
+			conversationID: conversationID,
+			serverMsgID:    result.Input.ServerMsgID,
+			sourceLang:     language.DetectedLang,
+			targetLang:     ai.LangZh,
+			messageType:    messageType,
+			content:        content,
+			agentID:        result.Conversation.AssignedAgentID,
+		})
 	}
 	return result, nil
 }
@@ -475,18 +492,37 @@ func (s *Service) AddAgentMessage(agentID, conversationID, clientMsgID, content 
 		authorLang = ai.DetectLanguage(content).Code
 	}
 	// 客服可以写任何语言：源语言=检测结果，目标语言=访客当前语言。
-	translations := s.translateMessage(authorLang, visitorLang, messageType, content)
+	translations, needsAI := staticTranslation(authorLang, visitorLang, messageType, content)
+	status := messageTranslationState(authorLang, visitorLang, messageType, content)
+	if needsAI {
+		translations = nil
+	}
 	result, err := s.store.AddAgentMessage(agentID, conversationID, clientMsgID, content, messageType, translations)
 	if err != nil {
 		return store.MessageResult{}, err
 	}
 	if updated, metaErr := s.store.SetMessageLanguageMeta(conversationID, result.Input.ServerMsgID,
-		authorLang, authorLang, translationStatusFor(authorLang, visitorLang, translations)); metaErr == nil {
+		authorLang, authorLang, status); metaErr == nil {
 		result.Input = updated
 	}
 	s.hub.SendToAgent(agentID, realtime.Event{Event: "message.ack", Data: result.Input})
-	// 访客侧看到的是其语言译文；客服发送的中文原文不下发给访客。
-	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: VisitorFacingMessageForLang(result.Input, visitorLang)})
+	if needsAI {
+		// 译文未就绪：访客端只看到"客服正在输入"，绝不先收到客服原文语言。
+		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.typing", Data: map[string]any{"sender_type": "agent", "typing": true}})
+		s.queueTranslation(translationJob{
+			conversationID: conversationID,
+			serverMsgID:    result.Input.ServerMsgID,
+			sourceLang:     authorLang,
+			targetLang:     visitorLang,
+			messageType:    messageType,
+			content:        content,
+			agentID:        agentID,
+			visitorFacing:  true,
+		})
+	} else {
+		// 无需翻译（或命中静态文案）：直接按访客语言投递。
+		s.hub.SendToVisitor(conversationID, realtime.Event{Event: "message.receive", Data: VisitorFacingMessageForLang(result.Input, visitorLang)})
+	}
 	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.status_changed", Data: result.Conversation})
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: result.Conversation})
 	return result, nil
