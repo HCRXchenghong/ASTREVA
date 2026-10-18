@@ -628,6 +628,40 @@ func fallbackReply(text string, contacts domain.ContactSettings, lang string) st
 		default:
 			return "استلمنا سؤالك، يمكنك إضافة المزيد من التفاصيل، وسيتابع فريق الدعم معك قريبًا."
 		}
+	case LangEs:
+		switch {
+		case strings.Contains(lowerText, "teléfono") || strings.Contains(lowerText, "telefono") || strings.Contains(lowerText, "llamar"):
+			return "Teléfono de soporte: " + contacts.Telephone + ". Puede pulsar el botón de llamada para contactarnos directamente."
+		default:
+			return "He recibido su consulta. Puede añadir más detalles y nuestro equipo de soporte le responderá lo antes posible."
+		}
+	case LangFr:
+		switch {
+		case strings.Contains(lowerText, "téléphone") || strings.Contains(lowerText, "telephone") || strings.Contains(lowerText, "appeler"):
+			return "Téléphone du support : " + contacts.Telephone + ". Vous pouvez appuyer sur le bouton d'appel pour nous joindre directement."
+		default:
+			return "J'ai bien reçu votre demande. N'hésitez pas à ajouter des détails, notre équipe vous répondra dès que possible."
+		}
+	case LangDe:
+		switch {
+		case strings.Contains(lowerText, "telefon") || strings.Contains(lowerText, "anrufen"):
+			return "Support-Telefon: " + contacts.Telephone + ". Sie können auf die Anruf-Schaltfläche tippen, um uns direkt zu erreichen."
+		default:
+			return "Ich habe Ihre Anfrage erhalten. Sie können gerne weitere Details ergänzen, unser Team meldet sich so bald wie möglich."
+		}
+	case LangPt:
+		switch {
+		case strings.Contains(lowerText, "telefone") || strings.Contains(lowerText, "ligar"):
+			return "Telefone de suporte: " + contacts.Telephone + ". Pode tocar no botão de chamada para nos contactar diretamente."
+		default:
+			return "Recebi a sua mensagem. Pode acrescentar mais detalhes e a nossa equipa responderá o mais breve possível."
+		}
+	case LangRu:
+		return "Я получил ваш вопрос. Вы можете добавить детали, и наша служба поддержки скоро свяжется с вами."
+	case LangJa:
+		return "お問い合わせを受け付けました。詳細を追加していただければ、サポート担当ができるだけ早くご連絡いたします。"
+	case LangKo:
+		return "문의를 접수했습니다. 추가로 자세한 내용을 남겨 주시면 지원팀이 최대한 빨리 연락드리겠습니다."
 	default:
 		switch {
 		case strings.Contains(text, "电话"):

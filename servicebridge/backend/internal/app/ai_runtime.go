@@ -191,8 +191,10 @@ func (s *Service) chainFromCandidates(capability string, candidates []aiCandidat
 		}
 		chain = append(chain, candidate.settings)
 	}
+	// 全局兜底只在"确实可调用"时加入：只有 base_url 没有 Key 的配置调用时不会真正请求上游，
+	// 而是返回本地兜底话术——把它当成候选会掩盖前面供应商的真实失败（且兜底话术语言可能不对）。
 	base := s.settingsWithCacheMode()
-	if strings.TrimSpace(base.BaseURL) != "" || strings.TrimSpace(base.APIKey) != "" {
+	if strings.TrimSpace(base.BaseURL) != "" && strings.TrimSpace(base.APIKey) != "" {
 		chain = append(chain, base)
 	}
 	return chain
