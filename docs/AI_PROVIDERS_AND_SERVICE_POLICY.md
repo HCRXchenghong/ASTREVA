@@ -185,3 +185,112 @@ PATCH  /api/admin/agents/{id}/preferences   管理员重置/修改
 - 网站翻译、AI SEO、AI 生图的上游（base_url / api_key / model / api_type）现在都由「AI 管理 → 模型供应商 + 能力绑定」决定；
   绑定域名与 `allowed_hosts` 会并入本地 SSRF 白名单。
 - 注意：`/secret` 是唯一返回明文密钥的接口，仅受信后端调用；绕过 admin-server 直连 Go 改配置时，生效延迟最多 60 秒（TTL）。
+
+---
+
+# 附录 A：客服策略（批次 4）施工规格
+
+> 目标：把"排队与技能组、SLA 与超时回退、会话超时关闭、AI/关键词优先级、无人值守兜底、黑名单、新会话接管弹窗与只读围观、每客服 1–3 个提醒渠道"落地为**可配置、可审计、可测试**的真实功能。
+> 所有新表/列必须同时写进 `internal/store/postgres.go` 的 `ensureCoreTables()` 与 `migrations/*.sql`（运行时只跑前者）。
+
+## A1 数据结构
+
+```sql
+-- 客服策略（单例，id=1）
+CREATE TABLE IF NOT EXISTS service_policy (
+  id SMALLINT PRIMARY KEY DEFAULT 1,
+  queue_enabled BOOLEAN NOT NULL DEFAULT true,
+  max_wait_seconds INT NOT NULL DEFAULT 600,          -- 排队最长等待，超过转无人值守兜底
+  sla_first_response_seconds INT NOT NULL DEFAULT 60,  -- 首响超时提醒
+  sla_idle_minutes INT NOT NULL DEFAULT 5,            -- 客服无回复多久触发回退
+  sla_idle_action TEXT NOT NULL DEFAULT 'ai',         -- ai | reassign
+  auto_close_idle_minutes INT NOT NULL DEFAULT 30,    -- 双方静默多久自动结束（0=不自动）
+  ai_keyword_priority TEXT NOT NULL DEFAULT 'keyword_first', -- keyword_first | ai_first | keyword_only | ai_only
+  unattended_enabled BOOLEAN NOT NULL DEFAULT true,   -- 非营业/无人在线时的兜底
+  unattended_reply TEXT NOT NULL DEFAULT '',          -- 兜底话术（默认中文，按访客语言翻译）
+  takeover_popup_enabled BOOLEAN NOT NULL DEFAULT true,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT service_policy_singleton CHECK (id=1)
+);
+
+-- 排队（会话进入队列的顺序与分组）
+CREATE TABLE IF NOT EXISTS conversation_queue (
+  conversation_id TEXT PRIMARY KEY,
+  group_name TEXT NOT NULL DEFAULT '',
+  priority INT NOT NULL DEFAULT 0,      -- 越大越优先
+  enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reason TEXT NOT NULL DEFAULT ''       -- capacity | offline | manual
+);
+
+-- 黑名单
+CREATE TABLE IF NOT EXISTS service_blacklist (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,                   -- visitor | ip | account
+  value TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '',
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (kind, value)
+);
+
+-- 客服提醒渠道（每客服 1–3 个）
+CREATE TABLE IF NOT EXISTS agent_alert_channels (
+  id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  kind TEXT NOT NULL,                   -- telegram | bark | email
+  config_ciphertext TEXT NOT NULL DEFAULT '',  -- AES-256-GCM：token/chat_id/key/address
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  created_at/updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_alert_channels_agent ON agent_alert_channels(agent_id);
+
+-- 会话补充列
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMPTZ;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_agent_reply_at TIMESTAMPTZ;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS sla_state TEXT NOT NULL DEFAULT '';
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS queue_group TEXT NOT NULL DEFAULT '';
+
+-- 客服偏好补充
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS preferences ...  -- 复用现有 JSONB
+--  新增字段：takeover_popup_enabled(bool,默认true)、read_only_watch(bool,默认false)
+```
+
+## A2 行为规则（须逐条实现并测试）
+
+1. **排队与技能组**：并发满/无人空闲时不丢弃会话，写 `conversation_queue`（`group_name` 取会话分组，`priority` 取分组权重）；有空闲客服（在线 + 未达并发 + 分组匹配）时按 `priority DESC, enqueued_at ASC` 出队分配；访客端可见「排队中，前方 N 位」；等待超过 `max_wait_seconds` → 转无人值守兜底并告知访客。
+2. **SLA**：首次分配后 `first_response_at` 为空且超过 `sla_first_response_seconds` → 提醒负责客服（App 弹窗 + 提醒渠道），并写审计；`last_agent_reply_at` 超过 `sla_idle_minutes` → 按 `sla_idle_action` 执行：`ai`（交回 AI 接待，会话仍属该客服但 AI 接管回复）或 `reassign`（转其他在线客服）；两条路径都记审计与系统日志。
+3. **会话超时关闭**：双方静默超过 `auto_close_idle_minutes` → 自动结束（状态 closed）+ 触发评价邀请；`0` 表示不自动关闭。
+4. **AI/关键词优先级**：`keyword_first`（现行为）/ `ai_first`（先 AI，AI 不可用时才命中关键词）/ `keyword_only` / `ai_only`；切换后同一会话行为需可预测（有单测覆盖四种模式）。
+5. **无人值守兜底**：非营业时间或没有在线客服时，先发 `unattended_reply`（按访客语言翻译），并引导留资；营业恢复或客服上线后，对等待中的会话按队列顺序分配；不得重复发送同一条兜底话术（每会话一次）。
+6. **黑名单**：建会话/发消息前检查 `visitor|ip|account` 三类，命中则拒绝并返回配置文案；支持过期时间；管理员可增删查，操作写审计。
+7. **接管弹窗与只读围观**：访客发起后立即向在线客服推送「接管」提示（App 弹窗，受 `takeover_popup_enabled` 控制）；**未点接管前 AI 继续接待**；客服可"只读围观"（`read_only_watch`）：可看消息但**不标记已读**（不递增已读计数、不触发 `MarkConversationRead`）、不计入其并发/分配。
+8. **提醒渠道（每客服 1–3 个）**：`telegram`（bot token + chat id）、`bark`（key/url）、`email`（地址）；分配、转接、访客新消息按渠道推送；每个渠道可单独启停；发送失败重试 2 次并记日志；**上限 3 个**（超出 400）；渠道密钥加密入库、只回掩码。
+
+## A3 接口
+
+```
+管理员：
+GET/PATCH /api/admin/service-policy                策略单例（含 priority、SLA、超时、兜底、弹窗开关）
+GET       /api/admin/service-queue                 排队列表（含等待时长与分组）
+GET/POST  /api/admin/blacklist                     黑名单增删查（POST 含 kind/value/reason/expires_at）
+DELETE    /api/admin/blacklist/{id}
+GET/POST  /api/admin/agents/{id}/alert-channels     渠道列表/新增（≤3）
+PATCH/DELETE /api/admin/agents/{id}/alert-channels/{channelId}
+客服：
+POST      /api/agent/conversations/{id}/takeover    接管（停止 AI、正式分配）
+POST      /api/agent/conversations/{id}/watch       只读围观（不标记已读、不计入分配）
+GET/POST  /api/agent/alert-channels                 自己的渠道（≤3，密钥只回掩码）
+```
+
+## A4 验收测试（必须真实执行）
+
+- **排队**：并发满→入队；新客服上线→按 优先级/入队时间 出队；等待超时→兜底话术且只发一次。
+- **SLA**：首响超时触发提醒（断言推送/审计）；空闲超时 `ai` 与 `reassign` 两条路径；`auto_close` 触发结束与评价邀请。
+- **优先级**：四种模式各自的关键词/AI 调用顺序与上游调用次数断言。
+- **黑名单**：三类命中拒绝、过期后放行、管理员操作写审计。
+- **只读围观**：`MarkConversationRead` 调用次数为 0、`UnreadForAgent` 不变、并发计数不变。
+- **接管**：接管后 AI 不再自动回复（上游 0 调用）、弹窗受开关控制。
+- **提醒渠道**：1–3 个上限（第 4 个 400）、密钥掩码、发送失败重试、渠道停用后不推送。
+- **Postgres**：新表建表/读写/级联清理 + 单例约束（真实容器跑 `TestPostgres*`）。
+- **控制台/App**：策略页、排队页、黑名单页、渠道配置页与 App 接管弹窗/围观按钮的 Playwright/组件验证，console error=0。
