@@ -57,6 +57,18 @@ type Store interface {
 	DeleteKeywordRule(id string) (domain.KeywordRule, error)
 	AISettings() domain.AISettings
 	UpdateAISettings(next domain.AISettings) (domain.AISettings, error)
+	// ListAIProviders 返回全部 AI 供应商（APIKey 只带末四位掩码，不含明文）。
+	ListAIProviders() []domain.AIProvider
+	// AIProvider 读取单个供应商；返回的 APIKey 为解密后的明文，仅供服务端内部使用。
+	AIProvider(id string) (domain.AIProvider, bool)
+	// CreateAIProvider 创建供应商，apiKey 为明文，落库前加密。
+	CreateAIProvider(next domain.AIProvider, apiKey string) (domain.AIProvider, error)
+	// UpdateAIProvider 覆盖更新供应商；apiKey==nil 表示保留原密钥，传空串表示清除。
+	UpdateAIProvider(id string, patch domain.AIProvider, apiKey *string) (domain.AIProvider, error)
+	DeleteAIProvider(id string) error
+	// AIBindings 返回能力标识到绑定的映射。
+	AIBindings() map[string]domain.AIBinding
+	UpsertAIBinding(next domain.AIBinding) (domain.AIBinding, error)
 	BusinessHours() domain.BusinessHours
 	UpdateBusinessHours(next domain.BusinessHours) (domain.BusinessHours, error)
 	PushSettings() domain.PushSettings

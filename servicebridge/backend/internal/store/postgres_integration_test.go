@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -184,3 +185,138 @@ func TestPostgresAgentPreferences(t *testing.T) {
 }
 
 func strPtr(value string) *string { return &value }
+
+// TestPostgresAIProvidersAndBindings 是 AI 多供应商与能力绑定的真实 PostgreSQL 集成测试：
+// 验证 ensureCoreTables 能建表、默认值/加密密钥/掩码正确、绑定可读写，
+// 以及删除供应商后绑定引用被清理。
+func TestPostgresAIProvidersAndBindings(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	st, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	provider, err := st.CreateAIProvider(domain.AIProvider{
+		Name:         "集成测试供应商",
+		Kind:         domain.AIProviderKindText,
+		APIType:      domain.AIAPITypeChatCompletions,
+		BaseURL:      "https://api.openai.com/v1",
+		Models:       []string{"gpt-a", "gpt-b"},
+		AllowedHosts: "api.openai.com",
+		Enabled:      true,
+		SortOrder:    7,
+	}, "sk-integration-1234")
+	if err != nil {
+		t.Fatalf("创建供应商失败（ai_providers 表缺失时必然失败）：%v", err)
+	}
+	if provider.ID == "" {
+		t.Fatal("供应商 ID 为空")
+	}
+	if provider.TimeoutMS != 30000 {
+		t.Fatalf("timeout_ms 默认值 = %d, want 30000", provider.TimeoutMS)
+	}
+	if len(provider.Models) != 2 {
+		t.Fatalf("models 未正确落库：%#v", provider.Models)
+	}
+	if provider.APIKeyMasked != "sk-i****1234" {
+		t.Fatalf("api_key_masked = %q, want sk-i****1234", provider.APIKeyMasked)
+	}
+	if provider.APIKey != "sk-integration-1234" {
+		t.Fatalf("内部读取密钥 = %q", provider.APIKey)
+	}
+
+	// 列表必须脱敏，不返回明文。
+	found := false
+	for _, item := range st.ListAIProviders() {
+		if item.ID != provider.ID {
+			continue
+		}
+		found = true
+		if item.APIKey != "" {
+			t.Fatalf("列表返回了明文密钥：%q", item.APIKey)
+		}
+		if item.APIKeyMasked != "sk-i****1234" || item.Name != "集成测试供应商" || item.SortOrder != 7 {
+			t.Fatalf("列表字段不符合预期：%+v", item)
+		}
+	}
+	if !found {
+		t.Fatal("ListAIProviders 未返回刚创建的供应商")
+	}
+
+	// apiKey==nil 不改密钥，其余字段覆盖更新。
+	patch := provider
+	patch.Name = "集成测试供应商-改名"
+	patch.Models = []string{"gpt-a", "gpt-b", "gpt-c"}
+	updated, err := st.UpdateAIProvider(provider.ID, patch, nil)
+	if err != nil {
+		t.Fatalf("更新供应商失败：%v", err)
+	}
+	if updated.Name != "集成测试供应商-改名" || len(updated.Models) != 3 {
+		t.Fatalf("更新未生效：%+v", updated)
+	}
+	if updated.APIKey != "sk-integration-1234" {
+		t.Fatalf("未传 api_key 时密钥被改动：%q", updated.APIKey)
+	}
+
+	// 显式更新密钥。
+	newKey := "sk-updated-5678"
+	updated, err = st.UpdateAIProvider(provider.ID, patch, &newKey)
+	if err != nil {
+		t.Fatalf("更新密钥失败：%v", err)
+	}
+	if updated.APIKey != newKey || updated.APIKeyMasked != "sk-u****5678" {
+		t.Fatalf("密钥更新失败：key=%q mask=%q", updated.APIKey, updated.APIKeyMasked)
+	}
+
+	// 能力绑定：JSONB params 往返、同能力覆盖更新。
+	if _, err := st.UpsertAIBinding(domain.AIBinding{
+		Capability: domain.AICapabilityTranslation,
+		ProviderID: provider.ID,
+		Model:      "gpt-a",
+		Params:     map[string]any{"temperature": 0.2},
+	}); err != nil {
+		t.Fatalf("写入能力绑定失败（ai_bindings 表缺失时必然失败）：%v", err)
+	}
+	bindings := st.AIBindings()
+	binding, ok := bindings[domain.AICapabilityTranslation]
+	if !ok || binding.ProviderID != provider.ID || binding.Model != "gpt-a" {
+		t.Fatalf("绑定读回不一致：%#v", binding)
+	}
+	if temperature, _ := binding.Params["temperature"].(float64); temperature != 0.2 {
+		t.Fatalf("绑定 params 未正确往返：%#v", binding.Params)
+	}
+	if _, err := st.UpsertAIBinding(domain.AIBinding{
+		Capability: domain.AICapabilityTranslation,
+		ProviderID: provider.ID,
+		Model:      "gpt-b",
+	}); err != nil {
+		t.Fatalf("覆盖能力绑定失败：%v", err)
+	}
+	if got := st.AIBindings()[domain.AICapabilityTranslation]; got.Model != "gpt-b" {
+		t.Fatalf("绑定覆盖更新失败：%+v", got)
+	}
+
+	// 删除供应商：绑定引用被一并删除。
+	if err := st.DeleteAIProvider(provider.ID); err != nil {
+		t.Fatalf("删除供应商失败：%v", err)
+	}
+	if _, ok := st.AIProvider(provider.ID); ok {
+		t.Fatal("删除后仍能读到供应商")
+	}
+	if _, ok := st.AIBindings()[domain.AICapabilityTranslation]; ok {
+		t.Fatal("删除供应商后不应残留能力绑定")
+	}
+	if err := st.DeleteAIProvider(provider.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("重复删除应返回 ErrNotFound，实际 %v", err)
+	}
+}

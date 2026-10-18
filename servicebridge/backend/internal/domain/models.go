@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"net"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -326,6 +328,201 @@ type AICacheProbe struct {
 	Status       string            `json:"status"`
 	Error        string            `json:"error,omitempty"`
 	ProbedAt     *time.Time        `json:"probed_at,omitempty"`
+}
+
+// AI 供应商类型：文本模型与图像模型分开配置，能力绑定时据此校验。
+const (
+	AIProviderKindText  = "text"
+	AIProviderKindImage = "image"
+)
+
+// AI 上游协议类型：前三者用于文本对话，images 用于图像生成。
+const (
+	AIAPITypeChatCompletions   = "chat_completions"
+	AIAPITypeResponses         = "responses"
+	AIAPITypeAnthropicMessages = "anthropic_messages"
+	AIAPITypeImages            = "images"
+)
+
+// AI 能力标识：后台可把每项能力绑定到独立的供应商与模型。
+const (
+	AICapabilityReception   = "reception"
+	AICapabilityTranslation = "translation"
+	AICapabilityDetection   = "detection"
+	AICapabilitySEO         = "seo"
+	AICapabilityImage       = "image"
+)
+
+// AICapabilities 返回全部合法能力标识（顺序稳定，便于后台渲染与测试断言）。
+func AICapabilities() []string {
+	return []string{
+		AICapabilityReception,
+		AICapabilityTranslation,
+		AICapabilityDetection,
+		AICapabilitySEO,
+		AICapabilityImage,
+	}
+}
+
+// ValidAICapability 判断能力标识是否合法。
+func ValidAICapability(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case AICapabilityReception, AICapabilityTranslation, AICapabilityDetection, AICapabilitySEO, AICapabilityImage:
+		return true
+	default:
+		return false
+	}
+}
+
+// AICapabilityKind 返回能力要求的供应商类型：图像能力需要 image，其余均为 text。
+func AICapabilityKind(capability string) string {
+	if strings.EqualFold(strings.TrimSpace(capability), AICapabilityImage) {
+		return AIProviderKindImage
+	}
+	return AIProviderKindText
+}
+
+// ValidAIProviderKind 判断供应商类型是否合法。
+func ValidAIProviderKind(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case AIProviderKindText, AIProviderKindImage:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidAIAPIType 判断上游协议类型是否合法。
+func ValidAIAPIType(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case AIAPITypeChatCompletions, AIAPITypeResponses, AIAPITypeAnthropicMessages, AIAPITypeImages:
+		return true
+	default:
+		return false
+	}
+}
+
+// AIProvider 是一个可复用的 AI 上游供应商配置。
+// APIKey 明文只存在于服务端内存，json:"-" 保证任何普通响应都不会下发；
+// 对外只暴露 APIKeyMasked（末四位掩码），仅服务间的 /secret 接口返回明文。
+type AIProvider struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Kind         string    `json:"kind"`
+	APIType      string    `json:"api_type"`
+	BaseURL      string    `json:"base_url"`
+	APIKey       string    `json:"-"`
+	APIKeyMasked string    `json:"api_key_masked"`
+	Models       []string  `json:"models"`
+	DefaultModel string    `json:"default_model,omitempty"`
+	TimeoutMS    int       `json:"timeout_ms"`
+	AllowedHosts string    `json:"allowed_hosts,omitempty"`
+	Enabled      bool      `json:"enabled"`
+	SortOrder    int       `json:"sort_order"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// AIBinding 把某项能力绑定到某个供应商与模型；ProviderID 为空表示解除绑定。
+type AIBinding struct {
+	Capability string         `json:"capability"`
+	ProviderID string         `json:"provider_id"`
+	Model      string         `json:"model,omitempty"`
+	Params     map[string]any `json:"params,omitempty"`
+	UpdatedAt  time.Time      `json:"updated_at,omitempty"`
+}
+
+// NormalizeAllowedHosts 归一化白名单：去空格、转小写、去重、逗号连接。
+func NormalizeAllowedHosts(value string) string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		entry := strings.ToLower(strings.TrimSpace(part))
+		if entry == "" || seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		out = append(out, entry)
+	}
+	return strings.Join(out, ",")
+}
+
+// ValidateAllowedHosts 校验白名单条目格式：每项只能是主机名、主机:端口或 IP，
+// 允许 "*." / "." 前缀表示子域名通配；空字符串表示不限制。
+func ValidateAllowedHosts(value string) bool {
+	for _, part := range strings.Split(value, ",") {
+		entry := strings.TrimSpace(part)
+		if entry == "" {
+			continue
+		}
+		host, _, ok := parseAllowedHostEntry(entry)
+		if !ok || strings.TrimSpace(host) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// HostAllowed 判断目标 URL 的主机是否命中白名单；allowedHosts 为空时表示不限制。
+// 这是防 SSRF 的第一道校验：绑定供应商的 base_url 必须与 allowed_hosts 匹配。
+func HostAllowed(rawURL, allowedHosts string) bool {
+	if strings.TrimSpace(allowedHosts) == "" {
+		return true
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	port := parsed.Port()
+	for _, part := range strings.Split(allowedHosts, ",") {
+		entry := strings.TrimSpace(part)
+		if entry == "" {
+			continue
+		}
+		wildcard := strings.HasPrefix(entry, "*.") || strings.HasPrefix(entry, ".")
+		entryHost, entryPort, ok := parseAllowedHostEntry(entry)
+		if !ok {
+			continue
+		}
+		entryHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(entryHost), "."))
+		if entryPort != "" && entryPort != port {
+			continue
+		}
+		if wildcard {
+			if host == entryHost || strings.HasSuffix(host, "."+entryHost) {
+				return true
+			}
+			continue
+		}
+		if host == entryHost {
+			return true
+		}
+	}
+	return false
+}
+
+// parseAllowedHostEntry 解析单个白名单条目，返回主机与可选端口。
+func parseAllowedHostEntry(entry string) (host, port string, ok bool) {
+	raw := strings.TrimSpace(entry)
+	raw = strings.TrimPrefix(raw, "*.")
+	raw = strings.TrimPrefix(raw, ".")
+	if raw == "" {
+		return "", "", false
+	}
+	// 白名单只允许主机与端口，出现协议、路径、查询串一律视为非法。
+	if strings.Contains(raw, "://") || strings.ContainsAny(raw, " \t\r\n/?#@") {
+		return "", "", false
+	}
+	if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
+		return strings.TrimSuffix(strings.TrimPrefix(raw, "["), "]"), "", true
+	}
+	if hostPart, portPart, err := net.SplitHostPort(raw); err == nil {
+		return hostPart, portPart, true
+	}
+	// 纯 IPv6（含多个冒号）没有端口，整体作为主机。
+	return raw, "", true
 }
 
 type BusinessHours struct {

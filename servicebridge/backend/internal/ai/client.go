@@ -137,6 +137,12 @@ func (c *Client) Models(ctx context.Context, settings domain.AISettings) ([]stri
 	if strings.TrimSpace(settings.APIKey) == "" {
 		return nil, errors.New("AI API key is required")
 	}
+	return c.ListModels(ctx, settings)
+}
+
+// ListModels 请求上游 ${base_url}/models 并解析 OpenAI 兼容的 data[].id。
+// 与 Models 的区别：允许 API Key 为空（本地/内网无鉴权上游），供供应商管理页使用。
+func (c *Client) ListModels(ctx context.Context, settings domain.AISettings) ([]string, error) {
 	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 20 * time.Second
@@ -147,7 +153,11 @@ func (c *Client) Models(ctx context.Context, settings domain.AISettings) ([]stri
 	if err != nil {
 		return nil, err
 	}
-	setAPIHeaders(req, settings)
+	if strings.TrimSpace(settings.APIKey) != "" {
+		setAPIHeaders(req, settings)
+	} else {
+		req.Header.Set("Accept", "application/json")
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err

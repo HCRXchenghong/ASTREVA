@@ -119,7 +119,12 @@ func (s *Service) TranslatePreview(ctx context.Context, agentID, conversationID,
 	}
 	translateCtx, cancel := context.WithTimeout(ctx, translationWindow)
 	defer cancel()
-	translated, err := s.ai.TranslateWithStyle(translateCtx, s.store.AISettings(), content, sourceLang, targetLang, styleHint)
+	// 翻译能力优先使用其绑定的供应商；白名单校验失败时直接返回错误，不发出请求。
+	settings, settingsErr := s.aiSettingsForCapability(domain.AICapabilityTranslation)
+	if settingsErr != nil {
+		return TranslationPreview{}, settingsErr
+	}
+	translated, err := s.ai.TranslateWithStyle(translateCtx, settings, content, sourceLang, targetLang, styleHint)
 	if err != nil {
 		return TranslationPreview{}, err
 	}

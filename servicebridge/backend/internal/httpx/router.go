@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1268,6 +1269,267 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		writeJSON(w, http.StatusOK, map[string]any{"reply": reply})
 	})
 
+	mux.HandleFunc("GET /api/admin/ai-providers", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		providers := service.Store().ListAIProviders()
+		if providers == nil {
+			providers = []domain.AIProvider{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"providers": providers})
+	})
+
+	mux.HandleFunc("POST /api/admin/ai-providers", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req aiProviderRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		enabled := true
+		if req.Enabled != nil {
+			enabled = *req.Enabled
+		}
+		next := domain.AIProvider{
+			Name:         req.Name,
+			Kind:         req.Kind,
+			APIType:      req.APIType,
+			BaseURL:      req.BaseURL,
+			Models:       req.Models,
+			DefaultModel: req.DefaultModel,
+			TimeoutMS:    req.TimeoutMS,
+			AllowedHosts: req.AllowedHosts,
+			Enabled:      enabled,
+			SortOrder:    req.SortOrder,
+		}
+		provider, err := service.Store().CreateAIProvider(next, req.APIKey)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "ai_provider.create", "ai_provider", provider.ID, "新增 AI 供应商 "+provider.Name)
+		writeJSON(w, http.StatusCreated, map[string]any{"provider": provider})
+	})
+
+	mux.HandleFunc("PATCH /api/admin/ai-providers/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req aiProviderPatchRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		id := r.PathValue("id")
+		current, ok := service.Store().AIProvider(id)
+		if !ok {
+			writeError(w, store.ErrNotFound)
+			return
+		}
+		next := current
+		if req.Name != nil {
+			next.Name = *req.Name
+		}
+		if req.Kind != nil {
+			next.Kind = *req.Kind
+		}
+		if req.APIType != nil {
+			next.APIType = *req.APIType
+		}
+		if req.BaseURL != nil {
+			next.BaseURL = *req.BaseURL
+		}
+		if req.Models != nil {
+			next.Models = *req.Models
+		}
+		if req.DefaultModel != nil {
+			next.DefaultModel = *req.DefaultModel
+		}
+		if req.TimeoutMS != nil {
+			next.TimeoutMS = *req.TimeoutMS
+		}
+		if req.AllowedHosts != nil {
+			next.AllowedHosts = *req.AllowedHosts
+		}
+		if req.Enabled != nil {
+			next.Enabled = *req.Enabled
+		}
+		if req.SortOrder != nil {
+			next.SortOrder = *req.SortOrder
+		}
+		updated, err := service.Store().UpdateAIProvider(id, next, req.APIKey)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "ai_provider.update", "ai_provider", updated.ID, "更新 AI 供应商 "+updated.Name)
+		writeJSON(w, http.StatusOK, map[string]any{"provider": updated})
+	})
+
+	mux.HandleFunc("DELETE /api/admin/ai-providers/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		id := r.PathValue("id")
+		if err := service.Store().DeleteAIProvider(id); err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "ai_provider.delete", "ai_provider", id, "删除 AI 供应商")
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
+	})
+
+	mux.HandleFunc("POST /api/admin/ai-providers/{id}/models", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		provider, models, err := service.FetchProviderModels(r.Context(), r.PathValue("id"))
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrInvalidInput):
+				writeError(w, err)
+			case errors.Is(err, app.ErrAIProviderHostNotAllowed):
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "ai_provider_host_not_allowed", "message": err.Error()})
+			default:
+				// 上游失败统一返回 502，并附带具体原因，方便管理员排查。
+				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "ai_models_unavailable", "message": err.Error()})
+			}
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "ai_provider.models_sync", "ai_provider", provider.ID, "一键获取 AI 供应商模型列表")
+		writeJSON(w, http.StatusOK, map[string]any{"provider": provider, "models": models})
+	})
+
+	mux.HandleFunc("POST /api/admin/ai-providers/{id}/test", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		result, err := service.TestProvider(r.Context(), r.PathValue("id"))
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrInvalidInput):
+				writeError(w, err)
+			case errors.Is(err, app.ErrAIProviderHostNotAllowed):
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "ai_provider_host_not_allowed", "message": err.Error()})
+			default:
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"error":      "ai_provider_test_failed",
+					"message":    err.Error(),
+					"ok":         false,
+					"latency_ms": result.LatencyMS,
+				})
+			}
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "ai_provider.test", "ai_provider", r.PathValue("id"), "测试 AI 供应商连通性")
+		writeJSON(w, http.StatusOK, result)
+	})
+
+	// 【服务间接口】仅限管理员会话调用，供 admin-server 读取供应商明文配置（下轮接入）。
+	// 普通后台列表/详情永远不会返回 api_key 明文；此接口必须限制在内网调用。
+	// /resolve 与 /secret 指向同一实现，兼容服务间既有叫法。
+	mux.HandleFunc("GET /api/admin/ai-providers/{id}/secret", handleAIProviderSecret(service, trustedProxies))
+	mux.HandleFunc("GET /api/admin/ai-providers/{id}/resolve", handleAIProviderSecret(service, trustedProxies))
+
+	mux.HandleFunc("GET /api/admin/ai-bindings", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"bindings": aiBindingList(service.Store().AIBindings())})
+	})
+
+	mux.HandleFunc("PUT /api/admin/ai-bindings", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req struct {
+			Bindings []domain.AIBinding `json:"bindings"`
+		}
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		// 先整体校验再落库，避免部分成功导致能力指向半配置状态。
+		if err := validateAIBindingRequest(service, req.Bindings); err != nil {
+			writeError(w, err)
+			return
+		}
+		for _, binding := range req.Bindings {
+			if _, err := service.Store().UpsertAIBinding(binding); err != nil {
+				writeError(w, err)
+				return
+			}
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "ai_bindings.update", "ai_bindings", "", "更新 AI 能力绑定")
+		writeJSON(w, http.StatusOK, map[string]any{"bindings": aiBindingList(service.Store().AIBindings())})
+	})
+
+	// 管理员查看/重置某客服的偏好，复用客服自助接口的存储方法。
+	mux.HandleFunc("GET /api/admin/agents/{id}/preferences", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		preferences, err := service.Store().AgentPreferences(r.PathValue("id"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"preferences": preferences.WithDefaults()})
+	})
+
+	mux.HandleFunc("PATCH /api/admin/agents/{id}/preferences", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		var req agentPreferencesPatchRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		agentID := r.PathValue("id")
+		current, err := service.Store().AgentPreferences(agentID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		next := current.WithDefaults()
+		if req.AutoTranslateIncoming != nil {
+			next.AutoTranslateIncoming = req.AutoTranslateIncoming
+		}
+		if req.AutoTranslateOutgoing != nil {
+			next.AutoTranslateOutgoing = req.AutoTranslateOutgoing
+		}
+		if req.ReviewTranslation != nil {
+			next.ReviewTranslation = req.ReviewTranslation
+		}
+		if req.AISuggestReplies != nil {
+			next.AISuggestReplies = req.AISuggestReplies
+		}
+		if req.DialectMode != nil {
+			if !domain.ValidDialectMode(*req.DialectMode) {
+				writeError(w, fmt.Errorf("%w: translation_dialect_mode 只允许 standard 或 dialect", store.ErrInvalidInput))
+				return
+			}
+			next.DialectMode = domain.NormalizeDialectMode(*req.DialectMode)
+		}
+		updated, err := service.Store().UpdateAgentPreferences(agentID, next)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		recordAuditFromRequest(service, r, trustedProxies, "agent.preferences_update", "agent", agentID, "管理员更新客服偏好")
+		writeJSON(w, http.StatusOK, map[string]any{"preferences": updated.WithDefaults()})
+	})
+
 	mux.HandleFunc("GET /api/admin/business-hours", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(service, r) {
 			writeError(w, store.ErrForbidden)
@@ -1513,6 +1775,36 @@ type uploadResponse struct {
 	Size     int    `json:"size"`
 }
 
+type aiProviderRequest struct {
+	Name         string   `json:"name"`
+	Kind         string   `json:"kind"`
+	APIType      string   `json:"api_type"`
+	BaseURL      string   `json:"base_url"`
+	APIKey       string   `json:"api_key"`
+	Models       []string `json:"models"`
+	DefaultModel string   `json:"default_model"`
+	TimeoutMS    int      `json:"timeout_ms"`
+	AllowedHosts string   `json:"allowed_hosts"`
+	Enabled      *bool    `json:"enabled"`
+	SortOrder    int      `json:"sort_order"`
+}
+
+// apiProviderPatchRequest 用指针区分“未提供”与“显式更新为空值”：
+// api_key 未传 = 不改，传空串 = 清除。
+type aiProviderPatchRequest struct {
+	Name         *string   `json:"name"`
+	Kind         *string   `json:"kind"`
+	APIType      *string   `json:"api_type"`
+	BaseURL      *string   `json:"base_url"`
+	APIKey       *string   `json:"api_key"`
+	Models       *[]string `json:"models"`
+	DefaultModel *string   `json:"default_model"`
+	TimeoutMS    *int      `json:"timeout_ms"`
+	AllowedHosts *string   `json:"allowed_hosts"`
+	Enabled      *bool     `json:"enabled"`
+	SortOrder    *int      `json:"sort_order"`
+}
+
 type aiSettingsRequest struct {
 	Enabled         bool                  `json:"enabled"`
 	Mode            domain.AICustomerMode `json:"mode"`
@@ -1524,6 +1816,108 @@ type aiSettingsRequest struct {
 	MaxOutputTokens int                   `json:"max_output_tokens"`
 	TimeoutSeconds  int                   `json:"timeout_seconds"`
 	SystemPrompt    string                `json:"system_prompt"`
+}
+
+// agentPreferencesPatchRequest 是管理员重置客服偏好的局部更新请求。
+type agentPreferencesPatchRequest struct {
+	AutoTranslateIncoming *bool   `json:"auto_translate_incoming"`
+	AutoTranslateOutgoing *bool   `json:"auto_translate_outgoing"`
+	ReviewTranslation     *bool   `json:"review_translation_before_send"`
+	DialectMode           *string `json:"translation_dialect_mode"`
+	AISuggestReplies      *bool   `json:"ai_suggest_replies"`
+}
+
+// handleAIProviderSecret 实现服务间解密配置读取接口：
+// 仅管理员会话可访问，返回明文 api_key，响应头标记 X-Astreva-Service-Only。
+func handleAIProviderSecret(service *app.Service, proxies trustedProxySet) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(service, r) {
+			writeError(w, store.ErrForbidden)
+			return
+		}
+		provider, ok := service.Store().AIProvider(r.PathValue("id"))
+		if !ok {
+			writeError(w, store.ErrNotFound)
+			return
+		}
+		model := strings.TrimSpace(provider.DefaultModel)
+		if model == "" && len(provider.Models) > 0 {
+			model = strings.TrimSpace(provider.Models[0])
+		}
+		w.Header().Set("X-Astreva-Service-Only", "true")
+		w.Header().Set("Cache-Control", "no-store")
+		recordAuditFromRequest(service, r, proxies, "ai_provider.secret_read", "ai_provider", provider.ID, "服务间读取 AI 供应商解密配置")
+		writeJSON(w, http.StatusOK, map[string]any{
+			"service_only":  true,
+			"id":            provider.ID,
+			"name":          provider.Name,
+			"kind":          provider.Kind,
+			"api_type":      provider.APIType,
+			"base_url":      provider.BaseURL,
+			"api_key":       provider.APIKey,
+			"model":         model,
+			"default_model": provider.DefaultModel,
+			"models":        provider.Models,
+			"allowed_hosts": provider.AllowedHosts,
+			"timeout_ms":    provider.TimeoutMS,
+			"enabled":       provider.Enabled,
+		})
+	}
+}
+
+// aiBindingList 把能力绑定 map 转为稳定顺序的列表，便于前端渲染与测试断言。
+func aiBindingList(bindings map[string]domain.AIBinding) []domain.AIBinding {
+	out := make([]domain.AIBinding, 0, len(bindings))
+	seen := map[string]bool{}
+	for _, capability := range domain.AICapabilities() {
+		if binding, ok := bindings[capability]; ok {
+			out = append(out, binding)
+			seen[capability] = true
+		}
+	}
+	extras := make([]string, 0)
+	for capability := range bindings {
+		if !seen[capability] {
+			extras = append(extras, capability)
+		}
+	}
+	sort.Strings(extras)
+	for _, capability := range extras {
+		out = append(out, bindings[capability])
+	}
+	return out
+}
+
+// validateAIBindingRequest 在落库前整体校验能力、供应商存在性、启用状态与类型匹配。
+func validateAIBindingRequest(service *app.Service, bindings []domain.AIBinding) error {
+	seen := map[string]bool{}
+	for _, binding := range bindings {
+		capability := strings.ToLower(strings.TrimSpace(binding.Capability))
+		if !domain.ValidAICapability(capability) {
+			return fmt.Errorf("%w: 能力 %q 不合法", store.ErrInvalidInput, binding.Capability)
+		}
+		if seen[capability] {
+			return fmt.Errorf("%w: 能力 %q 重复提交", store.ErrInvalidInput, capability)
+		}
+		seen[capability] = true
+		providerID := strings.TrimSpace(binding.ProviderID)
+		if providerID == "" {
+			// 空 provider_id 表示解除绑定，允许。
+			continue
+		}
+		provider, ok := service.Store().AIProvider(providerID)
+		if !ok {
+			return fmt.Errorf("%w: 供应商 %q 不存在", store.ErrInvalidInput, providerID)
+		}
+		if !provider.Enabled {
+			return fmt.Errorf("%w: 供应商 %q 已禁用", store.ErrInvalidInput, providerID)
+		}
+		if provider.Kind != domain.AICapabilityKind(capability) {
+			return fmt.Errorf("%w: 能力 %q 需要 %s 类型供应商，供应商 %q 是 %s 类型",
+				store.ErrInvalidInput, capability, domain.AICapabilityKind(capability), providerID, provider.Kind)
+		}
+	}
+	return nil
 }
 
 const maxJSONBodyBytes = 1 << 20

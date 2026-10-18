@@ -48,6 +48,8 @@ type MemoryStore struct {
 	contacts     domain.ContactSettings
 	ai           domain.AISettings
 	cacheProbe   domain.AICacheProbe
+	aiProviders  map[string]*domain.AIProvider
+	aiBindings   map[string]domain.AIBinding
 	business     domain.BusinessHours
 	push         domain.PushSettings
 }
@@ -78,6 +80,8 @@ func NewMemoryStore(options Options) *MemoryStore {
 		ratings:         map[string]*domain.ServiceRating{},
 		auditEvents:     []domain.AuditEvent{},
 		apiApps:         map[string]*domain.APIApp{},
+		aiProviders:     map[string]*domain.AIProvider{},
+		aiBindings:      map[string]domain.AIBinding{},
 		contacts: domain.ContactSettings{
 			// 联系方式与欢迎语默认全部为空：真实内容必须由管理员在后台配置，
 			// 与 PostgreSQL 未配置时的行为保持一致。
@@ -1688,6 +1692,161 @@ func (s *MemoryStore) UpdateAISettings(next domain.AISettings) (domain.AISetting
 		s.ai.SystemPrompt = strings.TrimSpace(next.SystemPrompt)
 	}
 	return s.ai, nil
+}
+
+// ListAIProviders 返回全部供应商；列表只暴露密钥掩码，绝不返回明文。
+func (s *MemoryStore) ListAIProviders() []domain.AIProvider {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]domain.AIProvider, 0, len(s.aiProviders))
+	for _, provider := range s.aiProviders {
+		copy := *provider
+		copy.Models = append([]string(nil), provider.Models...)
+		copy.APIKey = ""
+		out = append(out, copy)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].SortOrder != out[j].SortOrder {
+			return out[i].SortOrder < out[j].SortOrder
+		}
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// AIProvider 读取单个供应商，返回的 APIKey 为明文，仅限服务端内部使用。
+func (s *MemoryStore) AIProvider(id string) (domain.AIProvider, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	provider, ok := s.aiProviders[strings.TrimSpace(id)]
+	if !ok {
+		return domain.AIProvider{}, false
+	}
+	out := *provider
+	out.Models = append([]string(nil), provider.Models...)
+	return out, true
+}
+
+func (s *MemoryStore) CreateAIProvider(next domain.AIProvider, apiKey string) (domain.AIProvider, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	next, err := normalizeAIProvider(next)
+	if err != nil {
+		return domain.AIProvider{}, err
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	if err := validateAIProviderAPIKey(apiKey); err != nil {
+		return domain.AIProvider{}, err
+	}
+	if next.ID == "" {
+		next.ID = "aip_" + randomID(8)
+	}
+	if _, exists := s.aiProviders[next.ID]; exists {
+		return domain.AIProvider{}, ErrConflict
+	}
+	now := time.Now().UTC()
+	next.APIKey = apiKey
+	next.APIKeyMasked = maskAPIKey(apiKey)
+	next.CreatedAt = now
+	next.UpdatedAt = now
+	stored := next
+	stored.Models = append([]string(nil), next.Models...)
+	// 内存存储与既有 ai_settings 一致，明文只保存在进程内存中；持久化实现负责加密。
+	s.aiProviders[stored.ID] = &stored
+	out := stored
+	out.Models = append([]string(nil), stored.Models...)
+	return out, nil
+}
+
+func (s *MemoryStore) UpdateAIProvider(id string, patch domain.AIProvider, apiKey *string) (domain.AIProvider, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current, ok := s.aiProviders[strings.TrimSpace(id)]
+	if !ok {
+		return domain.AIProvider{}, ErrNotFound
+	}
+	next, err := normalizeAIProvider(patch)
+	if err != nil {
+		return domain.AIProvider{}, err
+	}
+	next.ID = current.ID
+	next.CreatedAt = current.CreatedAt
+	next.UpdatedAt = time.Now().UTC()
+	// apiKey==nil 表示不修改；显式传空串表示清除密钥。
+	if apiKey != nil {
+		key := strings.TrimSpace(*apiKey)
+		if err := validateAIProviderAPIKey(key); err != nil {
+			return domain.AIProvider{}, err
+		}
+		next.APIKey = key
+	} else {
+		next.APIKey = current.APIKey
+	}
+	next.APIKeyMasked = maskAPIKey(next.APIKey)
+	stored := next
+	stored.Models = append([]string(nil), next.Models...)
+	s.aiProviders[stored.ID] = &stored
+	out := stored
+	out.Models = append([]string(nil), stored.Models...)
+	return out, nil
+}
+
+// DeleteAIProvider 删除供应商，并删除指向它的能力绑定（无残留、无悬挂引用），
+// 运行时该能力自动回退到 ai_settings。
+func (s *MemoryStore) DeleteAIProvider(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id = strings.TrimSpace(id)
+	if _, ok := s.aiProviders[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.aiProviders, id)
+	for capability, binding := range s.aiBindings {
+		if binding.ProviderID == id {
+			delete(s.aiBindings, capability)
+		}
+	}
+	return nil
+}
+
+func (s *MemoryStore) AIBindings() map[string]domain.AIBinding {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make(map[string]domain.AIBinding, len(s.aiBindings))
+	for capability, binding := range s.aiBindings {
+		copy := binding
+		if binding.Params != nil {
+			params := make(map[string]any, len(binding.Params))
+			for key, value := range binding.Params {
+				params[key] = value
+			}
+			copy.Params = params
+		}
+		out[capability] = copy
+	}
+	return out
+}
+
+func (s *MemoryStore) UpsertAIBinding(next domain.AIBinding) (domain.AIBinding, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	next, err := normalizeAIBinding(next)
+	if err != nil {
+		return domain.AIBinding{}, err
+	}
+	next.UpdatedAt = time.Now().UTC()
+	s.aiBindings[next.Capability] = next
+	return next, nil
 }
 
 // AICacheProbe 读取模型缓存探测结果。

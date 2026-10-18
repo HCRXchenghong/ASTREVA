@@ -30,6 +30,8 @@ const (
 	messageColumns      = `server_msg_id, client_msg_id, conversation_id, sender_type, sender_id, message_type, content, COALESCE(translations::text, '{}'), created_at, revoked_at, revoked_by_kind, revoked_by_id, COALESCE(detected_lang, ''), COALESCE(author_lang, ''), COALESCE(translation_status, '')`
 	ratingColumns       = `id, conversation_id, visitor_id, COALESCE(assigned_agent_id, ''), score, tags, comment, created_at`
 	auditColumns        = `id, actor_kind, actor_id, action, resource, resource_id, ip_address, user_agent, description, created_at`
+	aiProviderColumns   = `id, name, kind, api_type, base_url, api_key_ciphertext, COALESCE(models::text, '[]'), default_model, timeout_ms, allowed_hosts, enabled, sort_order, created_at, updated_at`
+	aiBindingColumns    = `capability, provider_id, COALESCE(model, ''), COALESCE(params::text, '{}'), updated_at`
 )
 
 type PostgresStore struct {
@@ -160,6 +162,26 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 			CONSTRAINT ai_settings_api_type_check CHECK (api_type IN ('chat_completions','responses','anthropic_messages')),
 			CONSTRAINT ai_settings_temperature_check CHECK (temperature >= 0 AND temperature <= 2)
 		)`,
+		`CREATE TABLE IF NOT EXISTS ai_providers (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text',
+			api_type TEXT NOT NULL DEFAULT 'chat_completions', base_url TEXT NOT NULL DEFAULT '',
+			api_key_ciphertext TEXT NOT NULL DEFAULT '', models JSONB NOT NULL DEFAULT '[]'::jsonb,
+			default_model TEXT NOT NULL DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 30000,
+			allowed_hosts TEXT NOT NULL DEFAULT '', enabled BOOLEAN NOT NULL DEFAULT true,
+			sort_order INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT ai_providers_kind_check CHECK (kind IN ('text','image')),
+			CONSTRAINT ai_providers_api_type_check CHECK (api_type IN ('chat_completions','responses','anthropic_messages','images'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_providers_enabled_sort ON ai_providers(enabled, sort_order, created_at)`,
+		// 能力绑定：provider_id 允许为空串（未绑定），因此不建外键；
+		// 删除供应商时由 DeleteAIProvider 删除引用，索引用于清理与排查。
+		`CREATE TABLE IF NOT EXISTS ai_bindings (
+			capability TEXT PRIMARY KEY, provider_id TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '',
+			params JSONB NOT NULL DEFAULT '{}'::jsonb, updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			CONSTRAINT ai_bindings_capability_check CHECK (capability IN ('reception','translation','detection','seo','image'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_bindings_provider ON ai_bindings(provider_id)`,
 		`CREATE TABLE IF NOT EXISTS business_hours (
 			id SMALLINT PRIMARY KEY DEFAULT 1, timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai', start_time TEXT NOT NULL DEFAULT '09:00',
 			end_time TEXT NOT NULL DEFAULT '18:00', enabled BOOLEAN NOT NULL DEFAULT true,
@@ -1521,6 +1543,283 @@ func (s *PostgresStore) UpdateAISettings(next domain.AISettings) (domain.AISetti
 			updated_at=EXCLUDED.updated_at
 	`, current.Enabled, current.Mode, current.BaseURL, protectedKey, current.Model, current.APIType, current.Temperature, current.MaxOutputTokens, current.TimeoutSeconds, current.SystemPrompt, dbNow())
 	return current, nil
+}
+
+// ===== AI 多供应商与能力绑定 =====
+
+func scanAIProvider(row scanTarget) (domain.AIProvider, error) {
+	var out domain.AIProvider
+	var storedKey, modelsJSON string
+	err := row.Scan(
+		&out.ID, &out.Name, &out.Kind, &out.APIType, &out.BaseURL, &storedKey,
+		&modelsJSON, &out.DefaultModel, &out.TimeoutMS, &out.AllowedHosts, &out.Enabled,
+		&out.SortOrder, &out.CreatedAt, &out.UpdatedAt,
+	)
+	if err != nil {
+		return domain.AIProvider{}, err
+	}
+	out.Models = parseAIModelsJSON(modelsJSON)
+	// APIKey 字段先暂存密文，由 revealAIProvider 换成明文并计算末四位掩码。
+	out.APIKey = storedKey
+	return out, nil
+}
+
+func parseAIModelsJSON(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []string{}
+	}
+	var models []string
+	if err := json.Unmarshal([]byte(raw), &models); err != nil {
+		return []string{}
+	}
+	out := make([]string, 0, len(models))
+	seen := map[string]bool{}
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" || seen[model] {
+			continue
+		}
+		seen[model] = true
+		out = append(out, model)
+	}
+	return out
+}
+
+// revealAIProvider 把密文换成明文并刷新掩码；密文损坏时返回错误。
+func (s *PostgresStore) revealAIProvider(provider *domain.AIProvider) error {
+	key, err := revealSecret(s.options.DataEncryptionKey, provider.APIKey)
+	if err != nil {
+		return err
+	}
+	provider.APIKey = key
+	provider.APIKeyMasked = maskAPIKey(key)
+	return nil
+}
+
+// ListAIProviders 返回全部供应商；为避免明文外泄，列表只暴露末四位掩码。
+func (s *PostgresStore) ListAIProviders() []domain.AIProvider {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	rows, err := s.pool.Query(ctx, `SELECT `+aiProviderColumns+` FROM ai_providers ORDER BY sort_order, created_at, id`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := make([]domain.AIProvider, 0)
+	for rows.Next() {
+		provider, err := scanAIProvider(rows)
+		if err != nil {
+			return nil
+		}
+		if err := s.revealAIProvider(&provider); err != nil {
+			provider.APIKey = ""
+			provider.APIKeyMasked = ""
+		} else {
+			provider.APIKey = ""
+		}
+		out = append(out, provider)
+	}
+	if err := rows.Err(); err != nil {
+		return nil
+	}
+	return out
+}
+
+// AIProvider 读取单个供应商并解密密钥，仅供服务端内部与服务间 /secret 使用。
+func (s *PostgresStore) AIProvider(id string) (domain.AIProvider, bool) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	provider, err := scanAIProvider(s.pool.QueryRow(ctx, `
+		SELECT `+aiProviderColumns+` FROM ai_providers WHERE id=$1
+	`, strings.TrimSpace(id)))
+	if err != nil {
+		return domain.AIProvider{}, false
+	}
+	if err := s.revealAIProvider(&provider); err != nil {
+		return domain.AIProvider{}, false
+	}
+	return provider, true
+}
+
+func (s *PostgresStore) CreateAIProvider(next domain.AIProvider, apiKey string) (domain.AIProvider, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	next, err := normalizeAIProvider(next)
+	if err != nil {
+		return domain.AIProvider{}, err
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	if err := validateAIProviderAPIKey(apiKey); err != nil {
+		return domain.AIProvider{}, err
+	}
+	if next.ID == "" {
+		next.ID = "aip_" + randomID(8)
+	}
+	protectedKey, err := protectSecret(s.options.DataEncryptionKey, apiKey)
+	if err != nil {
+		return domain.AIProvider{}, err
+	}
+	modelsJSON, err := json.Marshal(next.Models)
+	if err != nil {
+		return domain.AIProvider{}, err
+	}
+	now := dbNow()
+	provider, err := scanAIProvider(s.pool.QueryRow(ctx, `
+		INSERT INTO ai_providers (
+			id, name, kind, api_type, base_url, api_key_ciphertext, models, default_model,
+			timeout_ms, allowed_hosts, enabled, sort_order, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14)
+		RETURNING `+aiProviderColumns,
+		next.ID, next.Name, next.Kind, next.APIType, next.BaseURL, protectedKey, string(modelsJSON),
+		next.DefaultModel, next.TimeoutMS, next.AllowedHosts, next.Enabled, next.SortOrder, now, now,
+	))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return domain.AIProvider{}, ErrConflict
+		}
+		return domain.AIProvider{}, err
+	}
+	if err := s.revealAIProvider(&provider); err != nil {
+		return domain.AIProvider{}, err
+	}
+	return provider, nil
+}
+
+// UpdateAIProvider 覆盖更新供应商配置；apiKey==nil 保留原密钥，空串清除密钥。
+func (s *PostgresStore) UpdateAIProvider(id string, patch domain.AIProvider, apiKey *string) (domain.AIProvider, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	id = strings.TrimSpace(id)
+	var existingKey string
+	if err := s.pool.QueryRow(ctx, `SELECT api_key_ciphertext FROM ai_providers WHERE id=$1`, id).Scan(&existingKey); err != nil {
+		return domain.AIProvider{}, mapNoRows(err)
+	}
+	next, err := normalizeAIProvider(patch)
+	if err != nil {
+		return domain.AIProvider{}, err
+	}
+	next.ID = id
+	protectedKey := existingKey
+	if apiKey != nil {
+		key := strings.TrimSpace(*apiKey)
+		if err := validateAIProviderAPIKey(key); err != nil {
+			return domain.AIProvider{}, err
+		}
+		protectedKey, err = protectSecret(s.options.DataEncryptionKey, key)
+		if err != nil {
+			return domain.AIProvider{}, err
+		}
+	}
+	modelsJSON, err := json.Marshal(next.Models)
+	if err != nil {
+		return domain.AIProvider{}, err
+	}
+	provider, err := scanAIProvider(s.pool.QueryRow(ctx, `
+		UPDATE ai_providers SET
+			name=$2, kind=$3, api_type=$4, base_url=$5, api_key_ciphertext=$6, models=$7::jsonb,
+			default_model=$8, timeout_ms=$9, allowed_hosts=$10, enabled=$11, sort_order=$12, updated_at=$13
+		WHERE id=$1
+		RETURNING `+aiProviderColumns,
+		id, next.Name, next.Kind, next.APIType, next.BaseURL, protectedKey, string(modelsJSON),
+		next.DefaultModel, next.TimeoutMS, next.AllowedHosts, next.Enabled, next.SortOrder, dbNow(),
+	))
+	if err != nil {
+		return domain.AIProvider{}, err
+	}
+	if err := s.revealAIProvider(&provider); err != nil {
+		return domain.AIProvider{}, err
+	}
+	return provider, nil
+}
+
+// DeleteAIProvider 删除供应商并删除指向它的能力绑定，避免悬挂引用。
+func (s *PostgresStore) DeleteAIProvider(id string) error {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	id = strings.TrimSpace(id)
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM ai_providers WHERE id=$1`, id)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM ai_bindings WHERE provider_id=$1`, id)
+		return err
+	})
+}
+
+func scanAIBinding(row scanTarget) (domain.AIBinding, error) {
+	var out domain.AIBinding
+	var paramsJSON string
+	if err := row.Scan(&out.Capability, &out.ProviderID, &out.Model, &paramsJSON, &out.UpdatedAt); err != nil {
+		return domain.AIBinding{}, err
+	}
+	out.Params = map[string]any{}
+	if strings.TrimSpace(paramsJSON) != "" {
+		_ = json.Unmarshal([]byte(paramsJSON), &out.Params)
+	}
+	if out.Params == nil {
+		out.Params = map[string]any{}
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) AIBindings() map[string]domain.AIBinding {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	out := map[string]domain.AIBinding{}
+	rows, err := s.pool.Query(ctx, `SELECT `+aiBindingColumns+` FROM ai_bindings`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		binding, err := scanAIBinding(rows)
+		if err != nil {
+			return out
+		}
+		out[binding.Capability] = binding
+	}
+	return out
+}
+
+func (s *PostgresStore) UpsertAIBinding(next domain.AIBinding) (domain.AIBinding, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+
+	next, err := normalizeAIBinding(next)
+	if err != nil {
+		return domain.AIBinding{}, err
+	}
+	paramsJSON, err := json.Marshal(next.Params)
+	if err != nil {
+		return domain.AIBinding{}, err
+	}
+	binding, err := scanAIBinding(s.pool.QueryRow(ctx, `
+		INSERT INTO ai_bindings (capability, provider_id, model, params, updated_at)
+		VALUES ($1, $2, $3, $4::jsonb, $5)
+		ON CONFLICT (capability) DO UPDATE SET
+			provider_id=EXCLUDED.provider_id,
+			model=EXCLUDED.model,
+			params=EXCLUDED.params,
+			updated_at=EXCLUDED.updated_at
+		RETURNING `+aiBindingColumns,
+		next.Capability, next.ProviderID, next.Model, string(paramsJSON), dbNow(),
+	))
+	if err != nil {
+		return domain.AIBinding{}, err
+	}
+	return binding, nil
 }
 
 // AICacheProbe 读取模型缓存探测结果；无记录时返回空结果。

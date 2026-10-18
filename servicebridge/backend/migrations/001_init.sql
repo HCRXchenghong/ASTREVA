@@ -206,3 +206,39 @@ ALTER TABLE conversations ADD COLUMN IF NOT EXISTS language_stats JSONB NOT NULL
 
 -- ===== 客服账号级翻译偏好（P3）=====
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- ===== AI 多供应商与能力绑定（P4）=====
+-- 注意：运行时由 internal/store/postgres.go 的 ensureCoreTables 建表，
+-- 这里的 DDL 供 initdb 场景使用，两处必须保持一致。
+CREATE TABLE IF NOT EXISTS ai_providers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'text',
+    api_type TEXT NOT NULL DEFAULT 'chat_completions',
+    base_url TEXT NOT NULL DEFAULT '',
+    api_key_ciphertext TEXT NOT NULL DEFAULT '',
+    models JSONB NOT NULL DEFAULT '[]'::jsonb,
+    default_model TEXT NOT NULL DEFAULT '',
+    timeout_ms INTEGER NOT NULL DEFAULT 30000,
+    allowed_hosts TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ai_providers_kind_check CHECK (kind IN ('text', 'image')),
+    CONSTRAINT ai_providers_api_type_check CHECK (api_type IN ('chat_completions', 'responses', 'anthropic_messages', 'images'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_providers_enabled_sort ON ai_providers(enabled, sort_order, created_at);
+
+-- provider_id 允许空串表示未绑定，因此不建外键；删除供应商时由应用层删除引用。
+CREATE TABLE IF NOT EXISTS ai_bindings (
+    capability TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    params JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ai_bindings_capability_check CHECK (capability IN ('reception', 'translation', 'detection', 'seo', 'image'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_bindings_provider ON ai_bindings(provider_id);

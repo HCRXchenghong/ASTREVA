@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
 	"time"
@@ -209,6 +210,122 @@ const (
 	maxPushSecretRunes    = 20000
 	maxAPNsTopicRunes     = 256
 )
+
+const (
+	maxAIProviderNameRunes  = 64
+	maxAIProviderURLRunes   = 512
+	maxAIProviderKeyRunes   = 2048
+	maxAIModelRunes         = 128
+	maxAIProviderModels     = 200
+	maxAIAllowedHostsRunes  = 512
+	maxAIBindingProviderID  = 64
+	maxAIBindingParamsBytes = 8192
+)
+
+// normalizeAIProvider 归一化并校验供应商配置：补默认值、去重模型、校验白名单格式。
+// apiKey 由调用方单独处理，不在此函数内。
+func normalizeAIProvider(next domain.AIProvider) (domain.AIProvider, error) {
+	next.Name = strings.TrimSpace(next.Name)
+	if _, err := cleanRequiredText(next.Name, maxAIProviderNameRunes); err != nil {
+		return domain.AIProvider{}, err
+	}
+	next.Kind = strings.ToLower(strings.TrimSpace(next.Kind))
+	if next.Kind == "" {
+		next.Kind = domain.AIProviderKindText
+	}
+	if !domain.ValidAIProviderKind(next.Kind) {
+		return domain.AIProvider{}, ErrInvalidInput
+	}
+	next.APIType = strings.ToLower(strings.TrimSpace(next.APIType))
+	if next.APIType == "" {
+		if next.Kind == domain.AIProviderKindImage {
+			next.APIType = domain.AIAPITypeImages
+		} else {
+			next.APIType = domain.AIAPITypeChatCompletions
+		}
+	}
+	if !domain.ValidAIAPIType(next.APIType) {
+		return domain.AIProvider{}, ErrInvalidInput
+	}
+	// 供应商类型与协议类型必须匹配：图像供应商只能走 images，文本供应商不能走 images。
+	if next.Kind == domain.AIProviderKindImage && next.APIType != domain.AIAPITypeImages {
+		return domain.AIProvider{}, ErrInvalidInput
+	}
+	if next.Kind == domain.AIProviderKindText && next.APIType == domain.AIAPITypeImages {
+		return domain.AIProvider{}, ErrInvalidInput
+	}
+	next.BaseURL = strings.TrimSpace(next.BaseURL)
+	if _, err := cleanRequiredText(next.BaseURL, maxAIProviderURLRunes); err != nil {
+		return domain.AIProvider{}, err
+	}
+	parsed, err := url.Parse(next.BaseURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return domain.AIProvider{}, ErrInvalidInput
+	}
+	models := make([]string, 0, len(next.Models))
+	seen := map[string]bool{}
+	for _, model := range next.Models {
+		model = strings.TrimSpace(model)
+		if model == "" || seen[model] {
+			continue
+		}
+		if runeLen(model) > maxAIModelRunes {
+			return domain.AIProvider{}, ErrInvalidInput
+		}
+		seen[model] = true
+		models = append(models, model)
+		if len(models) > maxAIProviderModels {
+			return domain.AIProvider{}, ErrInvalidInput
+		}
+	}
+	next.Models = models
+	if _, err := cleanOptionalText(next.DefaultModel, maxAIModelRunes); err != nil {
+		return domain.AIProvider{}, err
+	}
+	if next.TimeoutMS == 0 {
+		next.TimeoutMS = 30000
+	}
+	if next.TimeoutMS < 1000 || next.TimeoutMS > 300000 {
+		return domain.AIProvider{}, ErrInvalidInput
+	}
+	next.AllowedHosts = domain.NormalizeAllowedHosts(next.AllowedHosts)
+	if runeLen(next.AllowedHosts) > maxAIAllowedHostsRunes || !domain.ValidateAllowedHosts(next.AllowedHosts) {
+		return domain.AIProvider{}, ErrInvalidInput
+	}
+	if next.SortOrder < -10000 || next.SortOrder > 10000 {
+		return domain.AIProvider{}, ErrInvalidInput
+	}
+	return next, nil
+}
+
+// validateAIProviderAPIKey 校验明文密钥长度。
+func validateAIProviderAPIKey(value string) error {
+	_, err := cleanOptionalText(value, maxAIProviderKeyRunes)
+	return err
+}
+
+// normalizeAIBinding 归一化并校验能力绑定。
+func normalizeAIBinding(next domain.AIBinding) (domain.AIBinding, error) {
+	next.Capability = strings.ToLower(strings.TrimSpace(next.Capability))
+	if !domain.ValidAICapability(next.Capability) {
+		return domain.AIBinding{}, ErrInvalidInput
+	}
+	next.ProviderID = strings.TrimSpace(next.ProviderID)
+	if len([]rune(next.ProviderID)) > maxAIBindingProviderID {
+		return domain.AIBinding{}, ErrInvalidInput
+	}
+	if _, err := cleanOptionalText(next.Model, maxAIModelRunes); err != nil {
+		return domain.AIBinding{}, err
+	}
+	if next.Params == nil {
+		next.Params = map[string]any{}
+	}
+	raw, err := json.Marshal(next.Params)
+	if err != nil || len(raw) > maxAIBindingParamsBytes {
+		return domain.AIBinding{}, ErrInvalidInput
+	}
+	return next, nil
+}
 
 // normalizePushPlatform 归一化设备平台：令牌为空时平台也为空，其余只允许 android/ios。
 func normalizePushPlatform(platform, deviceToken string) string {

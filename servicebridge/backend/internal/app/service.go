@@ -395,22 +395,37 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 }
 
 func (s *Service) generateAIReply(conversationID, currentMsgID, userText string, visitorLang string) {
-	settings := s.settingsWithCacheMode()
+	// 优先使用 reception 能力绑定的供应商；未绑定/被禁用时回退到全局 ai_settings。
+	settings, settingsErr := s.aiSettingsForCapability(domain.AICapabilityReception)
+	if settingsErr != nil {
+		s.logger.Warn("AI 能力绑定不可用，跳过本次 AI 回复",
+			"conversation_id", conversationID, "capability", domain.AICapabilityReception, "error", settingsErr)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), aiReplyTimeout(settings))
 	defer cancel()
 	visitorLang = ai.NormalizeLang(visitorLang, ai.LangZh)
 	// 仅读取本会话的历史消息作为上下文，按 conversationID 隔离，绝不跨会话共享。
 	history := s.conversationAITurns(conversationID, currentMsgID, visitorLang)
 	// cacheKey 用会话 ID：同一会话的多轮请求共享同一缓存前缀，跨会话天然隔离。
-	reply, err := s.ai.Reply(ctx, settings, s.store.ContactSettings(), history, userText, visitorLang, conversationID)
-	if err != nil {
-		s.logger.Warn("AI reply failed", "conversation_id", conversationID, "error", err)
+	var reply string
+	if settingsErr == nil {
+		generated, err := s.ai.Reply(ctx, settings, s.store.ContactSettings(), history, userText, visitorLang, conversationID)
+		if err != nil {
+			s.logger.Warn("AI reply failed", "conversation_id", conversationID, "error", err)
+			generated = aiBusyText(visitorLang)
+		}
+		reply = generated
+	} else {
 		reply = aiBusyText(visitorLang)
 	}
 	translations := map[string]string{}
 	if visitorLang != ai.LangZh && ai.DetectLang(reply) != ai.LangZh {
-		zhText, translateErr := s.ai.Translate(ctx, s.store.AISettings(), reply, visitorLang, ai.LangZh)
-		if translateErr == nil && strings.TrimSpace(zhText) != "" {
+		// AI 回复的中文译文属于 translation 能力，单独解析其绑定。
+		translateSettings, translateSettingsErr := s.aiSettingsForCapability(domain.AICapabilityTranslation)
+		if translateSettingsErr != nil {
+			s.logger.Warn("翻译能力绑定不可用，跳过 AI 回复译文",
+				"conversation_id", conversationID, "error", translateSettingsErr)
+		} else if zhText, translateErr := s.ai.Translate(ctx, translateSettings, reply, visitorLang, ai.LangZh); translateErr == nil && strings.TrimSpace(zhText) != "" {
 			translations[ai.LangZh] = zhText
 		}
 	}
@@ -880,7 +895,7 @@ func (s *Service) translateInitialMessageForVisitor(conversationID, visitorLang 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
 		defer cancel()
-		translated, err := s.ai.Translate(ctx, s.store.AISettings(), original, ai.LangZh, visitorLang)
+		translated, err := s.ai.Translate(ctx, s.translationSettingsOrDefault(conversationID), original, ai.LangZh, visitorLang)
 		if err != nil || strings.TrimSpace(translated) == "" {
 			s.logger.Warn("translate initial message failed", "conversation_id", conversationID, "error", err)
 			return
@@ -970,9 +985,16 @@ func (s *Service) translateMessageWithStyle(sourceLang, targetLang string, messa
 	if translated, ok := knownSystemText(content, targetLang); ok {
 		return map[string]string{targetLang: translated}
 	}
+	// 翻译能力优先使用其绑定的供应商，未绑定/禁用时回退到全局 ai_settings。
+	settings, settingsErr := s.aiSettingsForCapability(domain.AICapabilityTranslation)
+	if settingsErr != nil {
+		s.logger.Warn("翻译能力绑定不可用，跳过本次翻译",
+			"source", sourceLang, "target", targetLang, "error", settingsErr)
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
 	defer cancel()
-	translated, err := s.ai.TranslateWithStyle(ctx, s.store.AISettings(), content, sourceLang, targetLang, styleHint)
+	translated, err := s.ai.TranslateWithStyle(ctx, settings, content, sourceLang, targetLang, styleHint)
 	if err != nil || strings.TrimSpace(translated) == "" {
 		s.logger.Warn("translate message failed", "source", sourceLang, "target", targetLang, "error", err)
 		return nil
@@ -1000,7 +1022,7 @@ func (s *Service) translateAndStoreSystemMessage(conversationID, visitorLang str
 	} else {
 		ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
 		defer cancel()
-		translated, err := s.ai.Translate(ctx, s.store.AISettings(), msg.Content, ai.LangZh, visitorLang)
+		translated, err := s.ai.Translate(ctx, s.translationSettingsOrDefault(conversationID), msg.Content, ai.LangZh, visitorLang)
 		if err != nil || strings.TrimSpace(translated) == "" {
 			s.logger.Warn("translate system message failed", "conversation_id", conversationID, "error", err)
 			return
