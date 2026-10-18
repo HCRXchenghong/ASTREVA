@@ -7,6 +7,10 @@
 
     <a-card :bordered="false" class="edit-card">
       <template #title>编辑媒体与存储设置</template>
+      <a-alert type="info" class="settings-tip">
+        AI 生图的配置与生成已归入「AI 管理 → AI 生图」。
+        <a-link href="/site-admin/ai/image">前往 AI 生图</a-link>
+      </a-alert>
       <a-tabs default-active-key="storage">
         <a-tab-pane key="storage" title="R2 / S3 存储">
           <a-form :model="storageForm" layout="vertical">
@@ -105,51 +109,6 @@
           </a-form>
         </a-tab-pane>
 
-        <a-tab-pane key="ai" title="AI 生图">
-          <a-form :model="aiForm" layout="vertical">
-            <a-form-item label="Images API Base URL" required>
-              <a-input v-model="aiForm.baseUrl" placeholder="https://api.openai.com/v1" />
-            </a-form-item>
-            <a-form-item label="API Key">
-              <a-input-password
-                v-model="aiForm.apiKey"
-                :placeholder="ai.apiKeyConfigured ? `已配置 ${ai.apiKeyMasked || ''}；留空不修改` : '未配置'"
-                autocomplete="new-password"
-              />
-            </a-form-item>
-            <a-form-item label="默认模型" required>
-              <a-select v-model="aiForm.defaultModel" :options="modelOptions" allow-create allow-search />
-            </a-form-item>
-            <a-form-item label="允许的模型（逗号分隔）">
-              <a-input v-model="aiForm.configuredModels" />
-            </a-form-item>
-            <a-form-item label="请求超时（毫秒）">
-              <a-input-number v-model="aiForm.requestTimeoutMs" :min="10000" :max="600000" :step="1000" />
-            </a-form-item>
-            <a-grid :cols="{ xs: 1, md: 2 }" :col-gap="12">
-              <a-grid-item>
-                <a-form-item label="API 请求主机白名单">
-                  <a-input v-model="aiForm.allowedHosts" placeholder="api.openai.com" />
-                </a-form-item>
-              </a-grid-item>
-              <a-grid-item>
-                <a-form-item label="图片下载主机白名单">
-                  <a-input v-model="aiForm.downloadHosts" />
-                </a-form-item>
-              </a-grid-item>
-            </a-grid>
-            <a-form-item>
-              <a-checkbox v-model="aiForm.clearApiKey">清除已保存的 AI 生图 API Key</a-checkbox>
-            </a-form-item>
-            <a-alert type="info" class="form-tip">
-              AI 生图与客服接待 AI 完全分开；测试连接只访问模型接口，不会生成图片或产生生图费用。
-            </a-alert>
-            <a-space>
-              <a-button :loading="saving.aiTest" @click="testAi">测试并同步模型</a-button>
-              <a-button type="primary" :loading="saving.ai" @click="saveAi">保存 AI 生图配置</a-button>
-            </a-space>
-          </a-form>
-        </a-tab-pane>
       </a-tabs>
     </a-card>
 
@@ -243,12 +202,7 @@
   import { computed, reactive, watch } from 'vue';
   import { Message } from '@arco-design/web-vue';
   import type { MediaRuntime, MediaSettings, MediaStats } from '@/api/media';
-  import {
-    testMediaAiImage,
-    updateMediaAiImage,
-    updateMediaImage,
-    updateMediaStorage,
-  } from '@/api/media';
+  import { updateMediaImage, updateMediaStorage } from '@/api/media';
   import { CORS_EXAMPLE, copyText, formatBytes } from '@/lib/media';
 
   const props = withDefaults(
@@ -268,10 +222,6 @@
     ...(props.settings?.storageHealth || {}),
   }));
   const image = computed(() => props.settings?.config?.image || {});
-  const ai = computed(() => ({
-    ...(props.settings?.config?.aiImage || {}),
-    ...(props.settings?.aiImage || {}),
-  }));
   const health = computed(() => props.settings?.storageHealth || props.runtime?.storage || {});
   const mimeCount = computed(() => String(image.value.allowedMimeTypes || '').split(',').filter(Boolean).length);
 
@@ -289,14 +239,7 @@
     { label: '虚拟主机（R2 推荐）', value: 'false' },
     { label: 'Path Style（MinIO）', value: 'true' },
   ];
-  const modelOptions = computed(() =>
-    String(ai.value.configuredModels || '')
-      .split(',')
-      .filter(Boolean)
-      .map((value) => ({ label: value.trim(), value: value.trim() }))
-  );
-
-  const saving = reactive({ storage: false, image: false, ai: false, aiTest: false });
+  const saving = reactive({ storage: false, image: false });
   const storageForm = reactive({
     endpoint: '',
     region: 'auto',
@@ -316,16 +259,6 @@
     keepOriginal: true,
     maxUploadMb: 200,
     allowedMimeTypes: [] as string[],
-  });
-  const aiForm = reactive({
-    baseUrl: 'https://api.openai.com/v1',
-    apiKey: '',
-    defaultModel: 'gpt-image-1',
-    configuredModels: '',
-    requestTimeoutMs: 120000,
-    allowedHosts: 'api.openai.com',
-    downloadHosts: '',
-    clearApiKey: false,
   });
 
   function syncForms() {
@@ -348,16 +281,6 @@
       keepOriginal: image.value.keepOriginal !== false,
       maxUploadMb: Math.max(1, Math.round(Number(image.value.maxUploadBytes || 0) / 1024 / 1024) || 200),
       allowedMimeTypes: String(image.value.allowedMimeTypes || '').split(',').filter(Boolean),
-    });
-    Object.assign(aiForm, {
-      baseUrl: ai.value.baseUrl || 'https://api.openai.com/v1',
-      apiKey: '',
-      defaultModel: ai.value.defaultModel || 'gpt-image-1',
-      configuredModels: ai.value.configuredModels || '',
-      requestTimeoutMs: Number(ai.value.requestTimeoutMs || 120000),
-      allowedHosts: ai.value.allowedHosts || 'api.openai.com',
-      downloadHosts: ai.value.downloadHosts || '',
-      clearApiKey: false,
     });
   }
 
@@ -406,45 +329,6 @@
       emit('saved');
     } finally {
       saving.image = false;
-    }
-  }
-
-  function aiPayload() {
-    const payload: Record<string, unknown> = {
-      baseUrl: aiForm.baseUrl.trim(),
-      defaultModel: aiForm.defaultModel.trim(),
-      configuredModels: aiForm.configuredModels.trim(),
-      requestTimeoutMs: Number(aiForm.requestTimeoutMs),
-      allowedHosts: aiForm.allowedHosts.trim(),
-      downloadHosts: aiForm.downloadHosts.trim(),
-      clearApiKey: aiForm.clearApiKey,
-    };
-    if (aiForm.apiKey.trim()) payload.apiKey = aiForm.apiKey.trim();
-    return payload;
-  }
-
-  async function testAi() {
-    saving.aiTest = true;
-    try {
-      const result = await testMediaAiImage(aiPayload());
-      const models = result.data?.models || [];
-      if (models.length) aiForm.configuredModels = models.join(',');
-      Message.success(`验证通过，发现 ${models.length} 个可用模型`);
-    } finally {
-      saving.aiTest = false;
-    }
-  }
-
-  async function saveAi() {
-    saving.ai = true;
-    try {
-      await updateMediaAiImage(aiPayload());
-      aiForm.apiKey = '';
-      aiForm.clearApiKey = false;
-      Message.success('AI 生图配置已加密保存并立即生效');
-      emit('saved');
-    } finally {
-      saving.ai = false;
     }
   }
 

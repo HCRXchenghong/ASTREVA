@@ -10,7 +10,7 @@ export default {
         locale: '系统设置',
     requiresAuth: true,
     icon: 'IconSettings',
-    order: 6,
+    order: 7,
     hideInMenu: false,
   },
   children: [
@@ -22,11 +22,10 @@ export default {
         locale: '营业时间与联系方式', requiresAuth: true },
     },
     {
+      // 旧地址兼容：AI 设置已迁到 AI 管理
       path: 'ai',
-      name: 'SystemAi',
-      component: () => import('@/views/system/ai.vue'),
-      meta: { title: 'AI 设置',
-        locale: 'AI 设置', requiresAuth: true },
+      redirect: '/ai/reception',
+      meta: { title: 'AI 设置', locale: 'AI 设置', requiresAuth: true, hideInMenu: true },
     },
     {
       path: 'push',
