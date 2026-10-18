@@ -14,5 +14,5 @@ export const DEFAULT_ROUTE_NAME = 'Workspace';
 export const DEFAULT_ROUTE = {
   title: '工作台',
   name: DEFAULT_ROUTE_NAME,
-  fullPath: '/site-admin/workspace',
+  fullPath: '/site-admin/dashboard',
 };

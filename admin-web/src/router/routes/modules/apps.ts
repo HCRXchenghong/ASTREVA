@@ -10,7 +10,7 @@ export default {
         locale: '应用管理',
     requiresAuth: true,
     icon: 'IconMobile',
-    order: 4,
+    order: 5,
     hideInMenu: false,
   },
   children: [

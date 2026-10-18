@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { chromium } from 'playwright-core';
+import { createAdminSession } from './test-session-helper.mjs';
 
 async function environment() {
   const values = {};
@@ -37,8 +38,9 @@ test('统一后台：R2 素材一级入口可用、系统设置有值且工作�
   let browser;
   try {
     await waitFor(base + '/healthz');
-    const payload = Buffer.from(JSON.stringify({ userId: 'unified-browser-e2e', email: 'unified@test.local', exp: Date.now() + 10 * 60_000 })).toString('base64url');
-    const signature = crypto.createHmac('sha256', env.ADMIN_2FA_SESSION_SECRET).update(payload).digest('base64url');
+    const session = await createAdminSession(base);
+    const payload = session.cookieValue.split('.')[0];
+    const signature = session.cookieValue.split('.')[1];
     browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await context.addCookies([{ name: 'astreva_admin_session', value: `${payload}.${signature}`, url: base, httpOnly: true, sameSite: 'Lax' }]);
@@ -256,8 +258,9 @@ test('客服引擎不可用时，系统设置仍显示安全默认值和明确�
   let browser;
   try {
     await waitFor(base + '/healthz');
-    const payload = Buffer.from(JSON.stringify({ userId: 'settings-fallback-e2e', email: 'settings-fallback@test.local', exp: Date.now() + 10 * 60_000 })).toString('base64url');
-    const signature = crypto.createHmac('sha256', env.ADMIN_2FA_SESSION_SECRET).update(payload).digest('base64url');
+    const session = await createAdminSession(base);
+    const payload = session.cookieValue.split('.')[0];
+    const signature = session.cookieValue.split('.')[1];
     browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     await context.addCookies([{ name: 'astreva_admin_session', value: `${payload}.${signature}`, url: base, httpOnly: true, sameSite: 'Lax' }]);

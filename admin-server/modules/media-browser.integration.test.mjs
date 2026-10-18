@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 import sharp from 'sharp';
 import { chromium } from 'playwright-core';
+import { applySessionCookie, createAdminSession } from './test-session-helper.mjs';
 
 async function environment() {
   const values = {};
@@ -39,12 +40,10 @@ test('真实浏览器：五个参考仓库式视图、配置弹窗、智能上�
   const marker = `browser-e2e-${Date.now()}`;
   try {
     await waitFor(base + '/healthz');
-    const sessionPayload = Buffer.from(JSON.stringify({ userId: 'media-browser-e2e', email: 'media-browser@test.local', exp: Date.now() + 10 * 60_000 })).toString('base64url');
-    const secret = env.ADMIN_2FA_SESSION_SECRET || env.ADMIN_SESSION_SECRET;
-    const signature = crypto.createHmac('sha256', secret).update(sessionPayload).digest('base64url');
+    const session = await createAdminSession(base);
     browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
     context = await browser.newContext({ baseURL: base, permissions: ['clipboard-read', 'clipboard-write'] });
-    await context.addCookies([{ name: 'astreva_admin_session', value: `${sessionPayload}.${signature}`, url: base, httpOnly: true, sameSite: 'Lax' }]);
+    await applySessionCookie(context, base, session);
     const page = await context.newPage();
     page.on('dialog', (dialog) => dialog.accept());
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'astreva-media-browser-'));

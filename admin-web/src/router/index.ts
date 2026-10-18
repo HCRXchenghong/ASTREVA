@@ -4,6 +4,7 @@ import 'nprogress/nprogress.css';
 
 import { appRoutes } from './routes';
 import { REDIRECT_MAIN, NOT_FOUND_ROUTE } from './routes/base';
+import { legacyRedirectRoutes } from './routes/legacy';
 import createRouteGuard from './guard';
 import { DEFAULT_ROUTE } from './constants';
 
@@ -27,6 +28,7 @@ const router = createRouter({
       },
     },
     ...appRoutes,
+    ...legacyRedirectRoutes,
     REDIRECT_MAIN,
     NOT_FOUND_ROUTE,
   ],

@@ -7,7 +7,13 @@
         </a-alert>
         <a-form :model="business" layout="vertical">
           <a-form-item label="时区">
-            <a-input v-model="business.timezone" placeholder="Asia/Shanghai" />
+            <a-select
+              v-model="business.timezone"
+              :options="timezoneOptions"
+              allow-search
+              allow-clear
+              placeholder="Asia/Shanghai"
+            />
           </a-form-item>
           <a-form-item label="开始时间">
             <a-input v-model="business.start" placeholder="09:00" />
@@ -58,7 +64,7 @@
 </template>
 
 <script lang="ts" setup>
-  import { onMounted, reactive, ref } from 'vue';
+  import { computed, onMounted, reactive, ref } from 'vue';
   import { Message } from '@arco-design/web-vue';
   import {
     fetchBusinessHours,
@@ -68,11 +74,30 @@
     updateContactSettings,
   } from '@/api/admin';
 
+  // 时区下拉：常见业务时区优先，历史值不在列表时保留为额外选项，避免回显丢失。
+  const TIMEZONES = [
+    { label: '中国（Asia/Shanghai）', value: 'Asia/Shanghai' },
+    { label: '香港（Asia/Hong_Kong）', value: 'Asia/Hong_Kong' },
+    { label: '台湾（Asia/Taipei）', value: 'Asia/Taipei' },
+    { label: '马来西亚（Asia/Kuala_Lumpur）', value: 'Asia/Kuala_Lumpur' },
+    { label: '新加坡（Asia/Singapore）', value: 'Asia/Singapore' },
+    { label: '阿富汗（Asia/Kabul）', value: 'Asia/Kabul' },
+    { label: '迪拜（Asia/Dubai）', value: 'Asia/Dubai' },
+  ];
+
   const business = reactive({ timezone: 'Asia/Shanghai', start: '09:00', end: '18:00', enabled: true, offline_reply: '' });
   const contact = reactive({ telephone: '', whatsapp: '', telegram: '', entry_reply: '' });
   const status = ref<any>(null);
   const savingBusiness = ref(false);
   const savingContact = ref(false);
+
+  const timezoneOptions = computed(() => {
+    const current = String(business.timezone || '').trim();
+    if (current && !TIMEZONES.some((item) => item.value === current)) {
+      return [{ label: `${current}（当前值）`, value: current }, ...TIMEZONES];
+    }
+    return TIMEZONES;
+  });
 
   async function load() {
     const [hours, contacts, systemStatus] = await Promise.allSettled([

@@ -186,3 +186,20 @@ CREATE INDEX IF NOT EXISTS idx_site_system_events_level ON site_system_events(le
 CREATE INDEX IF NOT EXISTS idx_site_system_events_category ON site_system_events(category, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_site_system_events_ip ON site_system_events(ip, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_site_system_events_action ON site_system_events(action, occurred_at DESC);
+
+-- ===== 二期：可撤销的管理员会话 =====
+
+CREATE TABLE IF NOT EXISTS site_admin_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  email TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  user_agent TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_site_admin_sessions_user ON site_admin_sessions(user_id, expires_at DESC);
+CREATE INDEX IF NOT EXISTS idx_site_admin_sessions_expires ON site_admin_sessions(expires_at DESC);

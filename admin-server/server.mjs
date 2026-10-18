@@ -32,6 +32,7 @@ import { createWebsiteTranslationRouter } from './modules/website-translation-ro
 import { createWebsiteSeoService } from './modules/website-seo-service.mjs';
 import { createAnalyticsRouter, detectDanger } from './modules/analytics-router.mjs';
 import { createSystemRouter } from './modules/system-router.mjs';
+import { sanitizeContentRichText, sanitizeHtml } from './modules/html-sanitize.mjs';
 import { createWebsiteSeoRouter } from './modules/website-seo-router.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -80,6 +81,19 @@ const SESSION_SECRET =
   process.env.ADMIN_SESSION_SECRET ||
   'change-me-astreva-admin-session-secret';
 const SESSION_COOKIE_SECURE = process.env.ADMIN_SESSION_COOKIE_SECURE === 'true' || PUBLIC_ORIGIN.startsWith('https://');
+// 生产环境必须提供强随机会话密钥，避免使用仓库里的示例值被伪造管理员会话。
+const IS_PRODUCTION = (process.env.APP_ENV || process.env.NODE_ENV || '').toLowerCase() === 'production';
+if (IS_PRODUCTION) {
+  const weakSession = SESSION_SECRET.length < 24 || /change-me|changeme|placeholder|secret/i.test(SESSION_SECRET);
+  if (weakSession) {
+    throw new Error('生产环境必须配置随机的 ADMIN_2FA_SESSION_SECRET（至少 24 位，且不能是示例值）。');
+  }
+  const encryptionKey = process.env.CMS_DATA_ENCRYPTION_KEY || process.env.DATA_ENCRYPTION_KEY || '';
+  if (encryptionKey.length < 32 || /change-me|changeme|placeholder/i.test(encryptionKey)) {
+    throw new Error('生产环境必须配置 CMS_DATA_ENCRYPTION_KEY / DATA_ENCRYPTION_KEY（至少 32 位随机值）。');
+  }
+}
+
 const CMS_STORE_DRIVER = process.env.CMS_STORE_DRIVER || 'postgres';
 const CMS_DATA_ENCRYPTION_KEY = process.env.CMS_DATA_ENCRYPTION_KEY || process.env.DATA_ENCRYPTION_KEY || '';
 const ADMIN_MEDIA_DRIVER = process.env.ADMIN_MEDIA_DRIVER || 's3';
@@ -594,20 +608,56 @@ function sign(value) {
   return crypto.createHmac('sha256', SESSION_SECRET).update(value).digest('base64url');
 }
 
-function createSession(user) {
+async function createSession(user, req = null) {
+  const client = req ? resolveAdminClient(req) : { ip: '', source: '' };
+  const record = await platformStore.createAdminSession({
+    userId: user.id,
+    email: user.email,
+    ip: client.ip,
+    userAgent: req ? String(req.headers['user-agent'] || '') : '',
+    expiresAt: Date.now() + SESSION_TTL_MS
+  }).catch(() => null);
   const payload = Buffer.from(JSON.stringify({
     userId: user.id,
     email: user.email,
+    sid: record?.id || '',
     exp: Date.now() + SESSION_TTL_MS
   })).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
 
+async function verifySessionAsync(req) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token || !token.includes('.')) return null;
+  const [payload, signature] = token.split('.');
+  const expected = sign(payload);
+  // 常量时间比较，避免签名被逐字节猜测。
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!session.exp || session.exp < Date.now()) return null;
+    if (!session.sid) return null;
+    const active = await platformStore.isAdminSessionActive(session.sid).catch(() => false);
+    return active ? session : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 兼容既有同步调用点：这里做的是"签名 + 过期 + 会话存在性"的轻量校验，
+ * 真正的异步撤销校验用 verifySessionAsync（用于关键接口）。
+ */
 function verifySession(req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token || !token.includes('.')) return null;
   const [payload, signature] = token.split('.');
-  if (signature !== sign(payload)) return null;
+  const expected = sign(payload);
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
   try {
     const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
     if (!session.exp || session.exp < Date.now()) return null;
@@ -693,8 +743,9 @@ async function adminMetrics() {
   ].join('\n') + '\n';
 }
 
-function setSessionCookie(res, user) {
-  const cookie = `${SESSION_COOKIE}=${encodeURIComponent(createSession(user))}; Path=/; HttpOnly; SameSite=Lax;${SESSION_COOKIE_SECURE ? ' Secure;' : ''} Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
+async function setSessionCookie(res, user, req = null) {
+  const token = await createSession(user, req);
+  const cookie = `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax;${SESSION_COOKIE_SECURE ? ' Secure;' : ''} Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
   res.setHeader('Set-Cookie', cookie);
 }
 
@@ -713,7 +764,10 @@ const handleAuth = createAuthRouter({
   setSessionCookie,
   clearSessionCookie,
   verifySession,
-  auditEvent
+  auditEvent,
+  recordSystemEvent,
+  resolveClient: resolveAdminClient,
+  platformStore
 });
 
 const base32Alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -925,8 +979,10 @@ async function saveSection(payload) {
   let saved = null;
 
   if (section === 'content') {
-    assertContentIntegrity(data);
-    const result = await saveContent(data, { expectedRevision: payload.revision });
+    // 全量保存也要先做富文本消毒，避免绕过下面的白名单清洗。
+    const sanitizedData = sanitizeContentRichText(data);
+    assertContentIntegrity(sanitizedData);
+    const result = await saveContent(sanitizedData, { expectedRevision: payload.revision });
     return { id: 'site-content', revision: result.revision, updatedAt: result.updatedAt };
   } else if (section === 'site') {
     content.site = { ...content.site, ...data };
@@ -1033,6 +1089,9 @@ async function saveSection(payload) {
     throw new Error('未知的保存模块。');
   }
 
+  // 富文本字段写入前做白名单消毒，避免存储型 XSS 带到官网。
+  const sanitized = sanitizeContentRichText(content);
+  for (const key of Object.keys(sanitized)) content[key] = sanitized[key];
   assertContentIntegrity(content);
   await saveContent(content, { expectedRevision: payload.revision });
   return saved;
@@ -2293,6 +2352,55 @@ async function serveFile(res, file, cache = false) {
   createReadStream(safeFile).pipe(res);
 }
 
+/** 所有响应统一安全头：CSP 按控制台/官网/客服三个来源收敛。 */
+function applySecurityHeaders(res) {
+  const connectSources = new Set(["'self'", SITE_ORIGIN, PUBLIC_ORIGIN]);
+  try {
+    connectSources.add(new URL(SERVICEBRIDGE_API_URL).origin);
+  } catch {}
+  const frameSources = new Set(["'self'", SITE_ORIGIN]);
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https: http:",
+    "font-src 'self' data:",
+    `connect-src ${[...connectSources].join(' ')}`,
+    `frame-src ${[...frameSources].join(' ')}`,
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'self'"
+  ].join('; ');
+  res.setHeader('Content-Security-Policy', csp);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  if (SESSION_COOKIE_SECURE) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+}
+
+async function activeAdminSession(req) {
+  const session = verifySession(req);
+  if (!session) return null;
+  if (!session.sid) return null;
+  const active = await platformStore.isAdminSessionActive(session.sid).catch(() => false);
+  return active ? session : null;
+}
+
+/** 对状态变更的后台接口做来源校验（纵深防御，抗 CSRF）。 */
+function adminOriginAllowed(req, pathname) {
+  if (!['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method || '')) return true;
+  if (!pathname.startsWith('/site-admin-api/')) return true;
+  // 公开写入口有自己的来源白名单
+  if (pathname === '/site-admin-api/leads' || pathname === '/site-admin-api/analytics/visit') return true;
+  const origin = String(req.headers.origin || '').replace(/\/$/, '');
+  if (!origin) return true; // 命令行/自动化工具不带 Origin
+  return ADMIN_CORS_ALLOWED_ORIGINS.has(origin);
+}
+
 /** 托管 Arco 控制台；首页 index.html 由 SPA 自己决定跳登录还是工作台。 */
 async function serveAdminWeb(res) {
   const indexFile = path.join(ADMIN_WEB_DIST, 'index.html');
@@ -2432,6 +2540,7 @@ async function handleAdminApi(req, res, pathname) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    applySecurityHeaders(res);
     const url = new URL(req.url || '/', PUBLIC_ORIGIN);
     let pathname;
     try {
@@ -2486,6 +2595,41 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       send(res, 200, await adminMetrics(), { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8', 'Cache-Control': 'no-store' });
+      return;
+    }
+    // 会话已被撤销/过期时立即失效（改密、删除管理员、主动下线都会走到这里）。
+    if (parseCookies(req)[SESSION_COOKIE]) {
+      const session = verifySession(req);
+      const active = session ? await platformStore.isAdminSessionActive(session.sid).catch(() => false) : false;
+      if (!session || !active) {
+        clearSessionCookie(res);
+        if (pathname.startsWith('/site-admin-api/')) {
+          json(res, 401, { error: { message: '登录已失效，请重新登录。' } });
+          return;
+        }
+        if (pathname.startsWith('/site-admin/')) {
+          redirect(res, `/site-admin/login?returnTo=${encodeURIComponent(req.url || '/site-admin/')}`);
+          return;
+        }
+      }
+    }
+    // 状态变更接口的来源校验（抗 CSRF 纵深防御）。
+    if (!adminOriginAllowed(req, pathname)) {
+      const client = resolveAdminClient(req);
+      void recordSystemEvent({
+        category: 'security',
+        level: 'warning',
+        action: 'security.origin_rejected',
+        message: `来源不允许的写请求：${pathname}`,
+        method: req.method || '',
+        path: pathname,
+        ip: client.ip,
+        ipSource: client.source,
+        userAgent: String(req.headers['user-agent'] || ''),
+        statusCode: 403,
+        detail: { origin: String(req.headers.origin || '') }
+      });
+      json(res, 403, { error: { message: '请求来源不被允许。' } });
       return;
     }
     if (await handleAuth(req, res, pathname)) return;
@@ -2582,6 +2726,13 @@ const resumeLocales = translationService.locales.filter((locale) => {
   return !item || item.sourceRevision !== initialContentRecord.revision || ['pending', 'running'].includes(item.status);
 });
 if (resumeLocales.length) await translationService.schedule(initialContentRecord.content, initialContentRecord.revision, resumeLocales);
+void platformStore.pruneAdminSessions().catch(() => {});
+void platformStore.purgeSystemEvents({}).catch(() => {});
+setInterval(() => {
+  void platformStore.pruneAdminSessions().catch(() => {});
+  void platformStore.purgeSystemEvents({}).catch(() => {});
+}, 24 * 3600 * 1000).unref?.();
+
 server.listen(PORT, HOST, () => {
   console.log(`Astreva admin server listening on http://${HOST}:${PORT}`);
   console.log(`Login: http://${HOST}:${PORT}/admin-2fa`);

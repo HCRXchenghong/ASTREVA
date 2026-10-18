@@ -1,20 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import crypto from 'node:crypto';
+import { createAdminSession } from './test-session-helper.mjs';
 import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-
-const SECRET = 'analytics-system-test-secret';
-
-function sessionCookie(secret = SECRET) {
-  const payload = Buffer.from(
-    JSON.stringify({ userId: 'admin_test', email: 'admin@test.local', exp: Date.now() + 600000 })
-  ).toString('base64url');
-  const signature = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
-  return `${payload}.${signature}`;
-}
 
 async function waitFor(base, timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs;
@@ -41,7 +31,7 @@ test('访问埋点、数据汇总、系统日志与健康度', async () => {
       HOST: '127.0.0.1',
       CMS_STORE_DRIVER: 'json',
       ALLOW_LEGACY_STORAGE_FOR_TESTS: 'true',
-      ADMIN_2FA_SESSION_SECRET: SECRET,
+      ADMIN_2FA_SESSION_SECRET: 'analytics-system-test-secret',
       ADMIN_CORS_ALLOWED_ORIGINS: 'https://www.example.com',
       ADMIN_DATA_DIR: dataDir,
       ADMIN_UPLOAD_DIR: uploadDir,
@@ -51,7 +41,7 @@ test('访问埋点、数据汇总、系统日志与健康度', async () => {
     stdio: 'ignore'
   });
   const base = `http://127.0.0.1:${port}`;
-  const authHeaders = { Cookie: `astreva_admin_session=${encodeURIComponent(sessionCookie())}` };
+  let authHeaders = { Cookie: '' };
   const beaconHeaders = {
     'Content-Type': 'application/json',
     Origin: 'https://www.example.com',
@@ -61,6 +51,8 @@ test('访问埋点、数据汇总、系统日志与健康度', async () => {
 
   try {
     await waitFor(base);
+    const session = await createAdminSession(base);
+    authHeaders = { Cookie: session.cookieHeader };
 
     // 1) 公开埋点：允许来源可写，非允许来源拒绝
     const allowed = await fetch(`${base}/site-admin-api/analytics/visit`, {

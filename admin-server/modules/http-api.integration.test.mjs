@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createAdminSession } from './test-session-helper.mjs';
 import crypto from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
@@ -82,9 +83,8 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
     const localeRecommendation = await fetch(`${base}/site-admin-api/public-locale`, { headers: { 'CF-IPCountry': 'AE', 'Accept-Language': 'zh-CN' } });
     const unavailableEnglish = await fetch(`${base}/site-admin-api/public-content?locale=en`);
 
-    const sessionPayload = Buffer.from(JSON.stringify({ userId: 'test-admin', email: 'test@example.com', exp: Date.now() + 60_000 })).toString('base64url');
-    const sessionSignature = crypto.createHmac('sha256', 'http-api-test-session-secret').update(sessionPayload).digest('base64url');
-    const cookie = 'astreva_admin_session=' + encodeURIComponent(sessionPayload + '.' + sessionSignature);
+    // 会话现在带 sid 并由服务端校验，必须走真实的 2FA 绑定流程拿 Cookie。
+    const { cookieHeader: cookie } = await createAdminSession(base);
     const initialBootstrap = await (await fetch(base + '/site-admin-api/bootstrap', { headers: { Cookie: cookie } })).json();
     const nextContent = structuredClone(content.data);
     nextContent.site.brandTagline = '全量内容编辑测试';

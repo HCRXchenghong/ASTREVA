@@ -76,6 +76,101 @@ const isIndexable = !/noindex/i.test(robots);
       window.__ASTREVA_LOCALES__ = astrevaLocales;
       window.__ASTREVA_LOCALE_PATHS__ = astrevaLocalePaths;
     </script>
+    <!-- First-party analytics: consent-gated page view and event beacon. -->
+    <script is:inline define:vars={{ astrevaAnalyticsBase: PUBLIC_CONTENT_API_URL }}>
+      (() => {
+        const CONSENT_KEY = 'astreva_cookie_consent';
+        const VISITOR_KEY = 'astreva_visitor_id';
+        const SESSION_KEY = 'astreva_session_id';
+        const ENDPOINT = '/site-admin-api/analytics/visit';
+        // Only the optional analytics category is gated: without consent nothing
+        // is sent and no identifier is written to storage.
+        function analyticsAllowed() {
+          try {
+            const raw = localStorage.getItem(CONSENT_KEY);
+            if (!raw) return false;
+            if (raw === 'accepted') return true;
+            const parsed = JSON.parse(raw);
+            return !!(parsed && parsed.analytics === true);
+          } catch {
+            return false;
+          }
+        }
+        function identifier(storage, key) {
+          try {
+            const existing = storage.getItem(key);
+            if (existing) return existing;
+            const value = window.crypto && typeof window.crypto.randomUUID === 'function'
+              ? window.crypto.randomUUID()
+              : `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+            storage.setItem(key, value);
+            return value;
+          } catch {
+            return '';
+          }
+        }
+        function endpoint() {
+          const base = String(astrevaAnalyticsBase || '').replace(/\/$/, '');
+          return `${base}${ENDPOINT}`;
+        }
+        function send(payload) {
+          const body = JSON.stringify(payload);
+          try {
+            if (typeof navigator.sendBeacon === 'function') {
+              const blob = new Blob([body], { type: 'application/json' });
+              if (navigator.sendBeacon(endpoint(), blob)) return;
+            }
+          } catch {}
+          try {
+            fetch(endpoint(), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body,
+              keepalive: true,
+              mode: 'cors',
+              credentials: 'omit'
+            }).catch(() => {});
+          } catch {}
+        }
+        let pageviewSent = false;
+        function sendPageview() {
+          if (pageviewSent || !analyticsAllowed()) return;
+          pageviewSent = true;
+          send({
+            path: window.location.pathname,
+            referrer: document.referrer || '',
+            visitor_id: identifier(localStorage, VISITOR_KEY),
+            session_id: identifier(sessionStorage, SESSION_KEY),
+            event_type: 'pageview',
+            host: window.location.host
+          });
+        }
+        function track(eventType, detail) {
+          if (!analyticsAllowed()) return;
+          if (eventType === 'pageview') {
+            sendPageview();
+            return;
+          }
+          const extra = detail && typeof detail === 'object' ? detail : {};
+          send({
+            path: typeof extra.path === 'string' && extra.path ? extra.path : window.location.pathname,
+            referrer: typeof extra.referrer === 'string' && extra.referrer ? extra.referrer : document.referrer || '',
+            visitor_id: identifier(localStorage, VISITOR_KEY),
+            session_id: identifier(sessionStorage, SESSION_KEY),
+            event_type: eventType,
+            host: window.location.host
+          });
+        }
+        window.AstrevaTracking = { track };
+        sendPageview();
+        // Consent may arrive after this page loaded: flush the pending page view
+        // (and write the identifiers) as soon as analytics is accepted.
+        window.addEventListener('astreva:cookie-consent', (event) => {
+          const detail = event && event.detail;
+          if (detail && detail.analytics === true) sendPageview();
+        });
+      })();
+    </script>
     <title>{title}</title>
     <meta name="description" content={description} />
     <meta name="robots" content={robots} />

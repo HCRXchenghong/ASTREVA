@@ -1,12 +1,12 @@
 import { DEFAULT_LAYOUT } from '../base';
 
 export default {
-  path: '/workspace',
-  name: 'WorkspaceRoot',
+  path: '/dashboard',
+  name: 'DashboardRoot',
   component: DEFAULT_LAYOUT,
   meta: {
     title: '工作台',
-        locale: '工作台',
+    locale: '工作台',
     requiresAuth: true,
     icon: 'IconDashboard',
     order: 1,
@@ -16,10 +16,10 @@ export default {
     {
       path: '',
       name: 'Workspace',
-      component: () => import('@/views/workspace/index.vue'),
+      component: () => import('@/views/dashboard/index.vue'),
       meta: {
-        title: '实时工作台',
-        locale: '实时工作台',
+        title: '数据看板',
+        locale: '数据看板',
         requiresAuth: true,
       },
     },

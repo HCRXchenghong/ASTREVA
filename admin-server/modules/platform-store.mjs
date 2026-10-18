@@ -1075,6 +1075,90 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     }
   }
 
+  // ===== 二期：可撤销的管理员会话 =====
+  const memorySessions = new Map();
+
+  async function createAdminSession(session) {
+    const row = {
+      id: `sess_${crypto.randomUUID()}`,
+      userId: String(session.userId || ''),
+      email: String(session.email || ''),
+      ip: String(session.ip || '').slice(0, 64),
+      userAgent: String(session.userAgent || '').slice(0, 512),
+      expiresAt: new Date(session.expiresAt || Date.now() + 12 * 3600 * 1000).toISOString()
+    };
+    if (!usePostgres) {
+      memorySessions.set(row.id, row);
+      return row;
+    }
+    await query(
+      `INSERT INTO site_admin_sessions (id, user_id, email, ip, user_agent, expires_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [row.id, row.userId, row.email, row.ip, row.userAgent, row.expiresAt]
+    );
+    return row;
+  }
+
+  async function isAdminSessionActive(id) {
+    if (!id) return false;
+    if (!usePostgres) {
+      const row = memorySessions.get(id);
+      return Boolean(row && !row.revokedAt && new Date(row.expiresAt).getTime() > Date.now());
+    }
+    const result = await query(
+      `SELECT 1 FROM site_admin_sessions WHERE id = $1 AND revoked_at IS NULL AND expires_at > now()`,
+      [id]
+    );
+    if (!result.rows[0]) return false;
+    void query('UPDATE site_admin_sessions SET last_seen_at = now() WHERE id = $1', [id]).catch(() => {});
+    return true;
+  }
+
+  async function revokeAdminSession(id) {
+    if (!id) return;
+    if (!usePostgres) {
+      const row = memorySessions.get(id);
+      if (row) row.revokedAt = new Date().toISOString();
+      return;
+    }
+    await query('UPDATE site_admin_sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL', [id]);
+  }
+
+  async function revokeAdminSessionsForUser(userId) {
+    if (!userId) return 0;
+    if (!usePostgres) {
+      let count = 0;
+      for (const row of memorySessions.values()) {
+        if (row.userId === userId && !row.revokedAt) { row.revokedAt = new Date().toISOString(); count += 1; }
+      }
+      return count;
+    }
+    const result = await query('UPDATE site_admin_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+    return result.rowCount || 0;
+  }
+
+  async function pruneAdminSessions() {
+    if (!usePostgres) {
+      const now = Date.now();
+      for (const [id, row] of memorySessions) {
+        if (new Date(row.expiresAt).getTime() < now - 7 * 86400000) memorySessions.delete(id);
+      }
+      return;
+    }
+    await query(`DELETE FROM site_admin_sessions WHERE expires_at < now() - interval '7 days'`);
+  }
+
+  async function listAdminSessions(userId) {
+    if (!usePostgres) {
+      return [...memorySessions.values()].filter((row) => row.userId === userId && !row.revokedAt && new Date(row.expiresAt).getTime() > Date.now());
+    }
+    const result = await query(
+      `SELECT id, ip, user_agent, created_at, last_seen_at, expires_at FROM site_admin_sessions
+       WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now() ORDER BY created_at DESC`,
+      [userId]
+    );
+    return result.rows.map((row) => ({ id: row.id, ip: row.ip, userAgent: row.user_agent, createdAt: toIso(row.created_at), lastSeenAt: toIso(row.last_seen_at), expiresAt: toIso(row.expires_at) }));
+  }
+
   return {
     driver,
     init,
@@ -1119,6 +1203,12 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     systemEventById,
     purgeSystemEvents,
     dbHealth,
+    createAdminSession,
+    isAdminSessionActive,
+    revokeAdminSession,
+    revokeAdminSessionsForUser,
+    pruneAdminSessions,
+    listAdminSessions,
     migrateLegacyJson,
     legacyMediaDirectoryExists: () => existsSync(files.uploadDir)
   };

@@ -10,7 +10,7 @@ export default {
         locale: '内容管理',
     requiresAuth: true,
     icon: 'IconFile',
-    order: 5,
+    order: 3,
     hideInMenu: false,
   },
   children: [

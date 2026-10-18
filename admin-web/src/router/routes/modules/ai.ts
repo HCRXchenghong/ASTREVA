@@ -10,7 +10,7 @@ export default {
     locale: 'AI 管理',
     requiresAuth: true,
     icon: 'IconRobot',
-    order: 6,
+    order: 4,
     hideInMenu: false,
   },
   children: [

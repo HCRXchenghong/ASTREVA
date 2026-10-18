@@ -2,7 +2,7 @@
   <div class="not-found">
     <a-result status="404" title="页面不存在" subtitle="请检查地址，或从左侧菜单重新进入。">
       <template #extra>
-        <a-button type="primary" @click="router.replace('/workspace')">返回工作台</a-button>
+        <a-button type="primary" @click="router.replace('/dashboard')">返回工作台</a-button>
       </template>
     </a-result>
   </div>

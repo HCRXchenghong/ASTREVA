@@ -187,3 +187,34 @@ export const publishSite = (source = 'current') =>
 // 草稿预览：把编辑器当前内容构建到 /__preview/，不修改线上内容。
 export const requestPreview = (content: unknown) =>
   client.post('/site-admin-api/preview', { content }).then((r) => r.data);
+
+// ---------- 官网访问统计（数据看板） ----------
+export const fetchAnalyticsOverview = (params: {
+  tz: string;
+  month?: string;
+}) =>
+  client
+    .get('/site-admin-api/analytics/overview', { params })
+    .then((r) => r.data);
+
+export const fetchAnalyticsVisits = (params: Record<string, unknown> = {}) =>
+  client
+    .get('/site-admin-api/analytics/visits', { params })
+    .then((r) => r.data);
+
+// ---------- 系统健康 & 系统日志 ----------
+export const fetchSystemHealth = () =>
+  client.get('/site-admin-api/system/health').then((r) => r.data);
+
+export const fetchSystemEvents = (params: Record<string, unknown> = {}) =>
+  client
+    .get('/site-admin-api/system/events', { params })
+    .then((r) => r.data);
+
+export const fetchSystemEvent = (id: string) =>
+  client
+    .get(`/site-admin-api/system/events/${encodeURIComponent(id)}`)
+    .then((r) => r.data);
+
+export const purgeSystemEvents = () =>
+  client.post('/site-admin-api/system/events/purge').then((r) => r.data);
