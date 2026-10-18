@@ -9,7 +9,7 @@ export default {
     title: '运营',
         locale: '运营',
     requiresAuth: true,
-    icon: 'icon-bar-chart',
+    icon: 'IconBarChart',
     order: 3,
     hideInMenu: false,
   },

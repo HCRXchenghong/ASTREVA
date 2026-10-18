@@ -9,7 +9,7 @@ export default {
     title: '客服管理',
         locale: '客服管理',
     requiresAuth: true,
-    icon: 'icon-user-group',
+    icon: 'IconUserGroup',
     order: 2,
     hideInMenu: false,
   },

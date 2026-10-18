@@ -9,7 +9,6 @@ import {
 import { setToken, clearToken } from '@/utils/auth';
 import { removeRouteListener } from '@/utils/route-listener';
 import { UserState } from './types';
-import useAppStore from '../app';
 
 // 后台使用 admin-server 的 2FA Cookie 会话：localStorage 只保存“已登录”标记，
 // 真正的凭证是 HttpOnly Cookie，前端无法也不需要读取。
@@ -53,11 +52,9 @@ const useUserStore = defineStore('user', {
       return status.hasAdmin;
     },
     logoutCallBack() {
-      const appStore = useAppStore();
       this.resetInfo();
       clearToken();
       removeRouteListener();
-      appStore.clearServerMenu();
     },
     async logout() {
       try {

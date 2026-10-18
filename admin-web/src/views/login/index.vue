@@ -2,7 +2,7 @@
   <div class="login-page">
     <a-card class="login-card" :bordered="false">
       <div class="brand">
-        <img src="/assets/astreva-logo-transparent.png" alt="ASTREVA" />
+        <img :src="logoUrl" alt="ASTREVA" />
         <div>
           <h1>ASTREVA 统一后台</h1>
           <p>{{ isSetup ? '首次使用：创建管理员并绑定 2FA' : '管理员登录' }}</p>
@@ -62,6 +62,7 @@
   import useUserStore from '@/store/modules/user';
   import { DEFAULT_ROUTE } from '@/router/constants';
 
+  const logoUrl = `${import.meta.env.BASE_URL}assets/astreva-logo-transparent.png`;
   const router = useRouter();
   const route = useRoute();
   const userStore = useUserStore();

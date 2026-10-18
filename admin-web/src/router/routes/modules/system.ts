@@ -9,7 +9,7 @@ export default {
     title: '系统设置',
         locale: '系统设置',
     requiresAuth: true,
-    icon: 'icon-settings',
+    icon: 'IconSettings',
     order: 6,
     hideInMenu: false,
   },

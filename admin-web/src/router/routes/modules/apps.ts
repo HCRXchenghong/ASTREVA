@@ -9,7 +9,7 @@ export default {
     title: '应用管理',
         locale: '应用管理',
     requiresAuth: true,
-    icon: 'icon-mobile',
+    icon: 'IconMobile',
     order: 4,
     hideInMenu: false,
   },

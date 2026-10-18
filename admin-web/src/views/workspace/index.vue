@@ -3,7 +3,12 @@
     <a-grid :cols="4" :col-gap="12" :row-gap="12" class="cards">
       <a-grid-item v-for="card in cards" :key="card.label">
         <a-card :bordered="false">
-          <a-statistic :title="card.label" :value="card.value" :value-style="{ color: card.color }" />
+          <div class="stat">
+            <small>{{ card.label }}</small>
+            <strong :style="{ color: card.color }">
+              {{ card.value }}<span v-if="card.suffix">{{ card.suffix }}</span>
+            </strong>
+          </div>
         </a-card>
       </a-grid-item>
     </a-grid>
@@ -104,10 +109,20 @@
     );
   });
   const cards = computed(() => [
-    { label: '当前会话', value: dashboard.value.active_conversations || 0, color: '#165dff' },
-    { label: '等待人工', value: (dashboard.value.human_requested || 0) + (dashboard.value.waiting || 0), color: '#ff7d00' },
-    { label: '在线客服', value: dashboard.value.online_agents || 0, color: '#00b42a' },
-    { label: '满意度', value: `${Math.round((dashboard.value.rating?.satisfaction_rate || 0) * 100)}%`, color: '#0fc6c2' },
+    { label: '当前会话', value: Number(dashboard.value.active_conversations || 0), color: '#165dff', suffix: '' },
+    {
+      label: '等待人工',
+      value: Number(dashboard.value.human_requested || 0) + Number(dashboard.value.waiting || 0),
+      color: '#ff7d00',
+      suffix: '',
+    },
+    { label: '在线客服', value: Number(dashboard.value.online_agents || 0), color: '#00b42a', suffix: '' },
+    {
+      label: '满意度',
+      value: Math.round(Number(dashboard.value.rating?.satisfaction_rate || 0) * 100),
+      color: '#0fc6c2',
+      suffix: '%',
+    },
   ]);
 
   function conversationName(item: any) {
@@ -228,6 +243,23 @@
 <style scoped lang="less">
   .cards {
     margin-bottom: 12px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    small {
+      color: var(--color-text-3);
+      font-size: 13px;
+    }
+    strong {
+      font-size: 26px;
+      font-weight: 700;
+      span {
+        margin-left: 2px;
+        font-size: 16px;
+      }
+    }
   }
   .board {
     min-height: 560px;

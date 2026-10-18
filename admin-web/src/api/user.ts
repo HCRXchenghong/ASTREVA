@@ -53,7 +53,7 @@ export async function logout() {
   await client.post('/site-admin-auth/logout');
 }
 
-// 模板的守卫与用户态依赖这三个接口，保持签名兼容。
+// 控制台守卫与用户态依赖以下接口。
 export async function getUserInfo() {
   const status = await authStatus();
   return {
@@ -66,6 +66,3 @@ export async function getUserInfo() {
   };
 }
 
-export async function getMenuList() {
-  return { data: [] };
-}

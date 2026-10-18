@@ -8,7 +8,7 @@ export default {
     title: '工作台',
         locale: '工作台',
     requiresAuth: true,
-    icon: 'icon-dashboard',
+    icon: 'IconDashboard',
     order: 1,
     hideInMenu: false,
   },

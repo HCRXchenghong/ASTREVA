@@ -9,7 +9,7 @@ export default {
     title: '内容管理',
         locale: '内容管理',
     requiresAuth: true,
-    icon: 'icon-file',
+    icon: 'IconFile',
     order: 5,
     hideInMenu: false,
   },

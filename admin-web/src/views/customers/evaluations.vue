@@ -3,7 +3,10 @@
     <template #title>服务评价</template>
     <a-grid :cols="4" :col-gap="12" :row-gap="12" class="cards">
       <a-grid-item>
-        <a-statistic title="整体好评率" :value="percent(summary.satisfaction_rate)" />
+        <div class="stat">
+          <small>整体好评率</small>
+          <strong>{{ Math.round(Number(summary.satisfaction_rate || 0) * 100) }}<span>%</span></strong>
+        </div>
       </a-grid-item>
       <a-grid-item>
         <a-statistic title="评价总数" :value="summary.total || 0" />
@@ -100,6 +103,24 @@
 <style scoped>
   .cards {
     margin-bottom: 18px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    small {
+      color: var(--color-text-3);
+      font-size: 13px;
+    }
+    strong {
+      color: var(--color-text-1);
+      font-size: 26px;
+      font-weight: 700;
+      span {
+        margin-left: 2px;
+        font-size: 16px;
+      }
+    }
   }
   .section {
     margin: 16px 0 8px;
