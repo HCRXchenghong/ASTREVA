@@ -47,6 +47,7 @@ function cpuSnapshot() {
 export function createSystemRouter({
   platformStore,
   json,
+  bodyJson,
   verifySession,
   auditEvent,
   storagePaths = [],
@@ -148,6 +149,31 @@ export function createSystemRouter({
       return { label, ok: true, latencyMs: Date.now() - startedAt, detail: detail ?? null };
     } catch (error) {
       return { label, ok: false, latencyMs: Date.now() - startedAt, message: error?.message || String(error) };
+    }
+  }
+
+  /** 日志保留策略：事件默认 180 天（等保≥6 个月），访问明细默认 30 天。 */
+  function retentionPolicy(override = {}) {
+    const envEventDays = Number(process.env.ADMIN_LOG_EVENT_RETENTION_DAYS || 180);
+    const envVisitDays = Number(process.env.ADMIN_LOG_VISIT_RETENTION_DAYS || 30);
+    const pick = (value, fallback, min, max) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.min(Math.max(Math.trunc(parsed), min), max);
+    };
+    return {
+      eventDays: pick(override.event_days ?? override.eventDays, envEventDays, 30, 3650),
+      visitDays: pick(override.visit_days ?? override.visitDays, envVisitDays, 1, 365)
+    };
+  }
+
+  async function readJsonBody(req) {
+    if (typeof bodyJson !== 'function') return {};
+    try {
+      const payload = await bodyJson(req, 8 * 1024);
+      return payload?.data && typeof payload.data === 'object' ? payload.data : payload || {};
+    } catch {
+      return {};
     }
   }
 
@@ -274,10 +300,20 @@ export function createSystemRouter({
         json(res, 200, { data: { ...event, source: 'event' } });
         return true;
       }
+      if (pathname === '/site-admin-api/system/retention' && req.method === 'GET') {
+        json(res, 200, { data: retentionPolicy() });
+        return true;
+      }
       if (pathname === '/site-admin-api/system/events/purge' && req.method === 'POST') {
-        const result = await platformStore.purgeSystemEvents({});
-        await auditEvent?.(req, 'system.events.purged', 'system-events', '', result);
-        json(res, 200, { data: result });
+        // 保留天数可由请求覆盖（等保要求留存期明确、可审计），否则用环境变量默认值。
+        const body = await readJsonBody(req);
+        const policy = retentionPolicy(body);
+        const result = await platformStore.purgeSystemEvents({
+          eventDays: policy.eventDays,
+          visitDays: policy.visitDays
+        });
+        await auditEvent?.(req, 'system.events.purged', 'system-events', '', { ...result, ...policy });
+        json(res, 200, { data: { ...result, ...policy } });
         return true;
       }
       json(res, 404, { error: { message: '未知的系统接口。' } });

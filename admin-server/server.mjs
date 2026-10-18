@@ -1344,6 +1344,7 @@ const analyticsModule = createAnalyticsRouter({
 const systemModule = createSystemRouter({
   platformStore,
   json,
+  bodyJson,
   verifySession,
   auditEvent,
   storagePaths: [

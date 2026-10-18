@@ -116,9 +116,35 @@ test('访问埋点、数据汇总、系统日志与健康度', async () => {
     assert.ok(health.data.services.length >= 4);
     assert.equal(health.data.database.driver, 'json');
 
-    // 7) 手工清理保留策略接口可用
-    const purge = await fetch(`${base}/site-admin-api/system/events/purge`, { method: 'POST', headers: authHeaders });
+    // 7) 保留策略：读取默认值 + 手工清理可自定义天数
+    const retention = await (await fetch(`${base}/site-admin-api/system/retention`, { headers: authHeaders })).json();
+    assert.equal(retention.data.eventDays, 180, '事件默认保留 180 天（等保 ≥6 个月）');
+    assert.equal(retention.data.visitDays, 30);
+
+    const invalidPurge = await fetch(`${base}/site-admin-api/system/events/purge`, {
+      method: 'POST',
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_days: 1, visit_days: 9999 })
+    });
+    assert.equal(invalidPurge.status, 200);
+    const invalidBody = await invalidPurge.json();
+    assert.equal(invalidBody.data.eventDays, 30, '事件保留天数下限收敛到 30 天');
+    assert.equal(invalidBody.data.visitDays, 365, '访问明细保留天数上限收敛到 365 天');
+
+    const purge = await fetch(`${base}/site-admin-api/system/events/purge`, {
+      method: 'POST',
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_days: 365, visit_days: 90 })
+    });
     assert.equal(purge.status, 200);
+    const purgeBody = await purge.json();
+    assert.equal(purgeBody.data.eventDays, 365);
+    assert.equal(purgeBody.data.visitDays, 90);
+    assert.ok(Number.isFinite(purgeBody.data.removedEvents));
+
+    // 8) 未登录不能读保留策略
+    const retentionUnauthorized = await fetch(`${base}/site-admin-api/system/retention`);
+    assert.equal(retentionUnauthorized.status, 401);
   } finally {
     server.kill('SIGTERM');
     await new Promise((resolve) => server.once('exit', resolve));
