@@ -211,6 +211,43 @@ class ServiceBridgeClient {
     return RatingSummary.fromJson(Map<String, dynamic>.from(payload));
   }
 
+  /// 读取客服自己的翻译 / AI 偏好（`GET /api/agent/preferences`）。
+  Future<AgentPreferences> preferences() async {
+    final payload = await _request('GET', '/api/agent/preferences');
+    return AgentPreferences.fromJson(
+      Map<String, dynamic>.from(payload['preferences'] as Map? ?? {}),
+    );
+  }
+
+  /// 局部更新偏好：只提交 [patch] 中显式赋值的字段；非法值后端返回 400，
+  /// 由 [ServiceBridgeException.message] 原样带出给界面展示。
+  Future<AgentPreferences> updatePreferences(
+    AgentPreferencesPatch patch,
+  ) async {
+    final payload = await _request(
+      'PATCH',
+      '/api/agent/preferences',
+      body: patch.toJson(),
+    );
+    return AgentPreferences.fromJson(
+      Map<String, dynamic>.from(payload['preferences'] as Map? ?? {}),
+    );
+  }
+
+  /// 发送前译文预览：只翻译，不发送任何消息。
+  /// 翻译上游失败时后端返回 502，这里按普通请求错误抛出。
+  Future<TranslationPreview> translatePreview({
+    required String conversationId,
+    required String content,
+  }) async {
+    final payload = await _request(
+      'POST',
+      '/api/agent/translate-preview',
+      body: {'conversation_id': conversationId, 'content': content},
+    );
+    return TranslationPreview.fromJson(payload);
+  }
+
   /// 公开接口：拉取服务端下发的 Firebase / 推送开关配置（B1）。
   /// 网络失败或响应异常时抛出 [ServiceBridgeException]，由调用方决定是否忽略。
   Future<AppConfig> appConfig() async {

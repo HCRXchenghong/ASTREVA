@@ -518,6 +518,10 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   late AgentProfile _profile;
+
+  /// T1/T2/T3：偏好由 HomePage 统一持有，会话页与偏好页共享同一份状态，
+  /// 因此在偏好页改完之后，已打开的会话页会立即刷新（例如 T3 的常驻提示）。
+  late final AgentPreferencesController _preferences;
   List<Conversation> _conversations = const [];
   StreamSubscription<Map<String, dynamic>>? _events;
   Timer? _pollTimer;
@@ -530,6 +534,10 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _profile = widget.profile;
+    _preferences = AgentPreferencesController(widget.client);
+    // 登录后立刻拉一次偏好；失败时保留默认值（5 项均为 true / standard），
+    // 偏好页里还有一次 GET 回填与失败提示。
+    unawaited(_preferences.load());
     // B2：任何请求命中 401 时统一清理本地状态并跳回登录页。
     widget.client.onUnauthorized = _handleUnauthorized;
     _loadRating();
@@ -635,10 +643,21 @@ class _HomePageState extends State<HomePage> {
           client: widget.client,
           conversation: conversation,
           myAvatarUrl: _profile.avatarUrl,
+          preferences: _preferences,
         ),
       ),
     );
     if (mounted && !_sessionExpired) _refresh(silent: true);
+  }
+
+  /// T1：打开「我的偏好 / 翻译设置」。
+  Future<void> _openPreferences() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PreferencesPage(controller: _preferences),
+      ),
+    );
+    // 返回后无需重启 App：_preferences 是同一份状态，会话页在监听它。
   }
 
   void _handleEvent(Map<String, dynamic> event) {
@@ -741,6 +760,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _pollTimer?.cancel();
     _events?.cancel();
+    _preferences.dispose();
     widget.client.onUnauthorized = null;
     if (!_sessionExpired) {
       widget.client.setStatus('offline').catchError((_) => _profile);
@@ -785,6 +805,7 @@ class _HomePageState extends State<HomePage> {
               context: context,
               builder: (_) => ChangePasswordDialog(client: widget.client),
             ),
+            onOpenPreferences: _openPreferences,
             onLogout: _logout,
           ),
         ],
@@ -1084,6 +1105,7 @@ class MePage extends StatelessWidget {
     required this.onPickAvatar,
     required this.onStatusChanged,
     required this.onChangePassword,
+    required this.onOpenPreferences,
     required this.onLogout,
   });
   final AgentProfile profile;
@@ -1095,6 +1117,7 @@ class MePage extends StatelessWidget {
   final VoidCallback onPickAvatar;
   final ValueChanged<String> onStatusChanged;
   final VoidCallback onChangePassword;
+  final VoidCallback onOpenPreferences;
   final VoidCallback onLogout;
 
   @override
@@ -1208,6 +1231,13 @@ class MePage extends StatelessWidget {
                   icon: Icons.lock_outline,
                   title: '修改密码',
                   onTap: onChangePassword,
+                ),
+                const Divider(height: 1, indent: 52),
+                // T1：翻译 / AI 偏好的入口，和"修改密码"同属账号级设置。
+                _MeMenuTile(
+                  icon: Icons.translate_outlined,
+                  title: '我的偏好',
+                  onTap: onOpenPreferences,
                 ),
               ],
             ),
@@ -1390,10 +1420,12 @@ class ChatPage extends StatefulWidget {
     super.key,
     required this.client,
     required this.conversation,
+    required this.preferences,
     this.myAvatarUrl,
   });
   final ServiceBridgeClient client;
   final Conversation conversation;
+  final AgentPreferencesController preferences;
   final String? myAvatarUrl;
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -1411,6 +1443,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _loading = true;
   bool _sendingImage = false;
   bool _loadingOlder = false;
+  bool _preparingSend = false;
   bool _hasMore = false;
   String _nextBefore = '';
   String _status = 'waiting';
@@ -1419,12 +1452,17 @@ class _ChatPageState extends State<ChatPage> {
 
   bool get _closed => _status == 'closed';
 
+  AgentPreferences get _preferences => widget.preferences.preferences;
+
   @override
   void initState() {
     super.initState();
     _status = widget.conversation.status;
     _visitorLabel = widget.conversation.visitorLabel;
     _events = widget.client.events.listen(_handleEvent);
+    // T3：偏好在偏好页被改动后立刻反映到本页的输入区提示。
+    widget.preferences.addListener(_onPreferencesChanged);
+    unawaited(widget.preferences.load());
     _messageController.addListener(_onTypingChanged);
     _scrollController.addListener(_onScroll);
     _loadMessages();
@@ -1564,18 +1602,91 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  void _sendText() {
+  void _onPreferencesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// 真正把文本交给实时通道（发送原文 / 发送编辑后的译文都走这里）。
+  void _sendContent(String content) {
     try {
-      widget.client.sendMessage(
-        widget.conversation.id,
-        _messageController.text,
-      );
+      widget.client.sendMessage(widget.conversation.id, content);
       widget.client.sendTyping(widget.conversation.id, typing: false);
       _messageController.clear();
     } catch (error) {
       _showMessage(context, _readableError(error));
     }
   }
+
+  /// T2：开启「发送前确认译文」时先取预览再发送。
+  /// 关闭时不调 preview（避免多余上游调用），直接发送原文由服务端翻译。
+  Future<void> _sendText() async {
+    if (_closed || _preparingSend) return;
+    final original = _messageController.text.trim();
+    if (original.isEmpty) return;
+    if (!_preferences.reviewTranslationBeforeSend) {
+      _sendContent(original);
+      return;
+    }
+    setState(() => _preparingSend = true);
+    try {
+      final preview = await widget.client.translatePreview(
+        conversationId: widget.conversation.id,
+        content: original,
+      );
+      if (!mounted) return;
+      // 源语言与目标语言一致：无需确认，直接发送。
+      if (preview.sameLanguage) {
+        _sendContent(original);
+        return;
+      }
+      final text = await _showTranslationPreview(preview, original: original);
+      if (text == null || !mounted) return;
+      _sendContent(text);
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      if (!mounted) return;
+      // 502 等失败不卡住客服：提示后仍可继续发送原文。
+      final sendOriginal = await _confirmSendOriginal(_readableError(error));
+      if (sendOriginal && mounted) _sendContent(original);
+    } finally {
+      if (mounted) setState(() => _preparingSend = false);
+    }
+  }
+
+  /// T2：译文本预览弹窗；返回 null 表示取消，返回文本表示要发送的内容。
+  Future<String?> _showTranslationPreview(
+    TranslationPreview preview, {
+    required String original,
+  }) => showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadii.card)),
+    ),
+    builder: (_) =>
+        _TranslationPreviewSheet(preview: preview, original: original),
+  );
+
+  Future<bool> _confirmSendOriginal(String detail) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('译文生成失败'),
+          content: Text('译文生成失败，可直接发送原文。\n\n$detail'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('发送原文'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
 
   Future<void> _sendImage() async {
     final image = await _picker.pickImage(
@@ -1729,6 +1840,7 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void dispose() {
     _events?.cancel();
+    widget.preferences.removeListener(_onPreferencesChanged);
     _messageController.removeListener(_onTypingChanged);
     _scrollController.removeListener(_onScroll);
     _messageController.dispose();
@@ -1808,47 +1920,64 @@ class _ChatPageState extends State<ChatPage> {
           ),
           SafeArea(
             top: false,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
-              decoration: const BoxDecoration(
-                color: AppColors.surface,
-                border: Border(top: BorderSide(color: AppColors.border)),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: closed || _sendingImage ? null : _sendImage,
-                    icon: _sendingImage
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.add_photo_alternate_outlined),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // T3：关闭出向自动翻译时常驻的浅色提示。
+                if (!_preferences.autoTranslateOutgoing)
+                  const _NoAutoTranslateHint(),
+                Container(
+                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+                  decoration: const BoxDecoration(
+                    color: AppColors.surface,
+                    border: Border(top: BorderSide(color: AppColors.border)),
                   ),
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      minLines: 1,
-                      maxLines: 5,
-                      enabled: !closed,
-                      onSubmitted: (_) => _sendText(),
-                      decoration: InputDecoration(
-                        hintText: closed ? '会话已结束' : '输入回复...',
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 11,
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: closed || _sendingImage ? null : _sendImage,
+                        icon: _sendingImage
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.add_photo_alternate_outlined),
+                      ),
+                      Expanded(
+                        child: TextField(
+                          controller: _messageController,
+                          minLines: 1,
+                          maxLines: 5,
+                          enabled: !closed,
+                          onSubmitted: (_) => _sendText(),
+                          decoration: InputDecoration(
+                            hintText: closed ? '会话已结束' : '输入回复...',
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 11,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        onPressed: closed || _preparingSend ? null : _sendText,
+                        icon: _preparingSend
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.send_rounded),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: closed ? null : _sendText,
-                    icon: const Icon(Icons.send_rounded),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ],
@@ -2238,6 +2367,684 @@ String? _translationHintFor(ChatMessage message, {required bool isMine}) {
   }
   if (parts.isEmpty) return null;
   return parts.join(' · ');
+}
+
+/// T3：自动翻译已关闭时，输入框上方的常驻提示。
+class _NoAutoTranslateHint extends StatelessWidget {
+  const _NoAutoTranslateHint();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    color: AppColors.warning.withValues(alpha: .10),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+    child: const Row(
+      children: [
+        Icon(Icons.info_outline, size: 14, color: AppColors.warning),
+        SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            '自动翻译已关闭 · 对方将看到你的原文',
+            style: TextStyle(fontSize: 12, color: AppColors.warning),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// T2：发送前确认译文的底部弹窗。
+/// 返回 `发送译文` 的文本、`发送原文` 的原文，取消时返回 null。
+class _TranslationPreviewSheet extends StatefulWidget {
+  const _TranslationPreviewSheet({
+    required this.preview,
+    required this.original,
+  });
+
+  final TranslationPreview preview;
+  final String original;
+
+  @override
+  State<_TranslationPreviewSheet> createState() =>
+      _TranslationPreviewSheetState();
+}
+
+class _TranslationPreviewSheetState extends State<_TranslationPreviewSheet> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.preview.translatedText);
+    // 译文可编辑，按钮可用状态跟随输入内容。
+    _controller.addListener(_onChanged);
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_onChanged);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = languageLabelFor(widget.preview.targetLang);
+    final dialect = widget.preview.dialect;
+    final text = _controller.text.trim();
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.translate,
+                    size: 20,
+                    color: AppColors.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      label.isEmpty ? '发送前确认译文' : '翻译成$label',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (dialect.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '方言：$dialect',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              TextField(
+                controller: _controller,
+                minLines: 3,
+                maxLines: 6,
+                decoration: const InputDecoration(labelText: '译文（可修改）'),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(AppRadii.input),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '原文',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      widget.original,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        height: 1.4,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('取消'),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(widget.original),
+                    child: const Text('发送原文'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: text.isEmpty
+                        ? null
+                        : () => Navigator.of(context).pop(text),
+                    child: const Text('发送译文'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// T1/T2/T3 的偏好单一数据源：一处修改，全 App 生效。
+class AgentPreferencesController extends ChangeNotifier {
+  AgentPreferencesController(this._client);
+
+  final ServiceBridgeClient _client;
+  AgentPreferences _preferences = AgentPreferences.defaults;
+  bool _loaded = false;
+  bool _loading = false;
+  bool _saving = false;
+  String? _error;
+  bool _disposed = false;
+
+  AgentPreferences get preferences => _preferences;
+  bool get loaded => _loaded;
+  bool get loading => _loading;
+  bool get saving => _saving;
+
+  /// 最近一次读写失败的可展示文案（后端 message 原样带出）。
+  String? get error => _error;
+
+  void _notify() {
+    if (_disposed) return;
+    notifyListeners();
+  }
+
+  /// 拉取偏好。[force] 为 true 时即使已有缓存也重新 GET。
+  /// 返回是否成功；失败时保留上一次可用值，错误见 [error]。
+  Future<bool> load({bool force = false}) async {
+    if (_loading) return _loaded;
+    if (_loaded && !force) return true;
+    _loading = true;
+    _error = null;
+    _notify();
+    try {
+      _preferences = await _client.preferences();
+      _loaded = true;
+      return true;
+    } catch (error) {
+      _error = _readableError(error);
+      return false;
+    } finally {
+      _loading = false;
+      _notify();
+    }
+  }
+
+  /// 乐观更新：先按新值刷 UI，PATCH 成功后用服务端返回值覆盖，
+  /// 失败（如非法 dialect 的 400）则回滚并返回错误文案。返回 null 表示成功。
+  Future<String?> update({
+    bool? autoTranslateIncoming,
+    bool? autoTranslateOutgoing,
+    bool? reviewTranslationBeforeSend,
+    String? translationDialectMode,
+    bool? aiSuggestReplies,
+  }) async {
+    if (_saving) return null;
+    final patch = AgentPreferencesPatch(
+      autoTranslateIncoming: autoTranslateIncoming,
+      autoTranslateOutgoing: autoTranslateOutgoing,
+      reviewTranslationBeforeSend: reviewTranslationBeforeSend,
+      translationDialectMode: translationDialectMode,
+      aiSuggestReplies: aiSuggestReplies,
+    );
+    if (patch.isEmpty) return null;
+    final previous = _preferences;
+    _preferences = previous.copyWith(
+      autoTranslateIncoming: autoTranslateIncoming,
+      autoTranslateOutgoing: autoTranslateOutgoing,
+      reviewTranslationBeforeSend: reviewTranslationBeforeSend,
+      translationDialectMode: translationDialectMode,
+      aiSuggestReplies: aiSuggestReplies,
+    );
+    _saving = true;
+    _error = null;
+    _notify();
+    try {
+      _preferences = await _client.updatePreferences(patch);
+      _loaded = true;
+      return null;
+    } catch (error) {
+      _preferences = previous;
+      _error = _readableError(error);
+      return _error;
+    } finally {
+      _saving = false;
+      _notify();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+}
+
+/// T1：「我的偏好 / 翻译设置」界面。打开时 GET 回填，改动即时 PATCH 保存。
+class PreferencesPage extends StatefulWidget {
+  const PreferencesPage({super.key, required this.controller});
+
+  final AgentPreferencesController controller;
+
+  @override
+  State<PreferencesPage> createState() => _PreferencesPageState();
+}
+
+class _PreferencesPageState extends State<PreferencesPage> {
+  @override
+  void initState() {
+    super.initState();
+    // 打开界面时重新 GET 一次，保证回填的是服务端最新值。
+    unawaited(_reload());
+  }
+
+  Future<void> _reload() async {
+    final ok = await widget.controller.load(force: true);
+    if (!mounted || ok) return;
+    final message = widget.controller.error;
+    if (message != null && message.isNotEmpty) {
+      _showMessage(context, '偏好加载失败：$message');
+    }
+  }
+
+  Future<void> _save({
+    bool? autoTranslateIncoming,
+    bool? autoTranslateOutgoing,
+    bool? reviewTranslationBeforeSend,
+    String? translationDialectMode,
+    bool? aiSuggestReplies,
+  }) async {
+    final error = await widget.controller.update(
+      autoTranslateIncoming: autoTranslateIncoming,
+      autoTranslateOutgoing: autoTranslateOutgoing,
+      reviewTranslationBeforeSend: reviewTranslationBeforeSend,
+      translationDialectMode: translationDialectMode,
+      aiSuggestReplies: aiSuggestReplies,
+    );
+    if (!mounted) return;
+    if (error == null) {
+      _showMessage(context, '偏好已保存');
+    } else {
+      // 不静默失败：400 等错误直接展示后端 message，UI 已由 controller 回滚。
+      _showMessage(context, '保存失败：$error');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) {
+        final controller = widget.controller;
+        final preferences = controller.preferences;
+        final enabled = !controller.saving;
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text(
+              '我的偏好',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            actions: [
+              if (controller.saving)
+                const Padding(
+                  padding: EdgeInsets.only(right: 16),
+                  child: Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          body: !controller.loaded
+              ? controller.loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _PreferencesErrorState(
+                        message: controller.error ?? '偏好加载失败',
+                        onRetry: () => unawaited(_reload()),
+                      )
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+                  children: [
+                    const _PreferencesSectionLabel('翻译设置'),
+                    Container(
+                      decoration: AppTheme.cardDecoration(),
+                      child: Column(
+                        children: [
+                          _PreferenceSwitchTile(
+                            icon: Icons.translate,
+                            title: '访客消息自动翻译成中文',
+                            description: '开启后访客消息先翻译成中文再展示；关闭则只看到对方原文。',
+                            value: preferences.autoTranslateIncoming,
+                            onChanged: enabled
+                                ? (value) => _save(autoTranslateIncoming: value)
+                                : null,
+                          ),
+                          const Divider(height: 1, indent: 52),
+                          _PreferenceSwitchTile(
+                            icon: Icons.send_outlined,
+                            title: '我的消息自动翻译成访客语言',
+                            description: '关闭后对方将看到你输入的原文，请自行确认对方能看懂。',
+                            value: preferences.autoTranslateOutgoing,
+                            onChanged: enabled
+                                ? (value) => _save(autoTranslateOutgoing: value)
+                                : null,
+                          ),
+                          const Divider(height: 1, indent: 52),
+                          _PreferenceSwitchTile(
+                            icon: Icons.fact_check_outlined,
+                            title: '发送前确认译文',
+                            description: '发送前先展示译文供你确认和修改；关闭则直接发送原文，由服务端自动翻译。',
+                            value: preferences.reviewTranslationBeforeSend,
+                            onChanged: enabled
+                                ? (value) =>
+                                      _save(reviewTranslationBeforeSend: value)
+                                : null,
+                          ),
+                          const Divider(height: 1, indent: 52),
+                          _PreferenceBlock(
+                            icon: Icons.record_voice_over_outlined,
+                            title: '翻译风格',
+                            description: '含方言时按访客所在地的用词习惯翻译，例如拉丁美洲西班牙语。',
+                            child: _DialectModeSelector(
+                              mode: preferences.translationDialectMode,
+                              onChanged: enabled
+                                  ? (value) =>
+                                        _save(translationDialectMode: value)
+                                  : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    const _PreferencesSectionLabel('AI 助手'),
+                    Container(
+                      decoration: AppTheme.cardDecoration(),
+                      child: _PreferenceSwitchTile(
+                        icon: Icons.smart_toy_outlined,
+                        title: 'AI 推荐回复',
+                        description: '开启后由 AI 生成可直接发送的推荐回复内容，供你参考和引用。',
+                        value: preferences.aiSuggestReplies,
+                        onChanged: enabled
+                            ? (value) => _save(aiSuggestReplies: value)
+                            : null,
+                      ),
+                    ),
+                    if (controller.error != null) ...[
+                      const SizedBox(height: 14),
+                      _PreferencesInlineError(message: controller.error!),
+                    ],
+                    const SizedBox(height: 18),
+                    const Text(
+                      '偏好只对当前客服账号生效，修改后立即同步到服务端。',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _PreferencesSectionLabel extends StatelessWidget {
+  const _PreferencesSectionLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(left: 4, bottom: 8),
+    child: Text(
+      text,
+      style: const TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w700,
+        color: AppColors.textSecondary,
+      ),
+    ),
+  );
+}
+
+class _PreferenceSwitchTile extends StatelessWidget {
+  const _PreferenceSwitchTile({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) => SwitchListTile(
+    value: value,
+    onChanged: onChanged,
+    activeThumbColor: AppColors.primary,
+    secondary: Icon(icon, color: AppColors.textSecondary),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+    title: Text(
+      title,
+      style: const TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w600,
+        color: AppColors.textPrimary,
+      ),
+    ),
+    subtitle: Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Text(
+        description,
+        style: const TextStyle(
+          fontSize: 12,
+          height: 1.3,
+          color: AppColors.textSecondary,
+        ),
+      ),
+    ),
+  );
+}
+
+class _PreferenceBlock extends StatelessWidget {
+  const _PreferenceBlock({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.child,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 22, color: AppColors.textSecondary),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          description,
+          style: const TextStyle(
+            fontSize: 12,
+            height: 1.3,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 12),
+        child,
+      ],
+    ),
+  );
+}
+
+/// 翻译风格二选一：标准语 / 含方言。
+class _DialectModeSelector extends StatelessWidget {
+  const _DialectModeSelector({required this.mode, required this.onChanged});
+
+  final String mode;
+
+  /// 为 null 时禁用点选（保存中）。
+  final ValueChanged<String>? onChanged;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(3),
+    decoration: BoxDecoration(
+      color: AppColors.primarySoft,
+      borderRadius: BorderRadius.circular(AppRadii.input),
+    ),
+    child: Row(
+      children: [
+        _option(AgentPreferences.dialectModeStandard, '标准语'),
+        _option(AgentPreferences.dialectModeDialect, '含方言'),
+      ],
+    ),
+  );
+
+  Widget _option(String value, String label) {
+    final selected = mode == value;
+    return Expanded(
+      child: InkWell(
+        onTap: onChanged == null || selected ? null : () => onChanged!(value),
+        borderRadius: BorderRadius.circular(AppRadii.input - 2),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.surface : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadii.input - 2),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected ? AppColors.primary : AppColors.textSecondary,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PreferencesInlineError extends StatelessWidget {
+  const _PreferencesInlineError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    decoration: BoxDecoration(
+      color: AppColors.danger.withValues(alpha: .08),
+      borderRadius: BorderRadius.circular(AppRadii.input),
+      border: Border.all(color: AppColors.danger.withValues(alpha: .3)),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.error_outline, size: 16, color: AppColors.danger),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            '部分设置未同步：$message',
+            style: const TextStyle(fontSize: 12, color: AppColors.danger),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _PreferencesErrorState extends StatelessWidget {
+  const _PreferencesErrorState({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.cloud_off_outlined,
+            size: 56,
+            color: AppColors.textFaint,
+          ),
+          const SizedBox(height: 14),
+          const Text('偏好加载失败', style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 18),
+          FilledButton(onPressed: onRetry, child: const Text('重试')),
+        ],
+      ),
+    ),
+  );
 }
 
 class ChangePasswordDialog extends StatefulWidget {

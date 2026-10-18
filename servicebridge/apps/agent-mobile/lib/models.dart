@@ -152,6 +152,142 @@ class ChatMessage {
   );
 }
 
+/// 客服自己的翻译 / AI 偏好（`GET|PATCH /api/agent/preferences`）。
+class AgentPreferences {
+  const AgentPreferences({
+    required this.autoTranslateIncoming,
+    required this.autoTranslateOutgoing,
+    required this.reviewTranslationBeforeSend,
+    required this.translationDialectMode,
+    required this.aiSuggestReplies,
+  });
+
+  factory AgentPreferences.fromJson(Map<String, dynamic> json) {
+    final mode = '${json['translation_dialect_mode'] ?? ''}'
+        .trim()
+        .toLowerCase();
+    return AgentPreferences(
+      // 字段缺失或类型异常时按服务端默认值 true 处理。
+      autoTranslateIncoming: json['auto_translate_incoming'] != false,
+      autoTranslateOutgoing: json['auto_translate_outgoing'] != false,
+      reviewTranslationBeforeSend:
+          json['review_translation_before_send'] != false,
+      translationDialectMode: mode == dialectModeDialect
+          ? dialectModeDialect
+          : dialectModeStandard,
+      aiSuggestReplies: json['ai_suggest_replies'] != false,
+    );
+  }
+
+  static const String dialectModeStandard = 'standard';
+  static const String dialectModeDialect = 'dialect';
+
+  /// 服务端默认值：5 项均为 true / standard。
+  static const AgentPreferences defaults = AgentPreferences(
+    autoTranslateIncoming: true,
+    autoTranslateOutgoing: true,
+    reviewTranslationBeforeSend: true,
+    translationDialectMode: dialectModeStandard,
+    aiSuggestReplies: true,
+  );
+
+  final bool autoTranslateIncoming;
+  final bool autoTranslateOutgoing;
+  final bool reviewTranslationBeforeSend;
+
+  /// 翻译风格：standard（标准语）/ dialect（含方言）。
+  final String translationDialectMode;
+  final bool aiSuggestReplies;
+
+  bool get usesDialect => translationDialectMode == dialectModeDialect;
+
+  AgentPreferences copyWith({
+    bool? autoTranslateIncoming,
+    bool? autoTranslateOutgoing,
+    bool? reviewTranslationBeforeSend,
+    String? translationDialectMode,
+    bool? aiSuggestReplies,
+  }) => AgentPreferences(
+    autoTranslateIncoming: autoTranslateIncoming ?? this.autoTranslateIncoming,
+    autoTranslateOutgoing: autoTranslateOutgoing ?? this.autoTranslateOutgoing,
+    reviewTranslationBeforeSend:
+        reviewTranslationBeforeSend ?? this.reviewTranslationBeforeSend,
+    translationDialectMode:
+        translationDialectMode ?? this.translationDialectMode,
+    aiSuggestReplies: aiSuggestReplies ?? this.aiSuggestReplies,
+  );
+}
+
+/// 偏好局部更新体：只把显式赋值的字段写入 JSON，未提供的字段服务端保持原值。
+class AgentPreferencesPatch {
+  const AgentPreferencesPatch({
+    this.autoTranslateIncoming,
+    this.autoTranslateOutgoing,
+    this.reviewTranslationBeforeSend,
+    this.translationDialectMode,
+    this.aiSuggestReplies,
+  });
+
+  final bool? autoTranslateIncoming;
+  final bool? autoTranslateOutgoing;
+  final bool? reviewTranslationBeforeSend;
+  final String? translationDialectMode;
+  final bool? aiSuggestReplies;
+
+  bool get isEmpty =>
+      autoTranslateIncoming == null &&
+      autoTranslateOutgoing == null &&
+      reviewTranslationBeforeSend == null &&
+      translationDialectMode == null &&
+      aiSuggestReplies == null;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    if (autoTranslateIncoming != null)
+      'auto_translate_incoming': autoTranslateIncoming,
+    if (autoTranslateOutgoing != null)
+      'auto_translate_outgoing': autoTranslateOutgoing,
+    if (reviewTranslationBeforeSend != null)
+      'review_translation_before_send': reviewTranslationBeforeSend,
+    if (translationDialectMode != null)
+      'translation_dialect_mode': translationDialectMode,
+    if (aiSuggestReplies != null) 'ai_suggest_replies': aiSuggestReplies,
+  };
+}
+
+/// 发送前译文预览（`POST /api/agent/translate-preview`）：只翻译，不产生消息。
+class TranslationPreview {
+  const TranslationPreview({
+    required this.targetLang,
+    required this.sourceLang,
+    required this.translatedText,
+    this.dialect = '',
+  });
+
+  factory TranslationPreview.fromJson(Map<String, dynamic> json) =>
+      TranslationPreview(
+        targetLang: '${json['target_lang'] ?? ''}'.trim(),
+        sourceLang: '${json['source_lang'] ?? ''}'.trim(),
+        translatedText: '${json['translated_text'] ?? ''}',
+        dialect: '${json['dialect'] ?? ''}'.trim(),
+      );
+
+  final String targetLang;
+  final String sourceLang;
+  final String translatedText;
+
+  /// 会话检测到的方言标签（如 es-419），标准语模式下为空。
+  final String dialect;
+
+  /// 源语言与目标语言一致时后端原样返回，界面上无需再确认译文。
+  /// 响应缺字段时同样按"无需确认"处理，避免卡住发送。
+  bool get sameLanguage {
+    final source = sourceLang.toLowerCase();
+    final target = targetLang.toLowerCase();
+    if (source.isEmpty || target.isEmpty) return true;
+    return source == target;
+  }
+}
+
 class RatingSummary {
   const RatingSummary({
     required this.total,
