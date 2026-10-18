@@ -59,7 +59,7 @@ test('静态资源路由拒绝目录穿越，且不影响正常资源', async ()
     // 正常静态资源必须仍然可访问。
     const logo = await request(port, '/assets/astreva-logo.png');
     assert.equal(logo.status, 200);
-    const adminAsset = await request(port, '/site-admin-assets/unified-admin.js');
+    const adminAsset = await request(port, '/site-admin-assets/api-docs.js');
     assert.equal(adminAsset.status, 200);
 
     // 目录穿越必须被拒绝（403），绝不能返回仓库/容器内的文件内容。

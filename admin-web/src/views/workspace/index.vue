@@ -44,6 +44,9 @@
             <a-tag v-else-if="current" color="gray">已结束</a-tag>
           </div>
           <div ref="messageBox" class="messages">
+            <div v-if="hasMore" class="load-older">
+              <a-link @click="loadOlder">加载更早消息</a-link>
+            </div>
             <div v-for="message in messages" :key="message.server_msg_id" class="message" :class="message.sender_type">
               <div class="bubble">
                 <template v-if="message.message_type === 'image' || message.message_type === 'audio'">
@@ -88,6 +91,8 @@
   const transferVisible = ref(false);
   const transferAgentId = ref('');
   const transferOptions = ref<Array<{ label: string; value: string }>>([]);
+  const hasMore = ref(false);
+  const nextBefore = ref('');
   let timer: number | undefined;
 
   const current = computed(() => conversations.value.find((item) => item.id === currentId.value));
@@ -135,7 +140,8 @@
   }
   function assetUrl(value: string) {
     if (!value) return '';
-    return value.startsWith('/') ? value : value;
+    // 客服引擎上传的相对路径需要经后台同源代理回显；绝对地址直接使用。
+    return value.startsWith('/uploads/') ? `/site-admin-api/servicebridge${value}` : value;
   }
 
   async function load() {
@@ -152,8 +158,18 @@
     if (!currentId.value) return;
     const payload = await fetchMessages(currentId.value, 100);
     messages.value = payload.messages || [];
+    hasMore.value = Boolean(payload.has_more);
+    nextBefore.value = payload.next_before || '';
     await nextTick();
     if (messageBox.value) messageBox.value.scrollTop = messageBox.value.scrollHeight;
+  }
+
+  async function loadOlder() {
+    if (!currentId.value || !hasMore.value || !nextBefore.value) return;
+    const payload = await fetchMessages(currentId.value, 100, nextBefore.value);
+    messages.value = [...(payload.messages || []), ...messages.value];
+    hasMore.value = Boolean(payload.has_more);
+    nextBefore.value = payload.next_before || '';
   }
 
   async function selectConversation(id: string) {
@@ -237,6 +253,10 @@
     align-items: center;
     margin-bottom: 10px;
   }
+  .load-older {
+    margin-bottom: 8px;
+    text-align: center;
+  }
   .messages {
     height: 500px;
     overflow: auto;
@@ -247,8 +267,7 @@
   .message {
     display: flex;
     flex-direction: column;
-    margin-bottom: 12px;
-    &.agent {
+    margin-bottom: 12px;    &.agent {
       align-items: flex-end;
     }
     .bubble {

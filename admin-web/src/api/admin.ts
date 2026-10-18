@@ -12,10 +12,10 @@ export const fetchConversations = () =>
   client.get(bridge('/api/admin/conversations')).then((r) => r.data);
 export const fetchAgents = () =>
   client.get(bridge('/api/admin/agents')).then((r) => r.data);
-export const fetchMessages = (id: string, limit = 100) =>
+export const fetchMessages = (id: string, limit = 100, before = '') =>
   client
     .get(bridge(`/api/conversations/${encodeURIComponent(id)}/messages`), {
-      params: { limit },
+      params: before ? { limit, before } : { limit },
     })
     .then((r) => r.data);
 export const closeConversation = (id: string) =>
