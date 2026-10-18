@@ -277,6 +277,14 @@ export const updateKnowledgeSettings = (payload: Record<string, unknown>) =>
     .patch(bridge('/api/admin/knowledge/settings'), payload)
     .then((r) => r.data);
 
+// ---------- AI 限额 ----------
+// 契约冻结：GET/PATCH /api/admin/ai-limits，响应形状 {limits:{...}}。
+// PATCH 为指针语义的局部更新：只提交需要改动的字段，0 是合法值（表示不限制），留空即不提交。
+export const fetchAiLimits = () =>
+  client.get(bridge('/api/admin/ai-limits')).then((r) => r.data);
+export const updateAiLimits = (payload: Record<string, unknown>) =>
+  client.patch(bridge('/api/admin/ai-limits'), payload).then((r) => r.data);
+
 export const fetchPushSettings = () =>
   client.get(bridge('/api/admin/push-settings')).then((r) => r.data);
 export const updatePushSettings = (payload: Record<string, unknown>) =>
@@ -333,5 +341,11 @@ export const fetchSystemEvent = (id: string) =>
     .get(`/site-admin-api/system/events/${encodeURIComponent(id)}`)
     .then((r) => r.data);
 
-export const purgeSystemEvents = () =>
-  client.post('/site-admin-api/system/events/purge').then((r) => r.data);
+// 日志保留策略：GET 读默认值（事件 180 / 访问 30），POST 清理时按两个天数覆盖。
+export const fetchRetentionPolicy = () =>
+  client.get('/site-admin-api/system/retention').then((r) => r.data);
+
+export const purgeSystemEvents = (payload: Record<string, unknown> = {}) =>
+  client
+    .post('/site-admin-api/system/events/purge', payload)
+    .then((r) => r.data);

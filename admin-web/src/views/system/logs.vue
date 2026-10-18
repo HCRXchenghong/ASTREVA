@@ -6,9 +6,56 @@
         <a-space>
           <a-button :loading="loading" @click="load">刷新</a-button>
           <a-button :disabled="!rows.length" @click="exportCsv">导出 CSV</a-button>
-          <a-button status="danger" @click="confirmPurge">保留策略清理</a-button>
         </a-space>
       </template>
+
+      <div class="retention-panel">
+        <a-form :model="retention" layout="inline" class="retention-form">
+          <a-form-item label="事件保留天数">
+            <a-input-number
+              v-model="retention.eventDays"
+              :min="30"
+              :max="3650"
+              :precision="0"
+              :disabled="retentionLoading"
+              :input-attrs="{ id: 'retention-event-days' }"
+              placeholder="180"
+              style="width: 130px"
+            />
+          </a-form-item>
+          <a-form-item label="访问明细保留天数">
+            <a-input-number
+              v-model="retention.visitDays"
+              :min="1"
+              :max="365"
+              :precision="0"
+              :disabled="retentionLoading"
+              :input-attrs="{ id: 'retention-visit-days' }"
+              placeholder="30"
+              style="width: 130px"
+            />
+          </a-form-item>
+          <a-form-item>
+            <a-button
+              status="danger"
+              :loading="purging"
+              :disabled="retentionLoading"
+              @click="confirmPurge"
+            >
+              立即清理
+            </a-button>
+          </a-form-item>
+        </a-form>
+        <a-typography-text type="secondary" class="retention-hint">
+          默认 180 天 / 30 天，满足等保 ≥6 个月。事件保留天数范围 30–3650，访问明细 1–365；点击「立即清理」会按当前填写的天数删除过期数据，删除后不可恢复。
+        </a-typography-text>
+        <a-alert v-if="retentionError" class="banner" type="error" show-icon>
+          {{ retentionError }}
+          <template #action>
+            <a-button size="mini" @click="loadRetention">重试</a-button>
+          </template>
+        </a-alert>
+      </div>
 
       <a-form class="filters" :model="filters" layout="inline">
         <a-form-item label="等级">
@@ -119,6 +166,7 @@
   import dayjs from 'dayjs';
   import { debounce } from 'lodash';
   import {
+    fetchRetentionPolicy,
     fetchSystemEvent,
     fetchSystemEvents,
     purgeSystemEvents,
@@ -131,6 +179,17 @@
   const detailLoading = ref(false);
   const detail = ref<any>(null);
   const customRange = ref<string[]>([]);
+
+  // 保留策略：默认事件 180 天 / 访问明细 30 天，由 /system/retention 回填。
+  const retention = reactive<{ eventDays: number | undefined; visitDays: number | undefined }>({
+    eventDays: undefined,
+    visitDays: undefined,
+  });
+  const retentionLoading = ref(false);
+  const retentionError = ref('');
+  const purging = ref(false);
+  const EVENT_DAYS_RANGE = { min: 30, max: 3650, fallback: 180 };
+  const VISIT_DAYS_RANGE = { min: 1, max: 365, fallback: 30 };
 
   const filters = reactive({
     level: '',
@@ -368,27 +427,99 @@
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   }
 
+  function clampRetention(
+    value: unknown,
+    range: { min: number; max: number; fallback: number }
+  ) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return range.fallback;
+    return Math.min(Math.max(Math.trunc(parsed), range.min), range.max);
+  }
+
+  async function loadRetention() {
+    retentionLoading.value = true;
+    retentionError.value = '';
+    try {
+      const result = await fetchRetentionPolicy();
+      const data = result?.data || {};
+      retention.eventDays = clampRetention(data.eventDays, EVENT_DAYS_RANGE);
+      retention.visitDays = clampRetention(data.visitDays, VISIT_DAYS_RANGE);
+    } catch (reason: any) {
+      retention.eventDays = EVENT_DAYS_RANGE.fallback;
+      retention.visitDays = VISIT_DAYS_RANGE.fallback;
+      retentionError.value =
+        reason?.response?.data?.error?.message ||
+        reason?.response?.data?.message ||
+        reason?.message ||
+        '保留策略读取失败，已使用默认 180 / 30 天。';
+    } finally {
+      retentionLoading.value = false;
+    }
+  }
+
   function confirmPurge() {
+    // 提交前把天数收敛到后端允许范围，确认框里展示的就是最终会下发的天数。
+    const eventDays = clampRetention(retention.eventDays, EVENT_DAYS_RANGE);
+    const visitDays = clampRetention(retention.visitDays, VISIT_DAYS_RANGE);
+    retention.eventDays = eventDays;
+    retention.visitDays = visitDays;
     Modal.confirm({
       title: '保留策略清理',
-      content: '将按后台保留策略删除过期的系统事件与官网访问记录，删除后不可恢复，确定继续吗？',
+      content: `将删除 ${eventDays} 天前的系统事件、${visitDays} 天前的官网访问明细，删除后不可恢复，确定继续吗？`,
       okText: '确认清理',
       cancelText: '取消',
       onOk: async () => {
-        const result = await purgeSystemEvents();
-        const payload = result?.data || {};
-        Message.success(
-          `已删除系统事件 ${payload.removedEvents ?? 0} 条、访问记录 ${payload.removedVisits ?? 0} 条`
-        );
-        await load();
+        purging.value = true;
+        try {
+          const result = await purgeSystemEvents({
+            event_days: eventDays,
+            visit_days: visitDays,
+          });
+          const payload = result?.data || {};
+          Message.success(
+            `已删除系统事件 ${payload.removedEvents ?? 0} 条、访问记录 ${payload.removedVisits ?? 0} 条`
+          );
+          // 回填后端收敛后的实际天数。
+          if (payload.eventDays !== undefined) {
+            retention.eventDays = clampRetention(payload.eventDays, EVENT_DAYS_RANGE);
+          }
+          if (payload.visitDays !== undefined) {
+            retention.visitDays = clampRetention(payload.visitDays, VISIT_DAYS_RANGE);
+          }
+          await load();
+        } finally {
+          purging.value = false;
+        }
       },
     });
   }
 
-  onMounted(load);
+  onMounted(() => {
+    load();
+    loadRetention();
+  });
 </script>
 
 <style scoped lang="less">
+  .retention-panel {
+    margin-bottom: 12px;
+    padding: 12px;
+    border: 1px solid var(--color-border-2, #e5e6eb);
+    border-radius: 4px;
+    background: var(--color-fill-1, #f7f8fa);
+  }
+  .retention-form {
+    row-gap: 12px;
+    :deep(.arco-form-item) {
+      margin-right: 12px;
+      margin-bottom: 8px;
+    }
+  }
+  .retention-hint {
+    display: block;
+    font-size: 12px;
+    line-height: 18px;
+  }
   .filters {
     margin-bottom: 12px;
     row-gap: 12px;

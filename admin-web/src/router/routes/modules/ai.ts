@@ -57,5 +57,11 @@ export default {
       component: () => import('@/views/ai/knowledge.vue'),
       meta: { title: '知识库', locale: '知识库', requiresAuth: true },
     },
+    {
+      path: 'limits',
+      name: 'AiLimits',
+      component: () => import('@/views/ai/limits.vue'),
+      meta: { title: '限额', locale: '限额', requiresAuth: true },
+    },
   ],
 };
