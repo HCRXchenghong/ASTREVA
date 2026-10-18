@@ -72,3 +72,70 @@
 | P6 | 翻译健康度面板、缓存与限额、成本统计 | 看板数据校验 |
 
 依赖：P2 之后需要「AI 多供应商 + 能力绑定」（翻译/检测各绑定供应商与模型）；IP 库配置依赖「系统设置」新增第三方 IP 库表单。
+
+---
+
+# 附录：客户画像（P5）施工规格
+
+## 1. 数据源与优先级
+1. **CDN 头**：`CF-IPCountry`、`X-Vercel-IP-Country`、`X-Country-Code`（零成本、最准到国家）。
+2. **本地 GeoLite2**（可选，推荐）：`geoip2` 库文件挂载到容器（`/data/GeoLite2-City.mmdb`），解析到国家/地区/城市/时区；文件缺失时自动降级。
+3. **后台可配第三方 IP 库**（补充提高准度）：控制台「系统 → 访客画像」里配置 `enabled`、`url_template`（含 `{ip}` 占位）、`api_key`（加密）、`timeout_ms`、`cache_ttl_hours`。命中顺序：CDN 头 → 本地库 → 第三方；结果按 IP 缓存（默认 24h），第三方失败不影响会话。
+4. `Accept-Language`、页面语言（`/en`、`/ar`）作为语言画像的兜底。
+
+## 2. 数据模型
+```sql
+CREATE TABLE IF NOT EXISTS visitor_profiles (
+  visitor_id TEXT PRIMARY KEY,
+  country TEXT DEFAULT '', region TEXT DEFAULT '', city TEXT DEFAULT '', timezone TEXT DEFAULT '',
+  nationality_guess TEXT DEFAULT '',      -- ISO 国家码（"推测"，附置信度与依据）
+  nationality_confidence NUMERIC(3,2) DEFAULT 0,
+  nationality_basis JSONB DEFAULT '[]',   -- ["ip_cdn","language","timezone"]
+  ip_first TEXT DEFAULT '', ip_last TEXT DEFAULT '',
+  languages JSONB DEFAULT '{}',           -- {"es":12,"en":3}
+  dialect TEXT DEFAULT '',                -- es-419 / ar-Gulf ...
+  code_switching BOOLEAN DEFAULT false,
+  summary TEXT DEFAULT '',                -- AI 生成的画像摘要（增量更新）
+  tags JSONB DEFAULT '[]',
+  interests JSONB DEFAULT '[]',
+  evidence JSONB DEFAULT '[]',            -- 摘要引用的消息 id
+  visits INT DEFAULT 0, last_path TEXT DEFAULT '',
+  ai_updated_at TIMESTAMPTZ, created_at/updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS visitor_profile_settings (
+  id SMALLINT PRIMARY KEY DEFAULT 1,
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  geoip_db_path TEXT DEFAULT '', third_party_url TEXT DEFAULT '', third_party_key_ciphertext TEXT DEFAULT '',
+  third_party_timeout_ms INT DEFAULT 2000, cache_ttl_hours INT DEFAULT 24,
+  ai_summary_enabled BOOLEAN DEFAULT true, ai_summary_every_messages INT DEFAULT 10,
+  show_full_ip BOOLEAN DEFAULT true, updated_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT visitor_profile_settings_singleton CHECK (id=1)
+);
+-- 无 GeoLite2 库时仍可运行；启用第三方库需在控制台填 URL 与 Key。
+```
+
+## 3. 生成与更新时机
+- **建会话/每次访客消息**：更新 `ip_last`、`country/region/city/timezone`（按需解析并缓存）、`languages` 计数、`dialect`（来自消息检测）、`visits/last_path`（来自官网埋点）。
+- **AI 摘要**：每 `ai_summary_every_messages` 条访客消息触发一次（异步、复用 `aiSettingsFor("reception")` 上游）；输入=最近 N 条对话 + 已有画像；输出严格 JSON（`summary`/`tags`/`interests`/`evidence`），解析失败只记日志不覆盖旧值。
+- **国籍推测**：只给"推测"结论：依据优先级 `ip_cdn > geoip > third_party > language > timezone`，置信度按证据数量加权（例如 IP 国别 0.6 + 语言一致 0.2 + 时区一致 0.2，上限 0.95）。**UI 必须标注"推测"**。
+
+## 4. 接口
+```
+管理员：
+GET/PATCH /api/admin/visitor-profile/settings      画像开关/GeoLite2 路径/第三方库/摘要频率/是否显示完整 IP
+GET       /api/admin/visitor-profiles?q=&country=&tag=&limit=&offset=
+GET       /api/admin/visitor-profiles/{visitor_id}  详情（含语言占比、标签、摘要、证据消息）
+POST      /api/admin/visitor-profiles/{visitor_id}/refresh   立即重算（含 AI 摘要）
+客服：
+GET       /api/agent/conversations/{id}/profile     会话侧画像卡数据（越权 403）
+```
+隐私：`show_full_ip=false` 时客服侧只返回脱敏 IP（`1.2.3.*`）；`enabled=false` 时不采集、不返回画像；画像随访客数据保留策略清理。
+
+## 5. 验收测试
+1. 地理三级降级：只有 CDN 头 / 只有本地库（用测试 mmdb 或注入解析函数）/ 只有第三方（httptest 桩）各自正确；第三方超时不影响会话。
+2. 语言画像：多语种计数与占比、方言标记（复用 `DetectLanguage`）、code-switching 判定。
+3. 国籍推测：置信度与依据字段符合规则；UI 标注"推测"（快照断言文案）。
+4. AI 摘要：每 N 条触发一次（上游桩计数）、JSON 解析失败不覆盖旧摘要、证据 id 指向真实消息。
+5. 隐私：`show_full_ip=false` 返回脱敏 IP；`enabled=false` 时接口返回空/404 且不发起第三方请求。
+6. 真实 PG：两张新表建表/读写/JSONB 往返/单例约束。
+7. 控制台画像页与 App 画像卡：Playwright/组件验证，console error=0。
