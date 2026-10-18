@@ -1437,6 +1437,7 @@ class _ChatPageState extends State<ChatPage> {
 
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
+  final _inputFocus = FocusNode();
   final _picker = ImagePicker();
   StreamSubscription<Map<String, dynamic>>? _events;
   final List<ChatMessage> _messages = <ChatMessage>[];
@@ -1444,6 +1445,9 @@ class _ChatPageState extends State<ChatPage> {
   bool _sendingImage = false;
   bool _loadingOlder = false;
   bool _preparingSend = false;
+
+  /// AI 建议请求进行中：按钮转圈并防重复点击。
+  bool _suggesting = false;
   bool _hasMore = false;
   String _nextBefore = '';
   String _status = 'waiting';
@@ -1688,6 +1692,68 @@ class _ChatPageState extends State<ChatPage> {
       ) ??
       false;
 
+  /// T1：请求 AI 候选回复（`POST /api/agent/suggest-reply`）。
+  /// 只生成候选、不发送任何消息；客服点「使用」后仅填入输入框。
+  Future<void> _requestSuggestions() async {
+    if (_closed || _suggesting) return;
+    if (!_preferences.knowledgeSuggestEnabled) {
+      // 正常情况下按钮已禁用，这里兜底避免偏好刚被关闭时的竞态。
+      _showMessage(context, '已在偏好中关闭 AI 推荐');
+      return;
+    }
+    setState(() => _suggesting = true);
+    SuggestReplyResult result;
+    try {
+      result = await widget.client.suggestReply(
+        conversationId: widget.conversation.id,
+      );
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      if (mounted) _showMessage(context, _readableError(error));
+      return;
+    } finally {
+      if (mounted) setState(() => _suggesting = false);
+    }
+    if (!mounted) return;
+    if (result.isEmpty) {
+      _showMessage(context, _emptySuggestionMessage(result.reason));
+      return;
+    }
+    final picked = await _showSuggestions(result.suggestions);
+    if (picked == null || !mounted) return;
+    _useSuggestion(picked);
+    _showMessage(context, '已填入输入框，请确认或修改后再发送');
+  }
+
+  /// T1：把候选文本填进输入框（**不自动发送**），并把焦点交回输入框。
+  void _useSuggestion(String text) {
+    _messageController
+      ..text = text
+      ..selection = TextSelection.collapsed(offset: text.length);
+    // 底弹窗的 popped future 在退场动画开始时就完成，此时焦点仍被弹窗路由占用，
+    // 所以先请求一次，等动画结束后再兜底请求一次。
+    _inputFocus.requestFocus();
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 300), () {
+        if (mounted && !_inputFocus.hasFocus) _inputFocus.requestFocus();
+      }),
+    );
+  }
+
+  /// T1：候选回复底部弹窗；返回被选中的候选文本，取消返回 null。
+  Future<String?> _showSuggestions(List<ReplySuggestion> suggestions) =>
+      showModalBottomSheet<String>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: AppColors.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(AppRadii.card),
+          ),
+        ),
+        builder: (_) => _SuggestionsSheet(suggestions: suggestions),
+      );
+
   Future<void> _sendImage() async {
     final image = await _picker.pickImage(
       source: ImageSource.gallery,
@@ -1845,6 +1911,7 @@ class _ChatPageState extends State<ChatPage> {
     _scrollController.removeListener(_onScroll);
     _messageController.dispose();
     _scrollController.dispose();
+    _inputFocus.dispose();
     super.dispose();
   }
 
@@ -1934,6 +2001,26 @@ class _ChatPageState extends State<ChatPage> {
                   ),
                   child: Row(
                     children: [
+                      // T1：AI 建议入口。偏好里关闭知识库推荐时禁用（tooltip 说明原因）。
+                      IconButton(
+                        onPressed: closed || _suggesting
+                            ? null
+                            : (_preferences.knowledgeSuggestEnabled
+                                  ? _requestSuggestions
+                                  : null),
+                        tooltip: _preferences.knowledgeSuggestEnabled
+                            ? 'AI 建议'
+                            : '已在偏好中关闭 AI 推荐',
+                        icon: _suggesting
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.auto_awesome),
+                      ),
                       IconButton(
                         onPressed: closed || _sendingImage ? null : _sendImage,
                         icon: _sendingImage
@@ -1947,6 +2034,7 @@ class _ChatPageState extends State<ChatPage> {
                       Expanded(
                         child: TextField(
                           controller: _messageController,
+                          focusNode: _inputFocus,
                           minLines: 1,
                           maxLines: 5,
                           enabled: !closed,
@@ -2547,6 +2635,196 @@ class _TranslationPreviewSheetState extends State<_TranslationPreviewSheet> {
   }
 }
 
+/// T1：AI 候选回复底部弹窗，沿用 `_TranslationPreviewSheet` 的视觉风格。
+/// 点「使用」返回该条候选文本（只填输入框，绝不自动发送），取消返回 null。
+class _SuggestionsSheet extends StatelessWidget {
+  const _SuggestionsSheet({required this.suggestions});
+
+  final List<ReplySuggestion> suggestions;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: Padding(
+      // 键盘弹出时把弹窗顶到键盘之上（与 _TranslationPreviewSheet 一致）。
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * .7,
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.auto_awesome,
+                    size: 20,
+                    color: AppColors.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'AI 推荐回复（${suggestions.length} 条）',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    tooltip: '关闭',
+                    icon: const Icon(
+                      Icons.close,
+                      size: 20,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+              const Text(
+                '仅供参考：选择后只填入输入框，不会自动发送。',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              for (final suggestion in suggestions) ...[
+                _SuggestionTile(
+                  suggestion: suggestion,
+                  onUse: () => Navigator.of(context).pop(suggestion.text),
+                ),
+                const SizedBox(height: 10),
+              ],
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('取消'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// 单条候选：长文可展开，右侧「使用」只回填输入框。
+class _SuggestionTile extends StatefulWidget {
+  const _SuggestionTile({required this.suggestion, required this.onUse});
+
+  final ReplySuggestion suggestion;
+  final VoidCallback onUse;
+
+  @override
+  State<_SuggestionTile> createState() => _SuggestionTileState();
+}
+
+class _SuggestionTileState extends State<_SuggestionTile> {
+  /// 折叠时最多显示的行数。
+  static const int _collapsedLines = 4;
+  static const TextStyle _textStyle = TextStyle(
+    fontSize: 14,
+    height: 1.45,
+    color: AppColors.textPrimary,
+  );
+
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final suggestion = widget.suggestion;
+    final entryCount = suggestion.entryIds.length;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(AppRadii.input),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              // 用 TextPainter 精确判断折叠时是否被截断，长文才显示「展开全文」。
+              final painter = TextPainter(
+                text: TextSpan(text: suggestion.text, style: _textStyle),
+                maxLines: _collapsedLines,
+                textDirection: Directionality.of(context),
+                textScaler: MediaQuery.textScalerOf(context),
+              )..layout(maxWidth: constraints.maxWidth);
+              final truncated = painter.didExceedMaxLines;
+              painter.dispose();
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    suggestion.text,
+                    maxLines: _expanded ? null : _collapsedLines,
+                    overflow: _expanded
+                        ? TextOverflow.clip
+                        : TextOverflow.ellipsis,
+                    style: _textStyle,
+                  ),
+                  if (truncated || _expanded)
+                    TextButton(
+                      onPressed: () => setState(() => _expanded = !_expanded),
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size(0, 30),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        textStyle: const TextStyle(fontSize: 12),
+                      ),
+                      child: Text(_expanded ? '收起' : '展开全文'),
+                    ),
+                ],
+              );
+            },
+          ),
+          Row(
+            children: [
+              if (entryCount > 0)
+                Expanded(
+                  child: Text(
+                    '依据知识库 $entryCount 条',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                )
+              else
+                const Spacer(),
+              FilledButton(
+                onPressed: widget.onUse,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 34),
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  textStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                child: const Text('使用'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// T1/T2/T3 的偏好单一数据源：一处修改，全 App 生效。
 class AgentPreferencesController extends ChangeNotifier {
   AgentPreferencesController(this._client);
@@ -2601,6 +2879,7 @@ class AgentPreferencesController extends ChangeNotifier {
     bool? reviewTranslationBeforeSend,
     String? translationDialectMode,
     bool? aiSuggestReplies,
+    bool? knowledgeSuggestEnabled,
   }) async {
     if (_saving) return null;
     final patch = AgentPreferencesPatch(
@@ -2609,6 +2888,7 @@ class AgentPreferencesController extends ChangeNotifier {
       reviewTranslationBeforeSend: reviewTranslationBeforeSend,
       translationDialectMode: translationDialectMode,
       aiSuggestReplies: aiSuggestReplies,
+      knowledgeSuggestEnabled: knowledgeSuggestEnabled,
     );
     if (patch.isEmpty) return null;
     final previous = _preferences;
@@ -2618,6 +2898,7 @@ class AgentPreferencesController extends ChangeNotifier {
       reviewTranslationBeforeSend: reviewTranslationBeforeSend,
       translationDialectMode: translationDialectMode,
       aiSuggestReplies: aiSuggestReplies,
+      knowledgeSuggestEnabled: knowledgeSuggestEnabled,
     );
     _saving = true;
     _error = null;
@@ -2676,6 +2957,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
     bool? reviewTranslationBeforeSend,
     String? translationDialectMode,
     bool? aiSuggestReplies,
+    bool? knowledgeSuggestEnabled,
   }) async {
     final error = await widget.controller.update(
       autoTranslateIncoming: autoTranslateIncoming,
@@ -2683,6 +2965,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
       reviewTranslationBeforeSend: reviewTranslationBeforeSend,
       translationDialectMode: translationDialectMode,
       aiSuggestReplies: aiSuggestReplies,
+      knowledgeSuggestEnabled: knowledgeSuggestEnabled,
     );
     if (!mounted) return;
     if (error == null) {
@@ -2786,14 +3069,30 @@ class _PreferencesPageState extends State<PreferencesPage> {
                     const _PreferencesSectionLabel('AI 助手'),
                     Container(
                       decoration: AppTheme.cardDecoration(),
-                      child: _PreferenceSwitchTile(
-                        icon: Icons.smart_toy_outlined,
-                        title: 'AI 推荐回复',
-                        description: '开启后由 AI 生成可直接发送的推荐回复内容，供你参考和引用。',
-                        value: preferences.aiSuggestReplies,
-                        onChanged: enabled
-                            ? (value) => _save(aiSuggestReplies: value)
-                            : null,
+                      child: Column(
+                        children: [
+                          _PreferenceSwitchTile(
+                            icon: Icons.smart_toy_outlined,
+                            title: 'AI 推荐回复',
+                            description: '开启后由 AI 生成可直接发送的推荐回复内容，供你参考和引用。',
+                            value: preferences.aiSuggestReplies,
+                            onChanged: enabled
+                                ? (value) => _save(aiSuggestReplies: value)
+                                : null,
+                          ),
+                          const Divider(height: 1, indent: 52),
+                          _PreferenceSwitchTile(
+                            icon: Icons.menu_book_outlined,
+                            title: '知识库推荐',
+                            description:
+                                '控制会话页的「AI 建议」入口；关闭后不再检索知识库生成候选回复。',
+                            value: preferences.knowledgeSuggestEnabled,
+                            onChanged: enabled
+                                ? (value) =>
+                                      _save(knowledgeSuggestEnabled: value)
+                                : null,
+                          ),
+                        ],
                       ),
                     ),
                     if (controller.error != null) ...[
@@ -3122,6 +3421,18 @@ String? _required(String? value) =>
 String _readableError(Object error) => error is ServiceBridgeException
     ? error.message
     : error.toString().replaceFirst('Exception: ', '');
+
+/// T1：候选为空时按后端 reason 给出可操作的中文提示。
+String _emptySuggestionMessage(String reason) {
+  switch (reason) {
+    case SuggestReplyResult.reasonNoKnowledge:
+      return '知识库里没有匹配资料，建议手动回复或转人工';
+    case SuggestReplyResult.reasonAiDisabled:
+      return 'AI 未启用，请检查后台 AI 设置';
+    default:
+      return '暂时没有可用的推荐回复';
+  }
+}
 String _formatTime(DateTime? value) {
   if (value == null) return '';
   final now = DateTime.now();

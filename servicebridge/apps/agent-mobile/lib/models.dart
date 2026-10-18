@@ -160,6 +160,7 @@ class AgentPreferences {
     required this.reviewTranslationBeforeSend,
     required this.translationDialectMode,
     required this.aiSuggestReplies,
+    required this.knowledgeSuggestEnabled,
   });
 
   factory AgentPreferences.fromJson(Map<String, dynamic> json) {
@@ -176,19 +177,21 @@ class AgentPreferences {
           ? dialectModeDialect
           : dialectModeStandard,
       aiSuggestReplies: json['ai_suggest_replies'] != false,
+      knowledgeSuggestEnabled: json['knowledge_suggest_enabled'] != false,
     );
   }
 
   static const String dialectModeStandard = 'standard';
   static const String dialectModeDialect = 'dialect';
 
-  /// 服务端默认值：5 项均为 true / standard。
+  /// 服务端默认值：6 项均为 true / standard。
   static const AgentPreferences defaults = AgentPreferences(
     autoTranslateIncoming: true,
     autoTranslateOutgoing: true,
     reviewTranslationBeforeSend: true,
     translationDialectMode: dialectModeStandard,
     aiSuggestReplies: true,
+    knowledgeSuggestEnabled: true,
   );
 
   final bool autoTranslateIncoming;
@@ -199,6 +202,11 @@ class AgentPreferences {
   final String translationDialectMode;
   final bool aiSuggestReplies;
 
+  /// 客服侧「AI 推荐发送内容」总开关（含知识库检索命中）。
+  /// 关闭后后端对 `POST /api/agent/suggest-reply` 直接返回空数组，
+  /// 因此会话页应隐藏/禁用「AI 建议」入口，避免点了必然为空。
+  final bool knowledgeSuggestEnabled;
+
   bool get usesDialect => translationDialectMode == dialectModeDialect;
 
   AgentPreferences copyWith({
@@ -207,6 +215,7 @@ class AgentPreferences {
     bool? reviewTranslationBeforeSend,
     String? translationDialectMode,
     bool? aiSuggestReplies,
+    bool? knowledgeSuggestEnabled,
   }) => AgentPreferences(
     autoTranslateIncoming: autoTranslateIncoming ?? this.autoTranslateIncoming,
     autoTranslateOutgoing: autoTranslateOutgoing ?? this.autoTranslateOutgoing,
@@ -215,6 +224,8 @@ class AgentPreferences {
     translationDialectMode:
         translationDialectMode ?? this.translationDialectMode,
     aiSuggestReplies: aiSuggestReplies ?? this.aiSuggestReplies,
+    knowledgeSuggestEnabled:
+        knowledgeSuggestEnabled ?? this.knowledgeSuggestEnabled,
   );
 }
 
@@ -226,6 +237,7 @@ class AgentPreferencesPatch {
     this.reviewTranslationBeforeSend,
     this.translationDialectMode,
     this.aiSuggestReplies,
+    this.knowledgeSuggestEnabled,
   });
 
   final bool? autoTranslateIncoming;
@@ -233,13 +245,15 @@ class AgentPreferencesPatch {
   final bool? reviewTranslationBeforeSend;
   final String? translationDialectMode;
   final bool? aiSuggestReplies;
+  final bool? knowledgeSuggestEnabled;
 
   bool get isEmpty =>
       autoTranslateIncoming == null &&
       autoTranslateOutgoing == null &&
       reviewTranslationBeforeSend == null &&
       translationDialectMode == null &&
-      aiSuggestReplies == null;
+      aiSuggestReplies == null &&
+      knowledgeSuggestEnabled == null;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     if (autoTranslateIncoming != null)
@@ -251,7 +265,63 @@ class AgentPreferencesPatch {
     if (translationDialectMode != null)
       'translation_dialect_mode': translationDialectMode,
     if (aiSuggestReplies != null) 'ai_suggest_replies': aiSuggestReplies,
+    if (knowledgeSuggestEnabled != null)
+      'knowledge_suggest_enabled': knowledgeSuggestEnabled,
   };
+}
+
+/// 一条 AI 候选回复（`POST /api/agent/suggest-reply`）。
+class ReplySuggestion {
+  const ReplySuggestion({
+    required this.text,
+    this.entryIds = const <String>[],
+    this.score = 0,
+  });
+
+  factory ReplySuggestion.fromJson(Map<String, dynamic> json) =>
+      ReplySuggestion(
+        text: '${json['text'] ?? ''}',
+        entryIds: (json['entry_ids'] as List? ?? const [])
+            .whereType<String>()
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toList(),
+        score: (json['score'] as num?)?.toDouble() ?? 0,
+      );
+
+  final String text;
+
+  /// 命中的知识库条目 ID；仅用于展示「依据知识库 N 条」。
+  final List<String> entryIds;
+  final double score;
+}
+
+/// AI 推荐发送的响应体。只生成候选，绝不发送任何消息。
+class SuggestReplyResult {
+  const SuggestReplyResult({required this.suggestions, this.reason = ''});
+
+  factory SuggestReplyResult.fromJson(Map<String, dynamic> json) =>
+      SuggestReplyResult(
+        suggestions: (json['suggestions'] as List? ?? const [])
+            .map(
+              (item) => ReplySuggestion.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            )
+            .where((item) => item.text.trim().isNotEmpty)
+            .toList(),
+        reason: '${json['reason'] ?? ''}'.trim(),
+      );
+
+  static const String reasonNoKnowledge = 'no_knowledge';
+  static const String reasonAiDisabled = 'ai_disabled';
+
+  final List<ReplySuggestion> suggestions;
+
+  /// 空结果的原因：no_knowledge / ai_disabled；非空表示正常返回。
+  final String reason;
+
+  bool get isEmpty => suggestions.isEmpty;
 }
 
 /// 发送前译文预览（`POST /api/agent/translate-preview`）：只翻译，不产生消息。

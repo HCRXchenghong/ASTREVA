@@ -248,6 +248,21 @@ class ServiceBridgeClient {
     return TranslationPreview.fromJson(payload);
   }
 
+  /// AI 推荐发送（`POST /api/agent/suggest-reply`）：只生成 1–3 条候选回复，
+  /// **不发送任何消息**，客服需自行点选/编辑后再发送。
+  /// 403 表示该会话不属于当前客服；上游不可用时后端返回 502，
+  /// 均按普通请求错误抛出，由界面展示后端 message。
+  Future<SuggestReplyResult> suggestReply({
+    required String conversationId,
+  }) async {
+    final payload = await _request(
+      'POST',
+      '/api/agent/suggest-reply',
+      body: {'conversation_id': conversationId},
+    );
+    return SuggestReplyResult.fromJson(payload);
+  }
+
   /// 公开接口：拉取服务端下发的 Firebase / 推送开关配置（B1）。
   /// 网络失败或响应异常时抛出 [ServiceBridgeException]，由调用方决定是否忽略。
   Future<AppConfig> appConfig() async {
