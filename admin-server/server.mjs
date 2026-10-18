@@ -2434,53 +2434,26 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/site-admin' || pathname === '/site-admin/') {
       return serveAdminWeb(res);
     }
+    // 旧版后台页面全部下线：统一重定向到 Arco 控制台的对应路由，登录由前端守卫处理。
     if (pathname === '/site-admin/content' || pathname === '/site-admin/content/') {
-      if (!verifySession(req)) return redirect(res, '/admin-2fa?returnTo=' + encodeURIComponent(req.url || '/site-admin/?view=content'));
-      send(res, 200, renderContentHub(), {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-store',
-        'X-Frame-Options': 'SAMEORIGIN',
-        'Content-Security-Policy': "frame-ancestors 'self'",
-        'Referrer-Policy': 'same-origin'
-      });
-      return;
+      return redirect(res, '/site-admin/content/site');
+    }
+    if (pathname === '/site-admin/content/editor' || pathname === '/site-admin/content/editor/') {
+      const section = url.searchParams.get('section') || '';
+      return redirect(res, section === 'media' ? '/site-admin/content/media' : '/site-admin/content/site');
     }
     if (pathname === '/site-admin/translations' || pathname === '/site-admin/translations/') {
-      if (!verifySession(req)) return redirect(res, '/admin-2fa?returnTo=' + encodeURIComponent(req.url || '/site-admin/?view=translations'));
-      return serveFile(res, path.join(ROOT, 'admin-server', 'public', 'translation-admin.html'), false);
+      return redirect(res, '/site-admin/content/translations');
     }
     if (pathname === '/site-admin/settings' || pathname === '/site-admin/settings/') {
-      if (!verifySession(req)) return redirect(res, '/admin-2fa?returnTo=' + encodeURIComponent(req.url || '/site-admin/settings'));
-      const bootstrap = await readSystemSettingsBootstrap();
-      send(res, 200, renderSystemSettingsPage(bootstrap, { embedded: url.searchParams.get('embed') === '1' }), {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-store',
-        'X-Frame-Options': 'SAMEORIGIN',
-        'Content-Security-Policy': "frame-ancestors 'self'",
-        'Referrer-Policy': 'same-origin'
-      });
-      return;
+      return redirect(res, '/site-admin/system/general');
     }
     if (pathname === '/site-admin/media' || pathname === '/site-admin/media/') {
-      if (!verifySession(req)) return redirect(res, '/admin-2fa?returnTo=' + encodeURIComponent(req.url || '/site-admin/media'));
-      return serveFile(res, path.join(ROOT, 'admin-server', 'public', 'media-admin.html'), false);
+      return redirect(res, '/site-admin/content/media');
     }
     if (pathname === '/site-admin/api-docs' || pathname === '/site-admin/api-docs/') {
       if (!verifySession(req)) return redirect(res, '/admin-2fa?returnTo=' + encodeURIComponent(req.url || '/site-admin/api-docs'));
       return serveFile(res, path.join(ROOT, 'admin-server', 'public', 'api-docs.html'), false);
-    }
-    if (pathname === '/site-admin/content/editor' || pathname === '/site-admin/content/editor/') {
-      if (!verifySession(req)) return redirect(res, '/admin-2fa?returnTo=' + encodeURIComponent(req.url || '/site-admin/?view=content'));
-      if ((url.searchParams.get('section') || '') === 'media') return redirect(res, '/site-admin/media');
-      const boot = await getBootstrap();
-      send(res, 200, renderAdminPage(boot, { standalone: true, active: url.searchParams.get('section') || 'homeHero' }), {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-store',
-        'X-Frame-Options': 'DENY',
-        'Content-Security-Policy': "frame-ancestors 'none'",
-        'Referrer-Policy': 'same-origin'
-      });
-      return;
     }
     if (pathname === '/site-admin/help') {
       send(res, 200, '<!doctype html><meta charset="utf-8"><title>帮助文档</title><body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,Microsoft YaHei,sans-serif;padding:48px;line-height:1.8"><h1>帮助文档</h1><p>登录后进入官网后台，左侧选择模块，右侧修改文字、图片、视频、SEO、产品、品类和咨询记录。保存当前模块后点击发布官网按钮，前台静态页面会重建。</p><p><a href="/admin-2fa">返回登录</a></p></body>', { 'Content-Type': 'text/html; charset=utf-8' });

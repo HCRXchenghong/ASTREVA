@@ -63,6 +63,7 @@
           :stats="stats"
           :loading="loadingSettings"
           :error="settingsError"
+          @saved="loadSettings"
         />
       </a-tab-pane>
 

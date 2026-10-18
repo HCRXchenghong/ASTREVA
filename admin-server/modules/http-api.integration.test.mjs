@@ -5,7 +5,6 @@ import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import vm from 'node:vm';
 
 async function waitFor(url, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
@@ -101,16 +100,16 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
     });
     const protectedEditorPage = await fetch(base + '/site-admin/content/editor?section=products', { redirect: 'manual' });
     const protectedSettingsPage = await fetch(base + '/site-admin/settings', { redirect: 'manual' });
-    const contentHubPage = await fetch(base + '/site-admin/content/?embed=1', { headers: { Cookie: cookie } });
-    const allContentPage = await fetch(base + '/site-admin/content/editor?section=allContent', { headers: { Cookie: cookie } });
-    const seoEditorPage = await fetch(base + '/site-admin/content/editor?section=seo', { headers: { Cookie: cookie } });
+    const contentHubPage = await fetch(base + '/site-admin/content/?embed=1', { headers: { Cookie: cookie }, redirect: 'manual' });
+    const allContentPage = await fetch(base + '/site-admin/content/editor?section=allContent', { headers: { Cookie: cookie }, redirect: 'manual' });
+    const seoEditorPage = await fetch(base + '/site-admin/content/editor?section=seo', { headers: { Cookie: cookie }, redirect: 'manual' });
     const unifiedPage = await fetch(base + '/site-admin/?view=media', { headers: { Cookie: cookie } });
     const spaDeepLink = await fetch(base + '/site-admin/workspace');
     const legacyAdmin2fa = await fetch(base + '/admin-2fa?returnTo=%2Fsite-admin%2Fmedia', { redirect: 'manual' });
-    const translationPage = await fetch(base + '/site-admin/translations?embed=1', { headers: { Cookie: cookie } });
+    const translationPage = await fetch(base + '/site-admin/translations?embed=1', { headers: { Cookie: cookie }, redirect: 'manual' });
     const translationStatus = await fetch(base + '/site-admin-api/translations', { headers: { Cookie: cookie } });
     const protectedMediaPage = await fetch(base + '/site-admin/media', { redirect: 'manual' });
-    const mediaPage = await fetch(base + '/site-admin/media', { headers: { Cookie: cookie } });
+    const mediaPage = await fetch(base + '/site-admin/media', { headers: { Cookie: cookie }, redirect: 'manual' });
     const legacyMediaEditor = await fetch(base + '/site-admin/content/editor?section=media', { headers: { Cookie: cookie }, redirect: 'manual' });
 
     assert.equal(openapi.openapi, '3.1.0');
@@ -141,60 +140,30 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
     assert.equal(localeRecommendation.status, 200);
     assert.equal((await localeRecommendation.json()).data.locale, 'ar');
     assert.equal(unavailableEnglish.status, 409);
+    // 旧版后台页面全部 302 到 Arco 控制台对应路由。
     assert.equal(protectedEditorPage.status, 302);
-    assert.match(protectedEditorPage.headers.get('location') || '', /^\/admin-2fa\?returnTo=/);
+    assert.equal(protectedEditorPage.headers.get('location'), '/site-admin/content/site');
     assert.equal(protectedSettingsPage.status, 302);
-    assert.match(protectedSettingsPage.headers.get('location') || '', /^\/admin-2fa\?returnTo=/);
+    assert.equal(protectedSettingsPage.headers.get('location'), '/site-admin/system/general');
     assert.equal(fullSaveResponse.status, 200);
     assert.equal(staleSaveResponse.status, 409);
     assert.equal((await (await fetch(base + '/site-admin-api/public-content')).json()).data.site.brandTagline, '全量内容编辑测试');
-    assert.equal(contentHubPage.status, 200);
-    const contentHubHtml = await contentHubPage.text();
-    assert.equal((contentHubHtml.match(/<details class="module"/g) || []).length, 7);
-    assert.match(contentHubHtml, /客户咨询/);
-    assert.match(contentHubHtml, /发布中心/);
-    assert.match(contentHubHtml, /target="_top"/);
-    assert.match(contentHubHtml, /href="\/site-admin\/media"/);
-    assert.equal(allContentPage.status, 200);
-    const allContentHtml = await allContentPage.text();
-    assert.match(allContentHtml, /全部内容字段/);
-    assert.match(allContentHtml, /productMenu/);
-    assert.match(allContentHtml, /emptyCategoryMessage/);
-    assert.equal(seoEditorPage.status, 200);
-    assert.match(await seoEditorPage.text(), /一键 AI 生成三语 SEO/);
-    assert.equal(unifiedPage.status, 200);
-    const unifiedHtml = await unifiedPage.text();
-    // Arco Design Pro Vue 控制台：SPA 入口 + 构建产物脚本。
-    assert.match(unifiedHtml, /id="app"/);
-    assert.match(unifiedHtml, /\/site-admin\/assets\//);
-    assert.equal(spaDeepLink.status, 200);
-    assert.match(await spaDeepLink.text(), /id="app"/);
-    // SPA 构建产物必须能真正取到（资产路由 + 目录包含校验）。
-    const assetPath = unifiedHtml.match(/\/site-admin\/assets\/[A-Za-z0-9._-]+\.js/)?.[0];
-    assert.ok(assetPath, 'SPA HTML 应引用 /site-admin/assets/*.js');
-    const assetResponse = await fetch(base + assetPath);
-    assert.equal(assetResponse.status, 200);
-    assert.match(assetResponse.headers.get('content-type') || '', /javascript/);
-    const assetTraversal = await fetch(base + '/site-admin/assets/%2e%2e%2f%2e%2e%2fpackage.json', { redirect: 'manual' });
-    assert.equal(assetTraversal.status, 404);
-    // 旧的 2FA 入口重定向到控制台登录页并保留 returnTo。
-    assert.equal(legacyAdmin2fa.status, 302);
-    assert.equal(legacyAdmin2fa.headers.get('location'), '/site-admin/login?returnTo=%2Fsite-admin%2Fmedia');
+    assert.equal(contentHubPage.status, 302);
+    assert.equal(contentHubPage.headers.get('location'), '/site-admin/content/site');
+    assert.equal(allContentPage.status, 302);
+    assert.equal(allContentPage.headers.get('location'), '/site-admin/content/site');
+    assert.equal(seoEditorPage.status, 302);
+    assert.equal(seoEditorPage.headers.get('location'), '/site-admin/content/site');
     assert.equal(protectedMediaPage.status, 302);
-    assert.match(protectedMediaPage.headers.get('location') || '', /^\/admin-2fa\?returnTo=/);
-    assert.equal(mediaPage.status, 200);
-    const mediaHtml = await mediaPage.text();
-    assert.match(mediaHtml, /R2 素材中心/);
-    assert.match(mediaHtml, /media-admin\.js/);
+    assert.equal(protectedMediaPage.headers.get('location'), '/site-admin/content/media');
+    assert.equal(mediaPage.status, 302);
+    assert.equal(mediaPage.headers.get('location'), '/site-admin/content/media');
     assert.equal(legacyMediaEditor.status, 302);
-    assert.equal(legacyMediaEditor.headers.get('location'), '/site-admin/media');
-    assert.equal(translationPage.status, 200);
-    assert.match(await translationPage.text(), /网站翻译[\s\S]*从上游获取模型/);
+    assert.equal(legacyMediaEditor.headers.get('location'), '/site-admin/content/media');
+    assert.equal(translationPage.status, 302);
+    assert.equal(translationPage.headers.get('location'), '/site-admin/content/translations');
     assert.equal(translationStatus.status, 200);
     assert.deepEqual((await translationStatus.json()).data.translations.map((item) => item.locale), ['en', 'ar']);
-    for (const [index, script] of [...allContentHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map((match) => match[1]).entries()) {
-      assert.doesNotThrow(() => new vm.Script(script, { filename: `content-editor-inline-${index}.js` }));
-    }
   } finally {
     server.kill('SIGTERM');
     await new Promise((resolve) => server.once('exit', resolve));

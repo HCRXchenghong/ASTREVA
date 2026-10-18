@@ -256,14 +256,34 @@ export const batchDeleteMedia = (ids: string[]) =>
     .post<{ data: BatchDeleteResult }>(`${BASE}/batch-delete`, { ids })
     .then((r) => r.data);
 
-// ---------- 运行状态 / 设置（只读） ----------
+// ---------- 运行状态 / 设置 ----------
 export const fetchMediaRuntime = () =>
   client.get<{ data: MediaRuntime }>(`${BASE}/runtime`).then((r) => r.data);
 
-/** 只读运行配置；写入仍由旧系统设置页负责。 */
+/** 媒体运行配置（含密钥）读写；密钥只回掩码，留空即不修改。 */
 export const fetchMediaSettings = () =>
   client
     .get<{ data: MediaSettings }>('/site-admin-api/system/media-settings')
+    .then((r) => r.data);
+
+export const updateMediaStorage = (payload: Record<string, unknown>) =>
+  client
+    .patch<{ data: MediaSettings }>('/site-admin-api/system/media-settings/storage', payload)
+    .then((r) => r.data);
+
+export const updateMediaImage = (payload: Record<string, unknown>) =>
+  client
+    .patch<{ data: MediaSettings }>('/site-admin-api/system/media-settings/image', payload)
+    .then((r) => r.data);
+
+export const updateMediaAiImage = (payload: Record<string, unknown>) =>
+  client
+    .patch<{ data: MediaSettings }>('/site-admin-api/system/media-settings/ai-image', payload)
+    .then((r) => r.data);
+
+export const testMediaAiImage = (payload: Record<string, unknown>) =>
+  client
+    .post<{ data: AiCapability }>('/site-admin-api/system/media-settings/ai-image/test', payload)
     .then((r) => r.data);
 
 // ---------- AI 生图 ----------

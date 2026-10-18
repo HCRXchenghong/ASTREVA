@@ -15,11 +15,11 @@
       <div v-if="!configured" class="not-configured">
         <a-empty description="尚未配置 AI 生图 API Key" />
         <p class="not-configured-tip">
-          请在旧系统设置页填写接口地址、API Key 与模型，验证通过后即可使用。写设置仍由旧系统设置页负责。
+          请在「系统设置」标签里填写接口地址、API Key 与模型，保存并验证通过后即可使用。
         </p>
         <a-space>
           <a-button :loading="modelsLoading" @click="loadModels(true)">重新检查</a-button>
-          <a-link href="/site-admin/?view=settings" target="_blank">前往设置</a-link>
+          <a-link href="/site-admin/content/media" target="_self">前往设置</a-link>
         </a-space>
       </div>
 
