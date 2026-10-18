@@ -55,8 +55,57 @@ export function createSystemRouter({
   storageHealth,
   aiCapability,
   translationSettings,
+  serviceBridgeAudit,
   eventRecorder
 }) {
+  /** 客服引擎的审计事件映射成系统日志条目（服务器与业务统一展示）。 */
+  function auditCategoryFor(action) {
+    const value = String(action || '');
+    if (/login|logout|password|token|session/i.test(value)) return 'auth';
+    if (/api|key|openapi/i.test(value)) return 'api';
+    if (/disable|delete|reset|revoke|kick|force/i.test(value)) return 'security';
+    if (/conversation|message|transfer|close|rating|agent/i.test(value)) return 'admin';
+    return 'server';
+  }
+
+  function auditLevelFor(action) {
+    const value = String(action || '');
+    if (/invalid|blocked|denied|rejected|rate_limit|brute/i.test(value)) return 'danger';
+    if (/disable|delete|reset|revoke|kick|force|failed/i.test(value)) return 'warning';
+    return 'info';
+  }
+
+  async function bridgeAuditEntries(limit) {
+    if (typeof serviceBridgeAudit !== 'function') return [];
+    try {
+      const payload = await serviceBridgeAudit();
+      const list = Array.isArray(payload) ? payload : payload?.events || payload?.data || [];
+      return list.slice(0, limit).map((event) => ({
+        id: `sbaudit_${event.id || `${event.created_at}_${event.action}`}`,
+        source: 'servicebridge',
+        occurredAt: event.created_at || new Date().toISOString(),
+        category: auditCategoryFor(event.action),
+        level: auditLevelFor(event.action),
+        action: event.action || '',
+        message: event.description || event.resource || '',
+        actorKind: event.actor_kind || '',
+        actorId: event.actor_id || '',
+        ip: event.ip_address || '',
+        ipSource: '',
+        method: '',
+        path: event.resource || '',
+        statusCode: null,
+        userAgent: event.user_agent || '',
+        browser: '',
+        os: '',
+        device: '',
+        detail: { resource: event.resource || '', resourceId: event.resource_id || '' }
+      }));
+    } catch {
+      return [];
+    }
+  }
+
   async function sampleCpu() {
     const start = cpuSnapshot();
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -188,7 +237,8 @@ export function createSystemRouter({
             detail: { referrer: visit.referrer, visitorId: visit.visitorId, sessionId: visit.sessionId, isBot: visit.isBot, host: visit.host }
           }));
         }
-        const merged = [...events.map((event) => ({ ...event, source: 'event' })), ...visits]
+        const bridge = url.searchParams.get('include_servicebridge') === '0' ? [] : await bridgeAuditEntries(Math.min(Number(limit) || 100, 200));
+        const merged = [...events.map((event) => ({ ...event, source: 'event' })), ...visits, ...bridge]
           .filter((item) => {
             if (filters.level && item.level !== filters.level) return false;
             if (filters.category && item.category !== filters.category) return false;

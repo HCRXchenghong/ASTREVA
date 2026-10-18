@@ -1355,6 +1355,7 @@ const systemModule = createSystemRouter({
   storageHealth: () => mediaStore.health(),
   aiCapability: () => mediaAiService.capability(),
   translationSettings: () => translationService.publicSettings(),
+  serviceBridgeAudit: () => serviceBridgeProxy.adminJson('/api/admin/audit-events?limit=200', { signal: AbortSignal.timeout(4000) }),
   eventRecorder: recordSystemEvent
 });
 

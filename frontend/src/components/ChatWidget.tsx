@@ -1,6 +1,7 @@
 import { MessageCircle, X } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { readCookieConsent } from '../lib/consent';
+import { trackEvent } from '../lib/tracking';
 
 type ChatCopy = {
   title: string;
@@ -166,7 +167,12 @@ export default function ChatWidget({ serviceBridgeUrl, chat, lang }: { serviceBr
   const toggleChat = () => {
     setIsOpen((value) => {
       const next = !value;
-      if (next) setUnreadCount(0);
+      if (next) {
+        setUnreadCount(0);
+        // Consent-gated first-party analytics; the inline tracker stays silent
+        // until the visitor has accepted the analytics category.
+        trackEvent('chat_open');
+      }
       return next;
     });
   };

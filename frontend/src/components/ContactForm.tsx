@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { trackEvent } from '../lib/tracking';
 
 type Status = 'idle' | 'submitting' | 'success' | 'error';
 
@@ -84,6 +85,8 @@ export default function ContactForm({ form }: { form: FormCopy }) {
       formElement.reset();
       setStatus('success');
       setMessage(form.successMessage);
+      // Consent-gated first-party analytics (no-op until analytics is allowed).
+      trackEvent('lead_submit', { path: window.location.pathname, referrer: document.referrer || '' });
     } catch {
       setStatus('error');
       setMessage(form.errorMessage);
