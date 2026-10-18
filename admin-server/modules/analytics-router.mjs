@@ -6,6 +6,78 @@ const BEACON_RATE_WINDOW_MS = 60 * 1000;
 const BEACON_RATE_MAX = Number(process.env.ADMIN_ANALYTICS_RATE_MAX || 120);
 const ALLOWED_EVENTS = new Set(['pageview', 'chat_open', 'lead_submit']);
 
+/**
+ * 匿名 UV 的根密钥。生产优先用独立配置的 `ADMIN_ANALYTICS_ANON_SALT`，
+ * 未配置时依次回退到已有的服务端密钥，保证"当日盐"不是公开常量。
+ */
+const ANONYMOUS_SALT_SECRET = String(
+  process.env.ADMIN_ANALYTICS_ANON_SALT ||
+  process.env.ADMIN_2FA_SESSION_SECRET ||
+  process.env.CMS_DATA_ENCRYPTION_KEY ||
+  process.env.DATA_ENCRYPTION_KEY ||
+  'astreva-anonymous-visitor-salt'
+);
+const ANONYMOUS_SALT_NAMESPACE = 'astreva-analytics-anonymous-visitor:v1';
+
+/**
+ * 匿名 UV 的 IP 归并（截断）：
+ * - IPv4 只保留 /24（末段置 0）；
+ * - IPv6 只保留 /64（前 4 个 hextet）；
+ * - 顺手去掉端口、方括号与 zone id，避免同一地址因写法不同被算成多个访客。
+ * 归并后的网段才是 HMAC 的输入；明文 IP 不会出现在 visitor_key 里。
+ */
+export function truncateIpForAnonymization(value) {
+  let candidate = String(value || '').trim();
+  if (!candidate) return 'unknown';
+  // [2001:db8::1]:443 / 2001:db8::1%en0 / 203.0.113.5:8080
+  candidate = candidate.replace(/^\[([^\]]+)\](?::\d+)?$/, '$1');
+  candidate = candidate.replace(/%[0-9a-z._-]+$/i, '');
+  const ipv4WithPort = candidate.match(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/);
+  if (ipv4WithPort) candidate = ipv4WithPort[1];
+  // IPv4-mapped IPv6：按 IPv4 处理。
+  candidate = candidate.replace(/^::ffff:/i, '');
+  const ipv4 = candidate.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const octets = ipv4.slice(1).map(Number);
+    if (octets.every((item) => item >= 0 && item <= 255)) {
+      return `${octets[0]}.${octets[1]}.${octets[2]}.0`;
+    }
+    return candidate;
+  }
+  if (candidate.includes(':')) {
+    const hextets = ipv6Hextets(candidate);
+    if (hextets) return hextets.slice(0, 4).join(':');
+  }
+  return candidate.slice(0, 64);
+}
+
+function ipv6Hextets(address) {
+  const doubleColon = address.indexOf('::');
+  const head = doubleColon >= 0 ? address.slice(0, doubleColon) : address;
+  const tail = doubleColon >= 0 ? address.slice(doubleColon + 2) : '';
+  const headParts = head ? head.split(':') : [];
+  const tailParts = tail ? tail.split(':') : [];
+  if (doubleColon < 0) return headParts.length === 8 ? headParts : null;
+  const missing = 8 - headParts.length - tailParts.length;
+  if (missing < 0) return null;
+  return [...headParts, ...Array(missing).fill('0'), ...tailParts];
+}
+
+/** 当日轮换的盐：以统计日（看板时区）为输入对根密钥做一次 HMAC，跨天自然失效。 */
+export function dailyAnonymousSalt(day, { secret = ANONYMOUS_SALT_SECRET } = {}) {
+  return crypto.createHmac('sha256', secret).update(`${ANONYMOUS_SALT_NAMESPACE}:${day}`).digest();
+}
+
+/**
+ * 匿名访客键：`anon_` + HMAC-SHA256(当日盐, 归并 IP) 的前 16 字节（hex）。
+ * 同一 IP 同一天稳定、跨天不可关联；服务端不保存明文 IP 与 visitor_id 的映射。
+ */
+export function anonymousVisitorId(ip, { day = '', secret } = {}) {
+  const salt = dailyAnonymousSalt(day || new Date().toISOString().slice(0, 10), { secret });
+  const key = crypto.createHmac('sha256', salt).update(truncateIpForAnonymization(ip)).digest('hex').slice(0, 32);
+  return `anon_${key}`;
+}
+
 function clean(value, maxLength) {
   return String(value || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, maxLength);
 }
@@ -31,6 +103,10 @@ function safePath(value) {
 /**
  * 官网数据看板与系统日志（访问部分）。
  * - POST /site-admin-api/analytics/visit 公开埋点（管理员登录之外的唯一公开写入口）
+ *   - 已同意 analytics：前端带 visitor_id/session_id，按真实标识计数 UV；
+ *   - 未同意 analytics：前端只发 `anonymous:true`，服务端用「当日轮换的盐 + 归并 IP」
+ *     派生 `anon_<16字节HMAC>` 作为 visitor_id。匿名 UV 只在当天去重、不含跨天识别；
+ *     访问明细（IP/UA）依旧入库，供安全审计与危险识别。
  * - 其余接口都需要管理员会话
  */
 export function createAnalyticsRouter({
@@ -44,6 +120,16 @@ export function createAnalyticsRouter({
   timezoneFromRequest
 }) {
   const rateWindows = new Map();
+
+  /** 统计日按看板时区切分，与 analyticsSummary 的 today 口径一致。 */
+  function anonymousDayKey() {
+    try {
+      const tz = timezoneFromRequest?.() || 'Asia/Shanghai';
+      return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }
 
   function allowBeacon(req) {
     const key = resolveClient(req)?.ip || 'unknown';
@@ -82,6 +168,14 @@ export function createAnalyticsRouter({
       const userAgent = clean(req.headers['user-agent'], 512);
       const parsed = parseUserAgent(userAgent);
       const ipInfo = resolveClient(req);
+      // 未同意 analytics 的访客：前端只发匿名 pageview，不携带任何本地标识。
+      // 服务端用「当日盐 + 归并 IP」派生匿名 visitor_key，仅用于当日 UV 去重；
+      // 访问明细（含 IP/UA）仍按原样入库，供安全审计与危险识别使用。
+      const anonymous = payload.anonymous === true;
+      const visitorId = anonymous
+        ? anonymousVisitorId(ipInfo.ip, { day: anonymousDayKey() })
+        : clean(payload.visitor_id, 64);
+      const sessionId = anonymous ? '' : clean(payload.session_id, 64);
       await platformStore.recordVisit({
         path: safePath(payload.path),
         host: clean(payload.host || req.headers.host, 200),
@@ -94,8 +188,9 @@ export function createAnalyticsRouter({
         browserVersion: parsed.browserVersion,
         os: parsed.os,
         device: parsed.device,
-        visitorId: clean(payload.visitor_id, 64),
-        sessionId: clean(payload.session_id, 64),
+        visitorId,
+        sessionId,
+        anonymous,
         eventType: ALLOWED_EVENTS.has(payload.event_type) ? payload.event_type : 'pageview',
         isBot: parsed.isBot
       });

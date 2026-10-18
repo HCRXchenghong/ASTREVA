@@ -757,6 +757,8 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
       device: String(visit.device || '').slice(0, 16),
       visitorId: String(visit.visitorId || '').slice(0, 64),
       sessionId: String(visit.sessionId || '').slice(0, 64),
+      // 未同意 analytics 的匿名上报：visitor_id 为服务端派生的当日匿名键，仅用于当日 UV 去重。
+      anonymous: Boolean(visit.anonymous),
       eventType: ['pageview', 'chat_open', 'lead_submit'].includes(visit.eventType) ? visit.eventType : 'pageview',
       isBot: Boolean(visit.isBot)
     };
@@ -767,10 +769,10 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     }
     await query(
       `INSERT INTO site_analytics_visits
-        (path, host, referrer, ip, ip_source, country, user_agent, browser, browser_version, os, device, visitor_id, session_id, event_type, is_bot)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        (path, host, referrer, ip, ip_source, country, user_agent, browser, browser_version, os, device, visitor_id, session_id, anonymous, event_type, is_bot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [row.path, row.host, row.referrer, row.ip, row.ipSource, row.country, row.userAgent, row.browser,
-        row.browserVersion, row.os, row.device, row.visitorId, row.sessionId, row.eventType, row.isBot]
+        row.browserVersion, row.os, row.device, row.visitorId, row.sessionId, row.anonymous, row.eventType, row.isBot]
     );
   }
 
@@ -795,7 +797,7 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const result = await query(
       `SELECT id, occurred_at, path, host, referrer, ip, ip_source, country, user_agent, browser, browser_version,
-              os, device, visitor_id, session_id, event_type, is_bot
+              os, device, visitor_id, session_id, anonymous, event_type, is_bot
        FROM site_analytics_visits ${where} ORDER BY occurred_at DESC LIMIT $${params.length}`,
       params
     );
@@ -815,6 +817,7 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
       device: row.device,
       visitorId: row.visitor_id,
       sessionId: row.session_id,
+      anonymous: Boolean(row.anonymous),
       eventType: row.event_type,
       isBot: row.is_bot
     }));
@@ -826,7 +829,7 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     if (!usePostgres) return memoryVisits.find((item) => Number(item.id) === numeric) || null;
     const result = await query(
       `SELECT id, occurred_at, path, host, referrer, ip, ip_source, country, user_agent, browser, browser_version,
-              os, device, visitor_id, session_id, event_type, is_bot
+              os, device, visitor_id, session_id, anonymous, event_type, is_bot
        FROM site_analytics_visits WHERE id = $1`,
       [numeric]
     );
@@ -836,11 +839,16 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
       id: Number(row.id), occurredAt: toIso(row.occurred_at), path: row.path, host: row.host, referrer: row.referrer,
       ip: row.ip, ipSource: row.ip_source, country: row.country, userAgent: row.user_agent, browser: row.browser,
       browserVersion: row.browser_version, os: row.os, device: row.device, visitorId: row.visitor_id,
-      sessionId: row.session_id, eventType: row.event_type, isBot: row.is_bot
+      sessionId: row.session_id, anonymous: Boolean(row.anonymous), eventType: row.event_type, isBot: row.is_bot
     };
   }
 
-  /** 官网数据看板用：今日/本月 PV、UV、询盘、会话打开与按日曲线。 */
+  /**
+   * 官网数据看板用：今日/本月 PV、UV、询盘、会话打开与按日曲线。
+   * UV 口径为 `COUNT(DISTINCT visitor_id)`：已同意访客用真实前端标识，未同意访客用
+   * 服务端派生的 `anon_*` 当日键，因此匿名流量也计入 UV；匿名键每天轮换，
+   * 无法跨天识别同一人（最小化原则）。访问明细仍保留 IP/UA 供安全审计。
+   */
   async function analyticsSummary(options = {}) {
     const tz = validTimezone(options.tz) ? options.tz : 'Asia/Shanghai';
     const now = new Date();

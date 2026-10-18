@@ -76,15 +76,19 @@ const isIndexable = !/noindex/i.test(robots);
       window.__ASTREVA_LOCALES__ = astrevaLocales;
       window.__ASTREVA_LOCALE_PATHS__ = astrevaLocalePaths;
     </script>
-    <!-- First-party analytics: consent-gated page view and event beacon. -->
+    <!-- First-party analytics: page views are always measured (anonymously until consent). -->
     <script is:inline define:vars={{ astrevaAnalyticsBase: PUBLIC_CONTENT_API_URL }}>
       (() => {
         const CONSENT_KEY = 'astreva_cookie_consent';
         const VISITOR_KEY = 'astreva_visitor_id';
         const SESSION_KEY = 'astreva_session_id';
         const ENDPOINT = '/site-admin-api/analytics/visit';
-        // Only the optional analytics category is gated: without consent nothing
-        // is sent and no identifier is written to storage.
+        // Page views are always measured, in one of two modes:
+        // - analytics consent granted: the original behaviour, with visitor_id/session_id;
+        // - no consent: an anonymous page view only. No local identifier is generated or
+        //   read (astreva_visitor_id / astreva_session_id stay untouched). The server
+        //   derives a same-day anonymous key from a daily rotating salt plus the
+        //   truncated IP, used only for same-day UV deduplication.
         function analyticsAllowed() {
           try {
             const raw = localStorage.getItem(CONSENT_KEY);
@@ -137,8 +141,19 @@ const isIndexable = !/noindex/i.test(robots);
         }
         let pageviewSent = false;
         function sendPageview() {
-          if (pageviewSent || !analyticsAllowed()) return;
+          if (pageviewSent) return;
           pageviewSent = true;
+          if (!analyticsAllowed()) {
+            // Anonymous mode: page context only, no visitor or session identifier.
+            send({
+              path: window.location.pathname,
+              referrer: document.referrer || '',
+              host: window.location.host,
+              event_type: 'pageview',
+              anonymous: true
+            });
+            return;
+          }
           send({
             path: window.location.pathname,
             referrer: document.referrer || '',
@@ -149,11 +164,12 @@ const isIndexable = !/noindex/i.test(robots);
           });
         }
         function track(eventType, detail) {
-          if (!analyticsAllowed()) return;
           if (eventType === 'pageview') {
             sendPageview();
             return;
           }
+          // Other events (chat_open / lead_submit) are still consent-gated.
+          if (!analyticsAllowed()) return;
           const extra = detail && typeof detail === 'object' ? detail : {};
           send({
             path: typeof extra.path === 'string' && extra.path ? extra.path : window.location.pathname,
@@ -165,13 +181,12 @@ const isIndexable = !/noindex/i.test(robots);
           });
         }
         window.AstrevaTracking = { track };
+        // The first page view is sent immediately in whichever mode applies. If consent
+        // arrives later it is intentionally NOT re-sent with identifiers: that would count
+        // the same page twice in PV. Every navigation on this static site is a fresh page
+        // load, so the next view is identified; this view is already covered by the
+        // anonymous same-day key.
         sendPageview();
-        // Consent may arrive after this page loaded: flush the pending page view
-        // (and write the identifiers) as soon as analytics is accepted.
-        window.addEventListener('astreva:cookie-consent', (event) => {
-          const detail = event && event.detail;
-          if (detail && detail.analytics === true) sendPageview();
-        });
       })();
     </script>
     <title>{title}</title>

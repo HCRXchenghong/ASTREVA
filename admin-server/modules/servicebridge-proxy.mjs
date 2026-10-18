@@ -1,3 +1,34 @@
+/**
+ * 统一错误体：客服引擎（Go）失败时返回 `{"error":"<code>","message":"..."}`，
+ * 而 admin-server 自己的错误体是 `{"error":{"message":"..."}}`。控制台已经双形状兼容，
+ * 但两种形状混用会持续产生歧义，所以在代理层收敛：
+ *   `{"error":"code","message":"msg"}` -> `{"error":{"code":"code","message":"msg"},"message":"msg"}`
+ *
+ * 这条归一化**只**作用于非 2xx 的 JSON 响应：
+ * - 已经是 `{"error":{"...":...}}` 形状的响应原样透传（幂等）；
+ * - 非 JSON（纯文本 500、上传/下载的二进制、流式图片/语音）一律原样返回，
+ *   避免改写 Content-Type 与字节内容；
+ * - JSON 数组、标量、以及没有字符串 error 字段的 JSON 都视为"无法识别"，原样返回。
+ * 顶层 message 继续保留，旧客户端即使仍按字符串 error 读取，也能先拿到可读文案。
+ */
+export function normalizeUpstreamErrorBody(text, contentType) {
+  if (!text) return text;
+  if (!/json/i.test(String(contentType || ''))) return text;
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return text;
+  // 只认 Go 侧的字符串 error；对象 error（admin-server / 已归一化）原样透传。
+  if (typeof payload.error !== 'string') return text;
+  const code = payload.error;
+  const message = typeof payload.message === 'string' && payload.message ? payload.message : code;
+  // 展开原字段以保留上游附带的额外信息（如 details），再覆盖 error/message。
+  return JSON.stringify({ ...payload, error: { code, message }, message });
+}
+
 /** 客服引擎的服务端代理：浏览器不会接触客服管理员口令。 */
 export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, publicOrigin, bodyRaw, bodyJson, json, send, verifySession, onConfigChange = null }) {
   let adminSession = { token: '', expiresAt: 0 };
@@ -90,9 +121,12 @@ export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, 
     try {
       let response = await call(false);
       if (response.status === 401 || response.status === 403) response = await call(true);
-      const body = await response.text();
+      const upstreamContentType = response.headers.get('content-type') || 'application/json; charset=utf-8';
+      let body = await response.text();
+      // 仅收敛失败响应的错误体；成功响应与二进制/流式响应不做任何改写。
+      if (!response.ok) body = normalizeUpstreamErrorBody(body, upstreamContentType);
       const headers = {
-        'Content-Type': response.headers.get('content-type') || 'application/json; charset=utf-8',
+        'Content-Type': upstreamContentType,
         'Cache-Control': 'no-store'
       };
       if (response.headers.get('content-disposition')) headers['Content-Disposition'] = response.headers.get('content-disposition');

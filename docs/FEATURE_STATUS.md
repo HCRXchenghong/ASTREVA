@@ -9,7 +9,11 @@
 - 今日 PV/UV/询盘/发起会话、本月 PV/UV 曲线（自绘 SVG，无新增依赖）。
 - 服务器资源：CPU 使用率+负载+核数、内存（系统/进程/cgroup）、磁盘（按挂载点）、数据库（大小/连接数/上限）。
 - 服务健康：控制台、客服引擎、构建服务、对象存储、AI 生图、网站翻译（状态色 + 延迟 + 失败原因）。
-- 数据来源：**第一方埋点**（`POST /site-admin-api/analytics/visit`，来源白名单 + 限流 + 爬虫过滤），仅在访客同意 analytics 后采集。
+- 数据来源：**第一方埋点**（`POST /site-admin-api/analytics/visit`，来源白名单 + 限流 + 爬虫过滤）。
+  - **页面浏览始终采集**：已同意 analytics 时带 `visitor_id/session_id`；未同意时只发 `anonymous:true`（前端不写任何本地标识）。
+  - **匿名 UV 口径**：服务端用「当日轮换的盐 + 归并 IP（IPv4 /24、IPv6 /64）」派生 `anon_<16 字节 HMAC>` 作为 `visitor_id`，UV 仍是 `COUNT(DISTINCT visitor_id)`，因此未同意访客也计入 UV；但匿名键**只在当天去重、无法跨天识别同一人**（最小化原则）。
+  - **访问明细（含 IP/UA）照常入库**，用于系统日志、危险识别与安全审计；`anonymous` 标记随明细一起保存，便于区分两种口径。
+  - **同意迟到不补发**：加载时已按匿名口径发出 pageview 的，之后点同意不会补发带标识的同页 pageview（避免同一次浏览计两次 PV）；静态站每次导航都是新的页面加载，下一次浏览即带标识。
 
 ### ② 系统日志
 - 合并三类来源：控制台事件 + 官网访问明细（IP/UA/浏览器/系统/设备/国家/来源页）+ 客服引擎审计。
@@ -82,7 +86,7 @@
 1. **Android/iOS 正式签名与商店发布**：按你的要求不做。`Runner.entitlements` 的 `aps-environment` 上线前需改 `production`。
 2. **本地 GeoLite2 的 mmdb 格式不支持**：本机无法访问 Go 模块代理，不能引入 mmdb 解析库。当前支持 **GeoLite2 CSV**（零依赖）与第三方 IP 库；配置 `.mmdb` 时会给出明确提示，引入解析库后即可支持。
 3. **`ai_first` / `ai_only` 的已知退化**：判断"AI 上游是否已配置"时只看全局 `ai_settings`；若只通过「能力绑定」提供 Key（全局 Key 为空），这两种模式会退化为关键词。修复方向：把绑定可用性传入判定。
-4. **错误响应体形状不统一**：Go 侧是 `{"error":"code","message":"..."}`，admin-server 侧是 `{"error":{"message":"..."}}`；前端已双形状兼容，但建议后续统一。
+4. **错误响应体形状已在代理层收敛**：客服引擎（Go）的 `{"error":"code","message":"..."}` 经 `servicebridge-proxy` 转发时统一为 `{"error":{"code","message"},"message":"..."}`；`/api/admin/*`、`/api/conversations/*` 等经代理的 JSON 失败响应都生效，已是对象 `error` 的响应与非 JSON（纯文本/上传下载二进制）原样透传。未经代理、由 admin-server 直接实现的接口本就返回对象 `error`。
 5. **知识库检索为内存打分**：中文 bigram + 英文词 + BM25（已归一化），**没有倒排索引**；条目量大（数万级）时需加索引或向量检索。
 6. **画像的 AI 摘要**依赖文本上游；未配置上游时只有地理与语言画像（摘要保持上次值）。
 7. **画像的 `last_path`（最近访问页面）当前为空**：官网埋点在 admin-server、画像在客服引擎，本波未做跨服务写入；字段与写入口已就绪，埋点接入后即可填充；`visits` 已按建会话计数。
@@ -91,7 +95,7 @@
 10. **`conversation.takeover_request` / `conversation.sla` 为实时事件**：控制台的询盘页目前是轮询刷新（不订阅 WebSocket），因此控制台侧不显示这两类提示，只有客服 App 会弹；如需控制台也提示，需要给询盘页加 WS 或轮询接口。
 11. **未做真机/模拟器验证**：沙箱无法运行 `flutter build/test`；App 侧已用 `dart analyze` + 165 条纯 Dart 断言（76 契约 + 89 画像）覆盖解析与文案逻辑，UI 交互未在真机跑过。
 12. **4 个浏览器集成测试需要 `/usr/bin/google-chrome`**（本机是 macOS 的 Chrome 路径），因此在 `verify-all` 中记为 SKIP；控制台/前端的 Playwright 冒烟是另用 macOS Chrome 跑的。
-13. **官网静态站的访问统计依赖访客同意**：未点同意前不发送埋点，UV 会略低于真实流量（合规取舍）。
+13. **匿名 UV 为当日去重，不含跨天识别**：未同意 analytics 的访客也会上报 `anonymous:true` 页面浏览，服务端用「当日轮换的盐 + 归并 IP」派生匿名键计入 UV。因此**同一人换 IP 或跨天访问会被算作不同匿名访客**（同一 /24 内的不同 IP 反而会归并为一个匿名访客）；这是"不做跨天追踪"的最小化取舍。访问明细（含明文 IP/UA，仅管理员可见）仍保留 30 天用于安全审计，匿名采集不改变危险识别与系统日志行为。
 
 ## 四、验证基线（每次交付都会跑）
 
@@ -100,7 +104,7 @@
 | `bash scripts/verify-all.sh`（11 步） | PASS 10 / FAIL 0 / SKIP 1（唯一 SKIP 是 `frontend/dist` 已存在时按设计跳过的桩构建） |
 | Go 后端 | `go test ./...` 全绿、`go vet`、`gofmt` 干净、关键包 `-race` 干净 |
 | **真实 PostgreSQL 集成测试** | **10 个用例通过**（偏好/知识库/供应商与绑定/限额/策略/队列与渠道/开放 API scopes/接管与无人值守/SLA 与转派/**访客画像**） |
-| 控制台 | `npm run test:admin` 57 用例 / 53 通过 / 0 失败 / 4 跳过（需 Chrome 路径） |
+| 控制台 | `npm run test:admin` 66 用例 / 62 通过 / 0 失败 / 4 跳过（需 Chrome 路径） |
 | App | `dart analyze`（含 tool/）No issues found；契约断言 76 + 画像断言 89 全通过 |
 | 前端契约 | `npm run cms:contract` 通过 |
 | 引擎端到端 | 真实 Go 引擎 + 真实 admin-server 解析客户端：供应商创建/掩码/一键取模型/绑定/禁用回退 5/5；知识库建库/导入/检索/设置/推荐发送 11 项 |

@@ -148,9 +148,14 @@ CREATE TABLE IF NOT EXISTS site_analytics_visits (
   device TEXT NOT NULL DEFAULT '',
   visitor_id TEXT NOT NULL DEFAULT '',
   session_id TEXT NOT NULL DEFAULT '',
+  -- 未同意 analytics 的匿名上报：visitor_id 为服务端派生的「当日匿名键」，仅用于当日 UV 去重。
+  anonymous BOOLEAN NOT NULL DEFAULT false,
   event_type TEXT NOT NULL DEFAULT 'pageview',
   is_bot BOOLEAN NOT NULL DEFAULT false
 );
+
+-- 老库补齐匿名标记列（迁移可重复执行）。
+ALTER TABLE site_analytics_visits ADD COLUMN IF NOT EXISTS anonymous BOOLEAN NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS idx_site_analytics_visits_time ON site_analytics_visits(occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_site_analytics_visits_visitor ON site_analytics_visits(visitor_id, occurred_at DESC);

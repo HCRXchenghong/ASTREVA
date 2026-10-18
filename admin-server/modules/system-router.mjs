@@ -260,7 +260,7 @@ export function createSystemRouter({
             browser: visit.browser,
             os: visit.os,
             device: visit.device,
-            detail: { referrer: visit.referrer, visitorId: visit.visitorId, sessionId: visit.sessionId, isBot: visit.isBot, host: visit.host }
+            detail: { referrer: visit.referrer, visitorId: visit.visitorId, sessionId: visit.sessionId, anonymous: visit.anonymous === true, isBot: visit.isBot, host: visit.host }
           }));
         }
         const bridge = url.searchParams.get('include_servicebridge') === '0' ? [] : await bridgeAuditEntries(Math.min(Number(limit) || 100, 200));
