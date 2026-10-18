@@ -79,9 +79,10 @@ func NewMemoryStore(options Options) *MemoryStore {
 		auditEvents:     []domain.AuditEvent{},
 		apiApps:         map[string]*domain.APIApp{},
 		contacts: domain.ContactSettings{
-			Telephone:  "400-123-4567",
-			WhatsApp:   "+86 400 888 8888",
-			Telegram:   "@AstrevaSupport",
+			// 联系方式默认为空：真实联系方式必须由管理员在后台配置，杜绝内置占位号码。
+			Telephone:  "",
+			WhatsApp:   "",
+			Telegram:   "",
 			EntryReply: "您好，欢迎咨询在线客服，请问有什么可以帮您？",
 		},
 		ai: domain.AISettings{
@@ -133,11 +134,8 @@ func NewMemoryStore(options Options) *MemoryStore {
 	s.agentsByAccount[agent.Account] = agent
 	s.agentsByID[agent.ID] = agent
 
-	s.keywordRules = []domain.KeywordRule{
-		{ID: "kw_phone", Keyword: "电话", MatchType: "contains", Reply: "客服电话：400-123-4567", Enabled: true, Priority: 90, Action: "telephone"},
-		{ID: "kw_whatsapp", Keyword: "WhatsApp", MatchType: "contains", Reply: "官方 WhatsApp：+86 400 888 8888", Enabled: true, Priority: 80, Action: "whatsapp"},
-		{ID: "kw_telegram", Keyword: "Telegram", MatchType: "contains", Reply: "官方 Telegram：@AstrevaSupport", Enabled: true, Priority: 75, Action: "telegram"},
-	}
+	// 不再内置任何含占位号码的关键词规则，避免访客拿到假联系方式。
+	s.keywordRules = []domain.KeywordRule{}
 
 	return s
 }
@@ -317,24 +315,28 @@ func (s *MemoryStore) SetAgentStatus(agentID string, status domain.AgentStatus) 
 		}
 	}
 	if status == domain.AgentOnline {
-		conversations := s.sortedConversationsLocked()
-		for _, conversation := range conversations {
-			if agent.DisabledAt != nil {
-				break
-			}
-			if agent.CurrentConversations >= agent.MaxConversations {
-				break
-			}
-			switch conversation.Status {
-			case domain.ConversationWaiting, domain.ConversationHumanRequested, domain.ConversationAIServing:
-				if conversation.AssignedAgentID != "" {
-					continue
+		// 非营业时间不自动接单：客服仍可正常上线，只是不静默认领历史等待会话。
+		if s.businessOpenLocked(time.Now().UTC()) {
+			conversations := s.sortedConversationsLocked()
+			for _, conversation := range conversations {
+				if agent.DisabledAt != nil {
+					break
 				}
-				// 静默分配：不改变会话状态，客服实际回复后才对外显示人工服务。
-				conversation.AssignedAgentID = agent.ID
-				conversation.UpdatedAt = time.Now().UTC()
-				agent.CurrentConversations++
-				assigned = append(assigned, *conversation)
+				if agent.CurrentConversations >= agent.MaxConversations {
+					break
+				}
+				switch conversation.Status {
+				case domain.ConversationWaiting, domain.ConversationHumanRequested, domain.ConversationAIServing:
+					if conversation.AssignedAgentID != "" {
+						continue
+					}
+					// 静默分配：不改变会话状态，客服实际回复后才对外显示人工服务。
+					conversation.AssignedAgentID = agent.ID
+					conversation.UpdatedAt = time.Now().UTC()
+					agent.CurrentConversations++
+					s.fillAssignedAgentLocked(conversation)
+					assigned = append(assigned, *conversation)
+				}
 			}
 		}
 	}
@@ -469,7 +471,10 @@ func (s *MemoryStore) UpdateAppRelease(id string, next domain.AppRelease) (domai
 		}
 		current.VersionCode = next.VersionCode
 	}
-	current.ReleaseNotes = strings.TrimSpace(next.ReleaseNotes)
+	// 与 Postgres 对齐：release_notes 仅非空才更新，避免 PATCH 未带该字段时被清空。
+	if notes := strings.TrimSpace(next.ReleaseNotes); notes != "" {
+		current.ReleaseNotes = notes
+	}
 	current.ForceUpdate = next.ForceUpdate
 	current.Enabled = next.Enabled
 	return *current, nil
@@ -1422,6 +1427,8 @@ func (s *MemoryStore) ContactSettings() domain.ContactSettings {
 	return s.contacts
 }
 
+// UpdateContactSettings 整体替换联系方式（PATCH 语义为整体替换）：允许管理员把某项显式清空，
+// 未传/传空的字段即视为清空，不再保留旧值。
 func (s *MemoryStore) UpdateContactSettings(next domain.ContactSettings) (domain.ContactSettings, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1429,16 +1436,12 @@ func (s *MemoryStore) UpdateContactSettings(next domain.ContactSettings) (domain
 	if err := validateContactSettings(next); err != nil {
 		return s.contacts, err
 	}
-	if strings.TrimSpace(next.Telephone) != "" {
-		s.contacts.Telephone = strings.TrimSpace(next.Telephone)
+	s.contacts = domain.ContactSettings{
+		Telephone:  strings.TrimSpace(next.Telephone),
+		WhatsApp:   strings.TrimSpace(next.WhatsApp),
+		Telegram:   strings.TrimSpace(next.Telegram),
+		EntryReply: strings.TrimSpace(next.EntryReply),
 	}
-	if strings.TrimSpace(next.WhatsApp) != "" {
-		s.contacts.WhatsApp = strings.TrimSpace(next.WhatsApp)
-	}
-	if strings.TrimSpace(next.Telegram) != "" {
-		s.contacts.Telegram = strings.TrimSpace(next.Telegram)
-	}
-	s.contacts.EntryReply = strings.TrimSpace(next.EntryReply)
 	return s.contacts, nil
 }
 
@@ -1699,6 +1702,10 @@ func (s *MemoryStore) assignHumanConversationLocked(conversation *domain.Convers
 	if conversation.AssignedAgentID != "" {
 		return
 	}
+	// 非营业时间不自动分配人工：AI 继续接待，访客留言由人工在营业时间内跟进。
+	if !s.businessOpenLocked(time.Now().UTC()) {
+		return
+	}
 	var selected *domain.Agent
 	for _, agent := range s.agentsByID {
 		if agent.Status != domain.AgentOnline || agent.DisabledAt != nil {
@@ -1717,7 +1724,21 @@ func (s *MemoryStore) assignHumanConversationLocked(conversation *domain.Convers
 	selected.CurrentConversations++
 	selected.Updated = time.Now().UTC()
 	conversation.AssignedAgentID = selected.ID
+	s.fillAssignedAgentLocked(conversation)
 	// 静默分配：只记录客服，不改会话状态。客服实际回复后状态才变为 assigned（无痕转人工）。
+}
+
+// fillAssignedAgentLocked 按 AssignedAgentID 补齐只读的客服名称与头像，供访客端展示真实客服。
+func (s *MemoryStore) fillAssignedAgentLocked(conversation *domain.Conversation) {
+	conversation.AssignedAgentName = ""
+	conversation.AssignedAgentAvatar = ""
+	if conversation.AssignedAgentID == "" {
+		return
+	}
+	if agent, ok := s.agentsByID[conversation.AssignedAgentID]; ok {
+		conversation.AssignedAgentName = agent.Name
+		conversation.AssignedAgentAvatar = agent.AvatarURL
+	}
 }
 
 func (s *MemoryStore) selectTransferTargetLocked(agentID, group string) *domain.Agent {
@@ -1826,12 +1847,18 @@ func (s *MemoryStore) generateAutoRepliesLocked(conversation *domain.Conversatio
 	}
 
 	generated := []domain.Message{}
+	now := time.Now().UTC()
 	requestHuman := func() ([]domain.Message, bool) {
+		// 非营业时间只提示一次留言：只有从未进入过 human_requested 状态才追加提示。
+		wasHumanRequested := conversation.Status == domain.ConversationHumanRequested
 		conversation.Status = domain.ConversationHumanRequested
-		conversation.UpdatedAt = time.Now().UTC()
+		conversation.UpdatedAt = now
 		// 静默转人工：后台直接分配客服，但不向访客展示任何"转接中"提示，
 		// 访客侧在客服真实回复前始终由 AI 继续接待。
 		s.assignHumanConversationLocked(conversation)
+		if !s.businessOpenLocked(now) && conversation.AssignedAgentID == "" && !wasHumanRequested {
+			generated = append(generated, s.createMessageLocked(conversation.ID, "", domain.SenderSystem, "system", domain.MessageSystem, s.offlineReplyTextLocked(), nil))
+		}
 		return generated, s.aiReplyAvailableLocked()
 	}
 	if messageType == domain.MessageHandoff || isHumanKeyword(normalized) {
@@ -1864,6 +1891,12 @@ func (s *MemoryStore) generateAutoRepliesLocked(conversation *domain.Conversatio
 	}
 
 	if !s.aiReplyAvailableLocked() {
+		// AI 不可用且当前非营业时间：记录留言并进入人工队列，同样只提示一次。
+		if !s.businessOpenLocked(now) && conversation.AssignedAgentID == "" && conversation.Status != domain.ConversationHumanRequested {
+			conversation.Status = domain.ConversationHumanRequested
+			conversation.UpdatedAt = now
+			generated = append(generated, s.createMessageLocked(conversation.ID, "", domain.SenderSystem, "system", domain.MessageSystem, s.offlineReplyTextLocked(), nil))
+		}
 		return generated, false
 	}
 	// AI 优先介入：无论是否在营业时间，人工实际回复前都由 AI 接待。
@@ -1906,6 +1939,19 @@ func (s *MemoryStore) isBusinessTimeLocked(now time.Time) bool {
 		return currentMinutes >= startMinutes && currentMinutes < endMinutes
 	}
 	return currentMinutes >= startMinutes || currentMinutes < endMinutes
+}
+
+// businessOpenLocked 判断当前是否允许自动分配人工：营业时间开关关闭（Enabled=false）表示不限制。
+func (s *MemoryStore) businessOpenLocked(now time.Time) bool {
+	if !s.business.Enabled {
+		return true
+	}
+	return s.isBusinessTimeLocked(now)
+}
+
+// offlineReplyTextLocked 返回非营业时间给访客的留言提示，未配置时使用内置默认文案。
+func (s *MemoryStore) offlineReplyTextLocked() string {
+	return offlineReplyText(s.business)
 }
 
 func sortConversations(conversations []domain.Conversation) {

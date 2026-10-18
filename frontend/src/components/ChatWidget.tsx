@@ -1,5 +1,6 @@
 import { MessageCircle, X } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { readCookieConsent } from '../lib/consent';
 
 type ChatCopy = {
   title: string;
@@ -15,7 +16,6 @@ type ChatCopy = {
 // blocked by Safari ITP / privacy modes, losing the session on refresh. Scripts
 // running in the host page can read/write first-party storage without restriction.
 const VISITOR_SESSION_KEY = 'customer_service_visitor_session_v1';
-const CONSENT_KEY = 'astreva_cookie_consent';
 
 type VisitorSessionPayload = {
   visitorToken: string;
@@ -24,13 +24,14 @@ type VisitorSessionPayload = {
   savedAt: number;
 };
 
+// Necessary storage is always allowed: persisting the visitor session token is
+// required to provide the requested chat service (and to survive refreshes).
+// The consent record is still parsed here so that optional categories remain
+// opt-in; the public site currently ships no third-party analytics script, but
+// any future one must gate on `consentAllowsCategory('analytics')`.
 function consentAllowsStorage(): boolean {
-  try {
-    const value = window.localStorage.getItem(CONSENT_KEY);
-    return value === null || value === 'accepted';
-  } catch {
-    return false;
-  }
+  const consent = readCookieConsent();
+  return consent ? consent.necessary : true;
 }
 
 function sanitizeVisitorSession(data: unknown): VisitorSessionPayload | null {

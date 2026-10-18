@@ -90,6 +90,22 @@ class MainActivity : FlutterActivity() {
                         result.error("SETTINGS_FAILED", error.message, null)
                     }
                 }
+                "openUrl" -> {
+                    val url = call.argument<String>("url")
+                    if (url.isNullOrBlank()) {
+                        result.error("ARGUMENT", "missing url", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(intent)
+                        result.success(true)
+                    } catch (error: Exception) {
+                        result.error("OPEN_URL_FAILED", error.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }

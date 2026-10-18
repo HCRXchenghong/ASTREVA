@@ -352,12 +352,12 @@ func (s *Service) AddVisitorMessage(conversationID, clientMsgID, content string,
 }
 
 func (s *Service) generateAIReply(conversationID, currentMsgID, userText string, visitorLang string) {
-	ctx, cancel := context.WithTimeout(context.Background(), translationWindow)
+	settings := s.settingsWithCacheMode()
+	ctx, cancel := context.WithTimeout(context.Background(), aiReplyTimeout(settings))
 	defer cancel()
 	visitorLang = ai.NormalizeLang(visitorLang, ai.LangZh)
 	// 仅读取本会话的历史消息作为上下文，按 conversationID 隔离，绝不跨会话共享。
 	history := s.conversationAITurns(conversationID, currentMsgID, visitorLang)
-	settings := s.settingsWithCacheMode()
 	// cacheKey 用会话 ID：同一会话的多轮请求共享同一缓存前缀，跨会话天然隔离。
 	reply, err := s.ai.Reply(ctx, settings, s.store.ContactSettings(), history, userText, visitorLang, conversationID)
 	if err != nil {
@@ -763,6 +763,26 @@ func errorEvent(err error) realtime.Event {
 
 // translationWindow 是同步翻译路径的最长等待时间，超时后回退为原文下发，避免阻塞消息送达。
 const translationWindow = 25 * time.Second
+
+// defaultAITimeout 是未配置（或配置过小）时 AI 请求的默认超时。
+const defaultAITimeout = 20 * time.Second
+
+// maxAIReplyTimeout 是 AI 回复整条链路的外层超时上限，AI 配置最多允许 120s，留足翻译余量。
+const maxAIReplyTimeout = 150 * time.Second
+
+// aiReplyTimeout 计算 AI 回复链路的外层超时：取配置的超时时间（不低于默认 20s）再加翻译余量，
+// 保证 AI 请求本身不会被外层 context 提前掐断，同时不超过 150s 上限。
+func aiReplyTimeout(settings domain.AISettings) time.Duration {
+	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
+	if timeout < defaultAITimeout {
+		timeout = defaultAITimeout
+	}
+	timeout += translationWindow
+	if timeout > maxAIReplyTimeout {
+		timeout = maxAIReplyTimeout
+	}
+	return timeout
+}
 
 // translateInitialMessageForVisitor 把欢迎语等初始消息翻译成访客语言。
 // 能静态映射的直接映射；其余异步调用 AI 翻译，翻译完成后通过 WebSocket 推送更新（前端按消息 ID 替换气泡）。

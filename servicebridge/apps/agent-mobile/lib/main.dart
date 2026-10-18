@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:just_audio/just_audio.dart';
 
 import 'models.dart';
 import 'push_service.dart';
@@ -205,6 +206,8 @@ class _LoginPageState extends State<LoginPage> {
     ServiceBridgeClient.savedServerUrl().then((url) {
       if (mounted) setState(() => _serverController.text = url);
       _checkAppUpdate(url);
+      // B1：拿到服务器地址后先用服务端下发的参数初始化推送。
+      PushService.instance.configureFromServer(url);
     });
   }
 
@@ -227,37 +230,55 @@ class _LoginPageState extends State<LoginPage> {
     await showDialog<void>(
       context: context,
       barrierDismissible: !info.forceUpdate,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(info.forceUpdate ? '必须更新到新版本' : '发现新版本'),
-        content: Text(
-          '当前版本过低，请升级到 v${info.latestVersion} 后继续使用。\n\n更新内容：\n$notes',
-        ),
-        actions: [
-          if (!info.forceUpdate)
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('稍后再说'),
-            ),
-          FilledButton(
-            onPressed: () async {
-              Navigator.of(dialogContext).pop();
-              await _performUpdate(info, baseUrl);
-              if (info.forceUpdate) {
-                await _showUpdateDialog(info, baseUrl);
-              }
-            },
-            child: const Text('立即更新'),
+      builder: (dialogContext) => PopScope(
+        // B8：强制更新时 Android 返回键不能关闭弹窗。
+        canPop: !info.forceUpdate,
+        child: AlertDialog(
+          title: Text(info.forceUpdate ? '必须更新到新版本' : '发现新版本'),
+          content: Text(
+            '当前版本过低，请升级到 v${info.latestVersion} 后继续使用。\n\n更新内容：\n$notes',
           ),
-        ],
+          actions: [
+            if (!info.forceUpdate)
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('稍后再说'),
+              ),
+            FilledButton(
+              onPressed: () async {
+                if (info.forceUpdate && AppUpdater.isIOS) {
+                  // B8：iOS 打开真实 App Store 页面，弹窗保持阻断但不再递归重弹。
+                  await _openIOSStore(info);
+                  return;
+                }
+                Navigator.of(dialogContext).pop();
+                await _performUpdate(info, baseUrl);
+                if (info.forceUpdate && mounted && !AppUpdater.isIOS) {
+                  await _showUpdateDialog(info, baseUrl);
+                }
+              },
+              child: const Text('立即更新'),
+            ),
+          ],
+        ),
       ),
     );
   }
 
+  Future<void> _openIOSStore(AppUpdateInfo info) async {
+    try {
+      await AppUpdater.openExternalUrl(info.iosStoreUrl);
+      if (mounted) {
+        _showMessage(context, '已打开 App Store，请更新到 v${info.latestVersion} 后继续使用。');
+      }
+    } catch (error) {
+      if (mounted) _showMessage(context, _readableError(error));
+    }
+  }
+
   Future<void> _performUpdate(AppUpdateInfo info, String baseUrl) async {
     if (AppUpdater.isIOS) {
-      if (mounted) {
-        _showMessage(context, '请前往 App Store 更新到 v${info.latestVersion}。');
-      }
+      await _openIOSStore(info);
       return;
     }
     if (!mounted) return;
@@ -284,7 +305,11 @@ class _LoginPageState extends State<LoginPage> {
         await AppUpdater.openInstallSettings();
         return;
       }
-      final path = await AppUpdater.downloadApk(info.downloadUrl);
+      // B9：下载后按服务端下发的 sha256 校验更新包。
+      final path = await AppUpdater.downloadApk(
+        info.downloadUrl,
+        expectedChecksum: info.checksum,
+      );
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
       await AppUpdater.installApk(path);
     } catch (error) {
@@ -499,11 +524,14 @@ class _HomePageState extends State<HomePage> {
   RatingSummary? _rating;
   bool _loading = true;
   int _tab = 0;
+  bool _sessionExpired = false;
 
   @override
   void initState() {
     super.initState();
     _profile = widget.profile;
+    // B2：任何请求命中 401 时统一清理本地状态并跳回登录页。
+    widget.client.onUnauthorized = _handleUnauthorized;
     _loadRating();
     _events = widget.client.events.listen(_handleEvent);
     widget.client.connect();
@@ -520,11 +548,40 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// B2：登录态失效后停止轮询与重连，清空路由并回到登录页。
+  Future<void> _handleUnauthorized() async {
+    if (_sessionExpired) return;
+    _sessionExpired = true;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    PushService.instance.openHandler = null;
+    await _events?.cancel();
+    _events = null;
+    try {
+      await widget.client.close();
+    } catch (_) {
+      // ignore: 清理失败不阻塞回到登录页。
+    }
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (_) => false,
+    );
+    messenger?.showSnackBar(
+      const SnackBar(content: Text('登录已失效，请重新登录')),
+    );
+  }
+
   Future<void> _loadRating() async {
     try {
       final rating = await widget.client.ratingSummary();
       if (mounted) setState(() => _rating = rating);
-    } catch (_) {
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        await _handleUnauthorized();
+        return;
+      }
       // 好评率展示失败不影响主流程，刷新时会重试。
     }
   }
@@ -546,6 +603,10 @@ class _HomePageState extends State<HomePage> {
         _showMessage(context, '头像已更新');
       }
     } catch (error) {
+      if (isUnauthorizedError(error)) {
+        await _handleUnauthorized();
+        return;
+      }
       if (mounted) _showMessage(context, _readableError(error));
     }
   }
@@ -577,7 +638,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
-    if (mounted) _refresh(silent: true);
+    if (mounted && !_sessionExpired) _refresh(silent: true);
   }
 
   void _handleEvent(Map<String, dynamic> event) {
@@ -606,6 +667,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _refresh({bool silent = false}) async {
+    if (_sessionExpired) return;
     if (!silent && mounted) setState(() => _loading = true);
     try {
       final items = await widget.client.conversations();
@@ -615,6 +677,10 @@ class _HomePageState extends State<HomePage> {
       );
       if (mounted) setState(() => _conversations = items);
     } catch (error) {
+      if (isUnauthorizedError(error)) {
+        await _handleUnauthorized();
+        return;
+      }
       if (!silent && mounted) _showMessage(context, _readableError(error));
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -626,6 +692,10 @@ class _HomePageState extends State<HomePage> {
       final profile = await widget.client.setStatus(status);
       if (mounted) setState(() => _profile = profile);
     } catch (error) {
+      if (isUnauthorizedError(error)) {
+        await _handleUnauthorized();
+        return;
+      }
       if (mounted) _showMessage(context, _readableError(error));
     }
   }
@@ -646,6 +716,10 @@ class _HomePageState extends State<HomePage> {
       await _refresh(silent: true);
       if (mounted) _showMessage(context, '会话已删除');
     } catch (error) {
+      if (isUnauthorizedError(error)) {
+        await _handleUnauthorized();
+        return;
+      }
       if (mounted) _showMessage(context, _readableError(error));
     }
   }
@@ -667,7 +741,10 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _pollTimer?.cancel();
     _events?.cancel();
-    widget.client.setStatus('offline').catchError((_) => _profile);
+    widget.client.onUnauthorized = null;
+    if (!_sessionExpired) {
+      widget.client.setStatus('offline').catchError((_) => _profile);
+    }
     widget.client.dispose();
     super.dispose();
   }
@@ -1323,20 +1400,33 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
+  /// B7：单页消息数量，向上滚动时用 before 继续加载。
+  static const int _pageSize = 30;
+
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
   final _picker = ImagePicker();
   StreamSubscription<Map<String, dynamic>>? _events;
-  List<ChatMessage> _messages = const [];
+  final List<ChatMessage> _messages = <ChatMessage>[];
   bool _loading = true;
   bool _sendingImage = false;
+  bool _loadingOlder = false;
+  bool _hasMore = false;
+  String _nextBefore = '';
+  String _status = 'waiting';
+  String _visitorLabel = '';
   DateTime _lastTypingSent = DateTime.fromMillisecondsSinceEpoch(0);
+
+  bool get _closed => _status == 'closed';
 
   @override
   void initState() {
     super.initState();
+    _status = widget.conversation.status;
+    _visitorLabel = widget.conversation.visitorLabel;
     _events = widget.client.events.listen(_handleEvent);
     _messageController.addListener(_onTypingChanged);
+    _scrollController.addListener(_onScroll);
     _loadMessages();
     widget.client.markRead(widget.conversation.id).catchError((_) {});
   }
@@ -1350,6 +1440,13 @@ class _ChatPageState extends State<ChatPage> {
     widget.client.sendTyping(widget.conversation.id);
   }
 
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    if (_scrollController.position.pixels <= 60) {
+      _loadOlder();
+    }
+  }
+
   void _handleEvent(Map<String, dynamic> event) {
     final type = '${event['event'] ?? ''}';
     final data = Map<String, dynamic>.from(event['data'] as Map? ?? {});
@@ -1361,24 +1458,109 @@ class _ChatPageState extends State<ChatPage> {
       widget.client.markRead(widget.conversation.id).catchError((_) {});
     }
     if (type == 'conversation.status_changed' &&
-        data['id'] == widget.conversation.id &&
-        data['status'] == 'closed') {
-      if (mounted) _showMessage(context, '该会话已结束');
+        data['id'] == widget.conversation.id) {
+      // B10：会话一结束就立刻禁用输入，不必等重新进入页面。
+      final status = '${data['status'] ?? ''}'.trim();
+      if (status.isEmpty || status == _status) return;
+      setState(() => _status = status);
+      if (status == 'closed' && mounted) {
+        _showMessage(context, '该会话已结束');
+      }
     }
   }
 
   Future<void> _loadMessages({bool silent = false}) async {
     if (!silent && mounted) setState(() => _loading = true);
     try {
-      final items = await widget.client.messages(widget.conversation.id);
-      if (mounted) {
-        setState(() => _messages = items);
+      final page = await widget.client.messagePage(
+        widget.conversation.id,
+        limit: _pageSize,
+      );
+      if (!mounted) return;
+      final jumpToBottom = !silent || _messages.isEmpty;
+      setState(() {
+        if (silent) {
+          _mergeNewest(page.messages);
+        } else {
+          _messages
+            ..clear()
+            ..addAll(page.messages);
+        }
+        _hasMore = page.hasMore;
+        _nextBefore = page.nextBefore;
+      });
+      if (jumpToBottom) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
       }
     } catch (error) {
+      if (isUnauthorizedError(error)) return;
       if (mounted) _showMessage(context, _readableError(error));
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// 静默刷新时按 server_msg_id 合并，保留已加载的更早历史。
+  void _mergeNewest(List<ChatMessage> incoming) {
+    for (final message in incoming) {
+      if (message.id.isEmpty) {
+        _messages.add(message);
+        continue;
+      }
+      final index = _messages.indexWhere((item) => item.id == message.id);
+      if (index >= 0) {
+        _messages[index] = message;
+      } else {
+        _messages.add(message);
+      }
+    }
+  }
+
+  /// B7：向上滚动加载更早消息，并保持当前阅读位置。
+  Future<void> _loadOlder() async {
+    if (_loadingOlder || !_hasMore || _nextBefore.isEmpty) return;
+    if (_status == 'closed' && _messages.isEmpty) return;
+    _loadingOlder = true;
+    final before = _nextBefore;
+    final distanceToBottom = _scrollController.hasClients
+        ? _scrollController.position.maxScrollExtent -
+              _scrollController.position.pixels
+        : 0.0;
+    try {
+      final page = await widget.client.messagePage(
+        widget.conversation.id,
+        limit: _pageSize,
+        before: before,
+      );
+      if (!mounted) return;
+      setState(() {
+        final known = _messages
+            .map((item) => item.id)
+            .where((id) => id.isNotEmpty)
+            .toSet();
+        final older = page.messages
+            .where((item) => item.id.isEmpty || !known.contains(item.id))
+            .toList();
+        _messages.insertAll(0, older);
+        _hasMore = page.hasMore;
+        _nextBefore = page.nextBefore;
+      });
+      if (_scrollController.hasClients) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!_scrollController.hasClients) return;
+          final position = _scrollController.position;
+          final target = (position.maxScrollExtent - distanceToBottom).clamp(
+            position.minScrollExtent,
+            position.maxScrollExtent,
+          );
+          _scrollController.jumpTo(target);
+        });
+      }
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      if (mounted) _showMessage(context, _readableError(error));
+    } finally {
+      _loadingOlder = false;
     }
   }
 
@@ -1411,9 +1593,113 @@ class _ChatPageState extends State<ChatPage> {
         messageType: 'image',
       );
     } catch (error) {
+      if (isUnauthorizedError(error)) return;
       if (mounted) _showMessage(context, _readableError(error));
     } finally {
       if (mounted) setState(() => _sendingImage = false);
+    }
+  }
+
+  /// B5：长按自己发送的文本/图片消息 → 撤回。
+  Future<void> _showMessageActions(ChatMessage message) async {
+    if (_closed) return;
+    final canRevoke =
+        message.senderType == 'agent' &&
+        !message.revoked &&
+        (message.messageType == 'text' || message.messageType == 'image');
+    if (!canRevoke) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.undo),
+              title: const Text('撤回'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _revokeMessage(message);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('取消'),
+              onTap: () => Navigator.of(sheetContext).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _revokeMessage(ChatMessage message) async {
+    if (message.id.isEmpty) {
+      _showMessage(context, '消息尚未发送成功，暂时不能撤回');
+      return;
+    }
+    if (!await _confirm(context, '撤回消息', '撤回后访客会看到"该消息已撤回"，确定撤回吗？')) {
+      return;
+    }
+    try {
+      await widget.client.revokeMessage(widget.conversation.id, message.id);
+      if (!mounted) return;
+      setState(() {
+        final index = _messages.indexWhere((item) => item.id == message.id);
+        if (index >= 0) _messages[index] = _messages[index].asRevoked();
+      });
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      if (mounted) _showMessage(context, _readableError(error));
+    }
+  }
+
+  /// B6：编辑访客备注，保存后刷新列表显示。
+  Future<void> _editRemark() async {
+    final controller = TextEditingController(text: _visitorLabel);
+    final remark = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('访客备注'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 60,
+          decoration: const InputDecoration(
+            hintText: '例如：VIP 客户 / 待回访',
+            counterText: '',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (remark == null) return;
+    try {
+      final updated = await widget.client.updateRemark(
+        widget.conversation.id,
+        remark,
+      );
+      if (!mounted) return;
+      setState(() {
+        _visitorLabel = updated?.visitorLabel.trim().isNotEmpty == true
+            ? updated!.visitorLabel
+            : (remark.isEmpty ? _visitorLabel : remark);
+      });
+      _showMessage(context, '备注已保存');
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      if (mounted) _showMessage(context, _readableError(error));
     }
   }
 
@@ -1431,8 +1717,11 @@ class _ChatPageState extends State<ChatPage> {
     if (!await _confirm(context, '结束会话', '结束后访客将不能继续发送消息，确定继续吗？')) return;
     try {
       await widget.client.closeConversation(widget.conversation.id);
-      if (mounted) Navigator.pop(context);
+      if (!mounted) return;
+      setState(() => _status = 'closed');
+      Navigator.pop(context);
     } catch (error) {
+      if (isUnauthorizedError(error)) return;
       if (mounted) _showMessage(context, _readableError(error));
     }
   }
@@ -1441,6 +1730,7 @@ class _ChatPageState extends State<ChatPage> {
   void dispose() {
     _events?.cancel();
     _messageController.removeListener(_onTypingChanged);
+    _scrollController.removeListener(_onScroll);
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -1448,23 +1738,28 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    final closed = widget.conversation.status == 'closed';
+    final closed = _closed;
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,
         title: Column(
           children: [
             Text(
-              widget.conversation.visitorLabel,
+              _visitorLabel,
               style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             ),
             Text(
-              _statusLabel(widget.conversation.status),
+              _statusLabel(_status),
               style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
             ),
           ],
         ),
         actions: [
+          IconButton(
+            onPressed: _editRemark,
+            tooltip: '访客备注',
+            icon: const Icon(Icons.edit_note_outlined),
+          ),
           if (!closed)
             IconButton(
               onPressed: _closeConversation,
@@ -1475,18 +1770,40 @@ class _ChatPageState extends State<ChatPage> {
       ),
       body: Column(
         children: [
+          if (closed)
+            Container(
+              width: double.infinity,
+              color: AppColors.border,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: const Text(
+                '会话已结束，仅可查看历史消息',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ),
           Expanded(
             child: _loading && _messages.isEmpty
                 ? const Center(child: CircularProgressIndicator())
                 : ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.all(16),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) => _MessageBubble(
-                      message: _messages[index],
-                      baseUrl: widget.client.baseUrl,
-                      myAvatarUrl: widget.myAvatarUrl,
-                    ),
+                    itemCount: _messages.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return _HistoryHeader(
+                          loading: _loadingOlder,
+                          hasMore: _hasMore,
+                          onLoad: _loadOlder,
+                        );
+                      }
+                      final message = _messages[index - 1];
+                      return _MessageBubble(
+                        message: message,
+                        baseUrl: widget.client.baseUrl,
+                        myAvatarUrl: widget.myAvatarUrl,
+                        onLongPress: () => _showMessageActions(message),
+                      );
+                    },
                   ),
           ),
           SafeArea(
@@ -1540,15 +1857,63 @@ class _ChatPageState extends State<ChatPage> {
   }
 }
 
+/// B7：列表顶部的历史加载入口。
+class _HistoryHeader extends StatelessWidget {
+  const _HistoryHeader({
+    required this.loading,
+    required this.hasMore,
+    required this.onLoad,
+  });
+
+  final bool loading;
+  final bool hasMore;
+  final VoidCallback onLoad;
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (hasMore) {
+      return Center(
+        child: TextButton(
+          onPressed: onLoad,
+          child: const Text('加载更早的消息'),
+        ),
+      );
+    }
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 10),
+      child: Center(
+        child: Text(
+          '没有更早的消息了',
+          style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+        ),
+      ),
+    );
+  }
+}
+
 class _MessageBubble extends StatefulWidget {
   const _MessageBubble({
     required this.message,
     required this.baseUrl,
     this.myAvatarUrl,
+    this.onLongPress,
   });
   final ChatMessage message;
   final String baseUrl;
   final String? myAvatarUrl;
+  final VoidCallback? onLongPress;
 
   @override
   State<_MessageBubble> createState() => _MessageBubbleState();
@@ -1556,6 +1921,36 @@ class _MessageBubble extends StatefulWidget {
 
 class _MessageBubbleState extends State<_MessageBubble> {
   bool _showOriginal = false;
+  bool _playingAudio = false;
+
+  @override
+  void dispose() {
+    if (_playingAudio) {
+      _VoicePlaybackController.instance.stop();
+    }
+    super.dispose();
+  }
+
+  /// B4：播放远端语音消息（just_audio，单实例播放，避免多条语音叠加）。
+  Future<void> _toggleAudio() async {
+    final controller = _VoicePlaybackController.instance;
+    if (_playingAudio) {
+      await controller.stop();
+      if (mounted) setState(() => _playingAudio = false);
+      return;
+    }
+    final raw = widget.message.content.trim();
+    if (raw.isEmpty) return;
+    final url = raw.startsWith('/') ? '${widget.baseUrl}$raw' : raw;
+    setState(() => _playingAudio = true);
+    try {
+      await controller.play(url);
+    } catch (_) {
+      if (mounted) _showMessage(context, '语音播放失败');
+    } finally {
+      if (mounted) setState(() => _playingAudio = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1640,7 +2035,13 @@ class _MessageBubbleState extends State<_MessageBubble> {
                       ),
                     ),
                   ),
-                _buildBubbleBody(context, isMine, isAI),
+                if (widget.onLongPress != null)
+                  GestureDetector(
+                    onLongPress: widget.onLongPress,
+                    child: _buildBubbleBody(context, isMine, isAI),
+                  )
+                else
+                  _buildBubbleBody(context, isMine, isAI),
                 const SizedBox(height: 3),
                 Text(
                   _formatTime(message.createdAt),
@@ -1686,6 +2087,28 @@ class _MessageBubbleState extends State<_MessageBubble> {
           width: 200,
           fit: BoxFit.cover,
           errorBuilder: (_, _, _) => Text(message.content),
+        ),
+      );
+    } else if (message.messageType == 'audio') {
+      // B4：语音消息气泡，点击播放远端 URL。
+      content = InkWell(
+        onTap: _toggleAudio,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _playingAudio
+                  ? Icons.pause_circle_filled
+                  : Icons.play_circle_fill,
+              size: 28,
+              color: AppColors.primary,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _playingAudio ? '播放中…' : '语音消息',
+              style: TextStyle(color: textColor, fontSize: 14),
+            ),
+          ],
         ),
       );
     } else {
@@ -1887,3 +2310,33 @@ Future<bool> _confirm(
       ),
     ) ??
     false;
+
+/// B4：全局单实例语音播放器，保证同一时刻只有一条语音在播放。
+class _VoicePlaybackController {
+  _VoicePlaybackController._();
+
+  static final _VoicePlaybackController instance = _VoicePlaybackController._();
+
+  final AudioPlayer _player = AudioPlayer();
+  String? _currentUrl;
+
+  /// 播放 [url]；Future 在播放结束、暂停或被 stop 后完成。
+  Future<void> play(String url) async {
+    if (_currentUrl != url) {
+      await _player.stop();
+      _currentUrl = url;
+      await _player.setUrl(url);
+    } else {
+      await _player.seek(Duration.zero);
+    }
+    await _player.play();
+  }
+
+  Future<void> stop() async {
+    try {
+      await _player.stop();
+    } catch (_) {
+      // 停止失败无需向上抛出。
+    }
+  }
+}

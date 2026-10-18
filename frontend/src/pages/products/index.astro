@@ -46,14 +46,23 @@ const catalog = categories.map((category) => ({
         </div>
 
         <div class="grid items-start gap-7 lg:grid-cols-[250px_minmax(0,1fr)]">
-          <aside class="overflow-hidden border border-[#d8dee7] bg-white" style="border-radius:var(--radius-ui)" aria-label={catalogCopy.categoriesAriaLabel}>
+          <aside
+            class="overflow-hidden border border-[#d8dee7] bg-white"
+            style="border-radius:var(--radius-ui)"
+            role="tablist"
+            aria-orientation="vertical"
+            aria-label={catalogCopy.categoriesAriaLabel}
+          >
             {categories.map((category, index) => (
               <button
                 type="button"
+                id={`catalog-tab-${category.slug}`}
+                role="tab"
                 class="catalog-trigger"
                 data-category-trigger={category.slug}
                 aria-controls={`catalog-${category.slug}`}
                 aria-selected={category.slug === firstCategory?.slug ? 'true' : 'false'}
+                tabindex={category.slug === firstCategory?.slug ? 0 : -1}
               >
                 <span>{String(index + 1).padStart(2, '0')}</span>
                 <strong>{category.name}</strong>
@@ -66,7 +75,10 @@ const catalog = categories.map((category) => ({
               <section
                 id={`catalog-${category.slug}`}
                 data-category-panel={category.slug}
-                class={category.slug === firstCategory?.slug ? '' : 'hidden'}
+                role="tabpanel"
+                aria-labelledby={`catalog-tab-${category.slug}`}
+                tabindex="0"
+                class={`focus:outline-none ${category.slug === firstCategory?.slug ? '' : 'hidden'}`}
               >
                 <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                   <div>
@@ -120,13 +132,29 @@ const catalog = categories.map((category) => ({
     const triggers = Array.from(document.querySelectorAll<HTMLElement>('[data-category-trigger]'));
     const panels = Array.from(document.querySelectorAll<HTMLElement>('[data-category-panel]'));
 
-    const activateCategory = (slug: string) => {
-      triggers.forEach((trigger) => trigger.setAttribute('aria-selected', String(trigger.dataset.categoryTrigger === slug)));
+    const activateCategory = (slug: string, focus = false) => {
+      triggers.forEach((trigger) => {
+        const isActive = trigger.dataset.categoryTrigger === slug;
+        trigger.setAttribute('aria-selected', String(isActive));
+        trigger.tabIndex = isActive ? 0 : -1;
+        if (isActive && focus) trigger.focus();
+      });
       panels.forEach((panel) => panel.classList.toggle('hidden', panel.dataset.categoryPanel !== slug));
     };
 
-    triggers.forEach((trigger) => {
+    triggers.forEach((trigger, index) => {
       trigger.addEventListener('click', () => activateCategory(trigger.dataset.categoryTrigger || ''));
+      trigger.addEventListener('keydown', (event) => {
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        let nextIndex = index;
+        if (event.key === 'ArrowDown') nextIndex = (index + 1) % triggers.length;
+        if (event.key === 'ArrowUp') nextIndex = (index - 1 + triggers.length) % triggers.length;
+        if (event.key === 'Home') nextIndex = 0;
+        if (event.key === 'End') nextIndex = triggers.length - 1;
+        const next = triggers[nextIndex];
+        activateCategory(next.dataset.categoryTrigger || '', true);
+      });
     });
   </script>
 

@@ -3,6 +3,7 @@ import BaseLayout from '../../../../layouts/BaseLayout.astro';
 import InnerPageHero from '../../../../components/InnerPageHero.astro';
 import { getContent } from '../../../../lib/content';
 import { breadcrumbJsonLd, productJsonLd } from '../../../../lib/seo';
+import { resolveVideoSource } from '../../../../lib/video';
 
 export async function getStaticPaths() {
   const content = await getContent();
@@ -25,7 +26,10 @@ const badgeIcon = detail.badgeIcon;
 const featureIcon = detail.featureIcon;
 const quoteButtonIcon = detail.quoteButtonIcon;
 const downloadButtonIcon = detail.downloadButtonIcon;
-const isMp4Video = product.videoUrl && /\.(mp4|webm|ogg)(\?|#|$)/i.test(product.videoUrl);
+const video = resolveVideoSource(product.videoUrl);
+const isMp4Video = video.isFile;
+const downloads = product.downloads.filter((download) => download.url);
+const specifications = product.specifications.filter((spec) => spec.label || spec.value);
 const galleryImages = product.galleryImages.filter(Boolean);
 const jsonLd = [
   productJsonLd(product, category, content.site),
@@ -91,11 +95,11 @@ const jsonLd = [
             <a href="/support/" class="bg-[#0a66c2] hover:bg-[#084b8c] text-white px-8 py-4 rounded-xl font-bold transition-all shadow-lg hover:shadow-xl flex items-center gap-2">
               <span aria-hidden="true">{quoteButtonIcon}</span> {detail.quoteButtonLabel}
             </a>
-            {product.downloads[0] && (
-              <a href={product.downloads[0].url} class="bg-white border-2 border-gray-200 text-gray-700 hover:border-[#0a66c2] hover:text-[#0a66c2] px-8 py-4 rounded-xl font-bold transition-all flex items-center gap-2">
-                <span aria-hidden="true">{downloadButtonIcon}</span> {product.downloads[0].label}
+            {downloads.map((download) => (
+              <a href={download.url} class="bg-white border-2 border-gray-200 text-gray-700 hover:border-[#0a66c2] hover:text-[#0a66c2] px-8 py-4 rounded-xl font-bold transition-all flex items-center gap-2">
+                <span aria-hidden="true">{downloadButtonIcon}</span> {download.label}
               </a>
-            )}
+            ))}
           </div>
         </div>
       </div>
@@ -107,23 +111,30 @@ const jsonLd = [
           <p class="text-gray-500">{detail.specsDescription}</p>
         </div>
         <div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-          <div class="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-100">
-            <div class="p-10 flex gap-6">
-              <span class="text-[#0a66c2] shrink-0 text-4xl font-black" aria-hidden="true">{detail.specsPrimaryIcon}</span>
-              <div>
-                <h4 class="text-xl font-bold text-gray-900 mb-2">{detail.specsPrimaryTitle}</h4>
-                <ul class="space-y-2 text-gray-600 text-sm">
-                  {product.specifications.slice(0, 3).map((spec) => <li><strong>{spec.label}：</strong> {spec.value}</li>)}
-                </ul>
+          {specifications.length > 0 && (
+            <div class="p-8 md:p-10">
+              <div class="mb-6 flex items-center gap-5">
+                <span class="text-[#0a66c2] shrink-0 text-4xl font-black" aria-hidden="true">{detail.specsPrimaryIcon}</span>
+                <h4 class="text-xl font-bold text-gray-900">{detail.specsPrimaryTitle}</h4>
               </div>
+              <table class="w-full border-collapse text-sm">
+                <tbody class="divide-y divide-gray-100">
+                  {specifications.map((spec) => (
+                    <tr class="align-top">
+                      <th scope="row" class="w-2/5 py-3 pr-6 text-left font-bold text-gray-900 md:w-1/3">{spec.label}</th>
+                      <td class="py-3 text-gray-600">{spec.value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div class="p-10 flex gap-6">
+          )}
+          <div class={`p-8 md:p-10 ${specifications.length > 0 ? 'border-t border-gray-100 bg-gray-50/60' : ''}`}>
+            <div class="mb-4 flex items-center gap-5">
               <span class="text-[#0a66c2] shrink-0 text-4xl font-black" aria-hidden="true">{detail.descriptionIcon}</span>
-              <div>
-                <h4 class="text-xl font-bold text-gray-900 mb-2">{detail.descriptionTitle}</h4>
-                <div class="text-gray-600 text-sm leading-relaxed" set:html={product.body}></div>
-              </div>
+              <h4 class="text-xl font-bold text-gray-900">{detail.descriptionTitle}</h4>
             </div>
+            <div class="text-gray-600 text-sm leading-relaxed" set:html={product.body}></div>
           </div>
         </div>
       </div>
@@ -142,15 +153,15 @@ const jsonLd = [
         </div>
       </section>
     )}
-    {product.videoUrl && (
+    {video.url && (
       <section id="product-video" class="py-20 bg-gray-50 scroll-mt-24">
         <div class="max-w-5xl mx-auto px-6">
           <h2 class="text-3xl font-extrabold text-gray-900 mb-8 text-center">{detail.videoTitle}</h2>
-          <div class="aspect-video overflow-hidden rounded-3xl border border-gray-100 bg-black shadow-xl">
-            {isMp4Video ? (
-              <video src={product.videoUrl} controls playsinline preload="metadata" class="h-full w-full" />
+          <div class={`overflow-hidden rounded-3xl border border-gray-100 bg-black shadow-xl ${video.isShorts ? 'mx-auto aspect-[9/16] max-w-[420px]' : 'aspect-video'}`}>
+            {video.isFile ? (
+              <video src={video.url} controls playsinline preload="metadata" class="h-full w-full object-cover" />
             ) : (
-              <iframe src={product.videoUrl} title={detail.videoTitle} class="h-full w-full border-0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+              <iframe src={video.url} title={detail.videoTitle} class="h-full w-full border-0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
             )}
           </div>
         </div>

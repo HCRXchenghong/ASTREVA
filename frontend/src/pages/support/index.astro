@@ -7,6 +7,9 @@ import { getContent } from '../../lib/content';
 
 const content = await getContent();
 const support = content.support;
+const phone = content.site.phone?.trim();
+const email = content.site.email?.trim();
+const hasContactDetails = Boolean(phone || email);
 ---
 
 <BaseLayout content={content} seo={support.seo} path="/support/" jsonLd={[contactPageJsonLd(content.site)]}>
@@ -35,16 +38,22 @@ const support = content.support;
             <div>
               <h3 class="text-3xl font-bold mb-6">{support.contact.title}</h3>
               <p class="text-blue-200 mb-8 leading-relaxed">{support.contact.description}</p>
-              <div class="space-y-6">
-                <div class="flex items-center gap-4">
-                  <span class="text-blue-300 text-2xl" aria-hidden="true">{support.contact.phoneIcon}</span>
-                  <div><p class="text-sm text-blue-200">{support.contact.phoneLabel}</p><p class="font-bold text-lg">{content.site.phone}</p></div>
+              {hasContactDetails && (
+                <div class="space-y-6">
+                  {phone && (
+                    <div class="flex items-center gap-4">
+                      <span class="text-blue-300 text-2xl" aria-hidden="true">{support.contact.phoneIcon}</span>
+                      <div><p class="text-sm text-blue-200">{support.contact.phoneLabel}</p><p class="font-bold text-lg">{phone}</p></div>
+                    </div>
+                  )}
+                  {email && (
+                    <div class="flex items-center gap-4">
+                      <span class="text-blue-300 text-2xl" aria-hidden="true">{support.contact.emailIcon}</span>
+                      <div><p class="text-sm text-blue-200">{support.contact.emailLabel}</p><p class="font-bold text-lg">{email}</p></div>
+                    </div>
+                  )}
                 </div>
-                <div class="flex items-center gap-4">
-                  <span class="text-blue-300 text-2xl" aria-hidden="true">{support.contact.emailIcon}</span>
-                  <div><p class="text-sm text-blue-200">{support.contact.emailLabel}</p><p class="font-bold text-lg">{content.site.email}</p></div>
-                </div>
-              </div>
+              )}
             </div>
           </div>
           <div class="p-12 md:w-3/5">

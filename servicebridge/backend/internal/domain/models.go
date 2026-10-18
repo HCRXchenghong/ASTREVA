@@ -129,7 +129,11 @@ type Conversation struct {
 	RemarkUpdatedAt  *time.Time         `json:"remark_updated_at,omitempty"`
 	Status           ConversationStatus `json:"status"`
 	AssignedAgentID  string             `json:"assigned_agent_id,omitempty"`
-	Source           string             `json:"source"`
+	// AssignedAgentName/AssignedAgentAvatar 是只读派生字段：按 AssignedAgentID 补齐，
+	// 供访客端展示真实客服，不落库、不参与写入。
+	AssignedAgentName   string `json:"assigned_agent_name,omitempty"`
+	AssignedAgentAvatar string `json:"assigned_agent_avatar,omitempty"`
+	Source              string `json:"source"`
 	VisitorLang      string             `json:"visitor_lang,omitempty"`
 	LastMessage      string             `json:"last_message"`
 	LastMessageAt    *time.Time         `json:"last_message_at,omitempty"`

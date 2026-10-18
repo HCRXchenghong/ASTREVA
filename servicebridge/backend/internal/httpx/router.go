@@ -820,7 +820,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			FileSize:     int64(saved.Size),
 			Checksum:     saved.Checksum,
 			ReleaseNotes: strings.TrimSpace(r.FormValue("release_notes")),
-			ForceUpdate:  r.FormValue("force_update") == "true" || r.FormValue("force_update") == "1",
+			ForceUpdate:  formValueTruthy(r.FormValue("force_update")),
 			Enabled:      true,
 			DownloadURL:  saved.URL,
 		})
@@ -1037,6 +1037,17 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			return
 		}
 		preview := domain.AISettings{BaseURL: req.BaseURL, APIKey: req.APIKey, APIType: req.APIType, TimeoutSeconds: req.TimeoutSeconds}
+		// 请求体未带 api_key 时回退到已保存的 Key，与翻译模块行为一致；两者都为空才报错。
+		if strings.TrimSpace(preview.APIKey) == "" {
+			preview.APIKey = strings.TrimSpace(service.Store().AISettings().APIKey)
+		}
+		if strings.TrimSpace(preview.APIKey) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":   "ai_api_key_missing",
+				"message": "AI API Key 未配置，无法获取模型列表",
+			})
+			return
+		}
 		if err := store.ValidateAISettingsForRequest(preview); err != nil {
 			writeError(w, err)
 			return
@@ -2001,6 +2012,17 @@ func logRequests(logger *slog.Logger, next http.Handler) http.Handler {
 			"duration_ms", time.Since(start).Milliseconds(),
 		)
 	})
+}
+
+// formValueTruthy 解析 HTML 表单/布尔字段：on/true/1/yes 均视为真（大小写不敏感）。
+// HTML checkbox 默认提交 "on"，不能只认 "true"/"1"。
+func formValueTruthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "on", "true", "1", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 func sanitizeFilename(versionName string) string {

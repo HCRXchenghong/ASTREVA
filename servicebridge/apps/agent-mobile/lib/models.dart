@@ -42,6 +42,9 @@ class Conversation {
     required this.lastMessage,
     required this.updatedAt,
     required this.unread,
+    this.remark = '',
+    this.assignedAgentName = '',
+    this.assignedAgentAvatar = '',
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) => Conversation(
@@ -51,6 +54,10 @@ class Conversation {
     lastMessage: '${json['last_message'] ?? ''}',
     updatedAt: DateTime.tryParse('${json['updated_at'] ?? ''}')?.toLocal(),
     unread: (json['unread_for_agent'] as num?)?.toInt() ?? 0,
+    remark: '${json['visitor_remark'] ?? ''}',
+    // 依赖后端 A7：会话对象新增 assigned_agent_name / assigned_agent_avatar。
+    assignedAgentName: '${json['assigned_agent_name'] ?? ''}',
+    assignedAgentAvatar: '${json['assigned_agent_avatar'] ?? ''}',
   );
 
   final String id;
@@ -59,6 +66,27 @@ class Conversation {
   final String lastMessage;
   final DateTime? updatedAt;
   final int unread;
+  final String remark;
+  final String assignedAgentName;
+  final String assignedAgentAvatar;
+
+  Conversation copyWith({
+    String? visitorLabel,
+    String? status,
+    String? lastMessage,
+    int? unread,
+    String? remark,
+  }) => Conversation(
+    id: id,
+    visitorLabel: visitorLabel ?? this.visitorLabel,
+    status: status ?? this.status,
+    lastMessage: lastMessage ?? this.lastMessage,
+    updatedAt: updatedAt,
+    unread: unread ?? this.unread,
+    remark: remark ?? this.remark,
+    assignedAgentName: assignedAgentName,
+    assignedAgentAvatar: assignedAgentAvatar,
+  );
 }
 
 class ChatMessage {
@@ -97,6 +125,19 @@ class ChatMessage {
   final String originalContent;
   final DateTime createdAt;
   final bool revoked;
+
+  /// 本地撤回成功后原地更新气泡（B5）。
+  ChatMessage asRevoked() => ChatMessage(
+    id: id,
+    clientMessageId: clientMessageId,
+    conversationId: conversationId,
+    senderType: senderType,
+    messageType: 'revoked',
+    content: content,
+    originalContent: originalContent,
+    createdAt: createdAt,
+    revoked: true,
+  );
 }
 
 class RatingSummary {

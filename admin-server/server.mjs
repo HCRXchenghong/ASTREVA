@@ -60,6 +60,8 @@ const LEADS_FILE = path.join(DATA_DIR, 'leads.json');
 const AUDIT_FILE = path.join(DATA_DIR, 'site-audit-events.json');
 const PUBLISH_JOBS_FILE = path.join(DATA_DIR, 'site-publish-jobs.json');
 const UPLOAD_DIR = process.env.ADMIN_UPLOAD_DIR || path.join(ROOT, 'uploads', 'site-admin');
+// Arco Design Pro Vue 控制台构建产物；缺失时回退到旧的单页后台，避免整站不可用。
+const ADMIN_WEB_DIST = path.join(ROOT, 'admin-web', 'dist');
 const PORT = Number(process.env.PORT || 1337);
 const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_ORIGIN = process.env.PUBLIC_ADMIN_ORIGIN || `http://${HOST}:${PORT}`;
@@ -2225,6 +2227,16 @@ async function serveFile(res, file, cache = false) {
   createReadStream(safeFile).pipe(res);
 }
 
+/** 托管 Arco 控制台；首页 index.html 由 SPA 自己决定跳登录还是工作台。 */
+async function serveAdminWeb(res) {
+  const indexFile = path.join(ADMIN_WEB_DIST, 'index.html');
+  if (!existsSync(indexFile)) {
+    send(res, 503, '控制台尚未构建，请先运行 npm run build:admin-web', { 'Content-Type': 'text/plain; charset=utf-8' });
+    return;
+  }
+  return serveFile(res, indexFile, false);
+}
+
 async function mediaRuntimeSettingsPayload() {
   return {
     config: publicMediaRuntimeConfig(mediaRuntimeConfig),
@@ -2406,12 +2418,20 @@ const server = http.createServer(async (req, res) => {
     if (await handleAuth(req, res, pathname)) return;
     if (pathname.startsWith('/site-admin-api/') && await handleAdminApi(req, res, pathname)) return;
     if (pathname === '/admin-2fa' || pathname === '/admin-2fa/') {
-      send(res, 200, renderLoginPage(), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-      return;
+      // 旧的登录入口统一指向 Arco 控制台的登录页，保留 returnTo。
+      const requested = url.searchParams.get('returnTo') || '/site-admin/';
+      const returnTo = requested.startsWith('/site-admin/') && !requested.startsWith('//') ? requested : '/site-admin/';
+      return redirect(res, `/site-admin/login?returnTo=${encodeURIComponent(returnTo)}`);
+    }
+    if (pathname === '/site-admin/assets' || pathname.startsWith('/site-admin/assets/')) {
+      const assetsRoot = path.join(ADMIN_WEB_DIST, 'assets');
+      const relative = pathname.replace(/^\/site-admin\/assets\/?/, '');
+      const file = path.join(assetsRoot, relative);
+      if (!relative || !isInsideRoot(assetsRoot, file)) return send(res, 404, 'not found');
+      return serveFile(res, file, true);
     }
     if (pathname === '/site-admin' || pathname === '/site-admin/') {
-      if (!verifySession(req)) return redirect(res, '/admin-2fa?returnTo=' + encodeURIComponent('/site-admin/'));
-      return serveFile(res, path.join(ROOT, 'admin-server', 'public', 'unified-admin.html'), false);
+      return serveAdminWeb(res);
     }
     if (pathname === '/site-admin/content' || pathname === '/site-admin/content/') {
       if (!verifySession(req)) return redirect(res, '/admin-2fa?returnTo=' + encodeURIComponent(req.url || '/site-admin/?view=content'));
@@ -2476,6 +2496,11 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/') {
       redirect(res, '/site-admin/');
       return;
+    }
+    // SPA 深链接（/site-admin/workspace、/site-admin/login 等）一律回落到控制台入口，
+    // 未登录时由前端守卫跳转登录页。
+    if (pathname.startsWith('/site-admin/')) {
+      return serveAdminWeb(res);
     }
     send(res, 404, 'not found');
   } catch (error) {

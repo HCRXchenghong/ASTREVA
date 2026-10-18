@@ -2,8 +2,12 @@
 .local-logs
 node_modules
 frontend/node_modules
+admin-web/node_modules
 frontend/dist
+admin-web/dist
 data
 uploads
+.pub-cache
+.npm-cache
 servicebridge/apps/agent-mobile/.dart_tool
 servicebridge/apps/agent-mobile/build

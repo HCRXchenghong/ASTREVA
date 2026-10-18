@@ -1,6 +1,7 @@
 import { ArrowUpRight, Play, X } from 'lucide-react';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { resolveVideoSource } from '../lib/video';
 
 type Props = {
   primaryLabel: string;
@@ -13,35 +14,9 @@ type Props = {
   closeLabel: string;
 };
 
-function getVideoEmbed(url: string | undefined) {
-  if (!url) return { url: '', isShorts: false, originalUrl: '' };
-  try {
-    const parsed = new URL(url);
-    let id = '';
-    const isShorts = parsed.pathname.startsWith('/shorts/');
-    if (parsed.hostname.includes('youtu.be')) {
-      id = parsed.pathname.split('/').filter(Boolean)[0] || '';
-    } else if (isShorts) {
-      id = parsed.pathname.split('/').filter(Boolean)[1] || '';
-    } else if (parsed.pathname.startsWith('/embed/')) {
-      id = parsed.pathname.split('/').filter(Boolean)[1] || '';
-    } else {
-      id = parsed.searchParams.get('v') || '';
-    }
-    if (!id) return { url, isShorts, originalUrl: url };
-    return {
-      url: `https://www.youtube-nocookie.com/embed/${id}?rel=0&modestbranding=1&playsinline=1`,
-      isShorts,
-      originalUrl: url
-    };
-  } catch {
-    return { url, isShorts: false, originalUrl: url || '' };
-  }
-}
-
 export default function VideoModal({ primaryLabel, primaryHref, secondaryLabel, videoUrl, videoTitle, previewLabel, openExternalLabel, closeLabel }: Props) {
   const [open, setOpen] = useState(false);
-  const embed = getVideoEmbed(videoUrl);
+  const embed = resolveVideoSource(videoUrl);
   const modal = (
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/95 p-4 backdrop-blur-sm"

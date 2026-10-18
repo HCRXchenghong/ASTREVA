@@ -186,17 +186,6 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_account ON auth_sessions(kind, account_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
 
-INSERT INTO keyword_rules (id, keyword, match_type, reply, enabled, priority, action)
-VALUES
-    ('kw_phone', '电话', 'contains', '客服电话：400-123-4567', true, 90, 'telephone'),
-    ('kw_whatsapp', 'WhatsApp', 'contains', '官方 WhatsApp：+86 400 888 8888', true, 80, 'whatsapp'),
-    ('kw_telegram', 'Telegram', 'contains', '官方 Telegram：@AstrevaSupport', true, 75, 'telegram')
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO contact_settings (id, phone, wechat, wechat_reply_type, qq, qq_reply_type)
-VALUES (1, '400-123-4567', '+86 400 888 8888', 'text', '@AstrevaSupport', 'text')
-ON CONFLICT (id) DO NOTHING;
-
 INSERT INTO ai_settings (id, system_prompt)
 VALUES (1, '你是一个专业的在线客服助手，名为“小A”。请使用礼貌、专业的语气回答用户问题。')
 ON CONFLICT (id) DO NOTHING;

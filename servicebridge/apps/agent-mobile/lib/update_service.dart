@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'service_bridge.dart';
@@ -24,6 +26,18 @@ class AppUpdateInfo {
   final String releaseNotes;
   final String downloadUrl;
   final String checksum;
+
+  /// iOS 更新跳转地址：后台配置了商店/下载地址时优先使用，
+  /// 否则回退到 App Store 搜索页（B8），避免 iOS 上无法跳转。
+  String get iosStoreUrl {
+    final url = downloadUrl.trim();
+    final looksLikeStore = RegExp(
+      r'^https?://',
+    ).hasMatch(url) && !url.contains('/api/app-update/download/');
+    if (looksLikeStore) return url;
+    final term = Uri.encodeComponent('ASTREVA 在线客服');
+    return 'https://apps.apple.com/search?term=$term';
+  }
 }
 
 class AppUpdater {
@@ -97,9 +111,30 @@ class AppUpdater {
     }
   }
 
+  /// 用系统浏览器/商店打开外部链接（B8：iOS 跳转 App Store）。
+  static Future<void> openExternalUrl(String url) async {
+    final target = url.trim();
+    if (target.isEmpty) {
+      throw const ServiceBridgeException('更新地址为空，无法打开应用商店。');
+    }
+    try {
+      final opened = await _channel.invokeMethod<bool>('openUrl', {
+        'url': target,
+      });
+      if (opened == false) {
+        throw const ServiceBridgeException('无法打开应用商店，请手动前往下载。');
+      }
+    } on MissingPluginException {
+      throw ServiceBridgeException('请手动前往下载：$target');
+    } on PlatformException catch (error) {
+      throw ServiceBridgeException(error.message ?? '无法打开应用商店：$target');
+    }
+  }
+
   static Future<String> downloadApk(
     String url, {
     void Function(int received, int? total)? onProgress,
+    String expectedChecksum = '',
   }) async {
     if (!isAndroid) {
       throw const ServiceBridgeException('当前设备不能直接安装更新包，请前往应用商店更新。');
@@ -125,7 +160,29 @@ class AppUpdater {
       onProgress?.call(received, contentLength);
     }
     await sink.close();
+    await _verifyChecksum(file, expectedChecksum);
     return file.path;
+  }
+
+  /// B9：下载完成后校验 sha256，不匹配则删除文件并报错；
+  /// checksum 为空时跳过校验但记录日志。
+  static Future<void> _verifyChecksum(File file, String expected) async {
+    final expectedHash = expected.trim().toLowerCase().replaceFirst(
+      RegExp(r'^sha256:'),
+      '',
+    );
+    if (expectedHash.isEmpty) {
+      debugPrint('[update] 更新包未提供 checksum，跳过校验：${file.path}');
+      return;
+    }
+    final actual = (await sha256.bind(file.openRead()).first).toString();
+    if (actual == expectedHash) return;
+    try {
+      await file.delete();
+    } catch (error) {
+      debugPrint('[update] 校验失败后删除更新包失败：$error');
+    }
+    throw const ServiceBridgeException('更新包校验失败（sha256 不匹配），已删除下载文件。');
   }
 
   static Future<void> installApk(String path) async {

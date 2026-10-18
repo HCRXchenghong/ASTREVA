@@ -42,6 +42,10 @@ dependencies:
   path_provider: ^2.1.5
   shared_preferences: ^2.5.3
   web_socket_channel: ^3.0.3
+  # 语音消息播放（B4）
+  just_audio: ^0.10.6
+  # 更新包 sha256 校验（B9）
+  crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:

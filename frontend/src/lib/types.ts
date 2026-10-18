@@ -30,6 +30,14 @@ export type SiteSettings = {
   copyright: string;
   serviceBridgeUrl: string;
   defaultSeo: SEO;
+  /** Optional copy for the static 404 page; the page falls back to neutral defaults. */
+  notFound?: {
+    title?: string;
+    description?: string;
+    homeLabel?: string;
+    productsLabel?: string;
+    supportLabel?: string;
+  };
   searchVerification?: {
     google?: string;
     bing?: string;
@@ -71,6 +79,8 @@ export type SiteSettings = {
     suffixText: string;
     acceptAllLabel: string;
     necessaryLabel: string;
+    /** Optional footer entry that reopens the consent banner. */
+    settingsLabel?: string;
   };
   navigation: {
     homeLabel: string;

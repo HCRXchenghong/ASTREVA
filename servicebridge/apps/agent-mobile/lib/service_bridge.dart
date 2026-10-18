@@ -16,12 +16,89 @@ class LoginResult {
   final AgentProfile agent;
 }
 
+/// 一次分页历史消息（`GET /api/conversations/{id}/messages`）。
+class MessagePage {
+  const MessagePage({
+    required this.messages,
+    required this.hasMore,
+    required this.nextBefore,
+  });
+
+  final List<ChatMessage> messages;
+  final bool hasMore;
+  final String nextBefore;
+
+  static const empty = MessagePage(
+    messages: <ChatMessage>[],
+    hasMore: false,
+    nextBefore: '',
+  );
+}
+
+/// 服务端下发的 Firebase 客户端参数（`GET /api/app-config`）。
+class FirebaseClientConfig {
+  const FirebaseClientConfig({
+    this.apiKey = '',
+    this.appId = '',
+    this.messagingSenderId = '',
+    this.projectId = '',
+    this.storageBucket = '',
+    this.vapidKey = '',
+  });
+
+  factory FirebaseClientConfig.fromJson(Map<String, dynamic> json) =>
+      FirebaseClientConfig(
+        apiKey: '${json['api_key'] ?? ''}'.trim(),
+        appId: '${json['app_id'] ?? ''}'.trim(),
+        messagingSenderId: '${json['messaging_sender_id'] ?? ''}'.trim(),
+        projectId: '${json['project_id'] ?? ''}'.trim(),
+        storageBucket: '${json['storage_bucket'] ?? ''}'.trim(),
+        vapidKey: '${json['vapid_key'] ?? ''}'.trim(),
+      );
+
+  final String apiKey;
+  final String appId;
+  final String messagingSenderId;
+  final String projectId;
+  final String storageBucket;
+  final String vapidKey;
+}
+
+class AppConfig {
+  const AppConfig({
+    required this.firebase,
+    required this.pushEnabled,
+    required this.apnsEnabled,
+  });
+
+  factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
+    firebase: FirebaseClientConfig.fromJson(
+      Map<String, dynamic>.from(json['firebase'] as Map? ?? const {}),
+    ),
+    pushEnabled: json['push_enabled'] == true,
+    apnsEnabled: json['apns_enabled'] == true,
+  );
+
+  final FirebaseClientConfig firebase;
+  final bool pushEnabled;
+  final bool apnsEnabled;
+}
+
 class ServiceBridgeException implements Exception {
-  const ServiceBridgeException(this.message);
+  const ServiceBridgeException(this.message, {this.unauthorized = false});
+
   final String message;
+
+  /// 401/登录态失效时为 true，调用方据此清理本地状态并跳回登录页。
+  final bool unauthorized;
+
   @override
   String toString() => message;
 }
+
+/// 便捷判定：任意异常是否为登录态失效。
+bool isUnauthorizedError(Object error) =>
+    error is ServiceBridgeException && error.unauthorized;
 
 class ServiceBridgeClient {
   ServiceBridgeClient({required this.baseUrl});
@@ -34,6 +111,26 @@ class ServiceBridgeClient {
   Timer? _heartbeat;
   Timer? _reconnectTimer;
   bool _closedByUser = false;
+
+  /// 指数退避重连（1s → 2s → 4s … 上限 30s），连接成功后归零。
+  static const int _maxReconnectDelaySeconds = 30;
+  int _reconnectAttempts = 0;
+
+  /// 收到 `session.revoked` 后停止一切重连。
+  bool _sessionRevoked = false;
+  bool get sessionRevoked => _sessionRevoked;
+
+  /// 任何请求返回 401 时回调（B2），由 HomePage 注册以清理状态并跳回登录页。
+  void Function()? onUnauthorized;
+
+  void _notifyUnauthorized() {
+    final handler = onUnauthorized;
+    if (handler == null) return;
+    // 避免回调中的异常影响原始错误抛出。
+    try {
+      handler();
+    } catch (_) {}
+  }
 
   final _eventController = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get events => _eventController.stream;
@@ -114,11 +211,25 @@ class ServiceBridgeClient {
     return RatingSummary.fromJson(Map<String, dynamic>.from(payload));
   }
 
+  /// 公开接口：拉取服务端下发的 Firebase / 推送开关配置（B1）。
+  /// 网络失败或响应异常时抛出 [ServiceBridgeException]，由调用方决定是否忽略。
+  Future<AppConfig> appConfig() async {
+    final payload = await _request(
+      'GET',
+      '/api/app-config',
+      authenticated: false,
+    );
+    return AppConfig.fromJson(payload);
+  }
+
   Future<void> registerDeviceToken(String deviceToken) async {
     await _request(
       'POST',
       '/api/agent/device-token',
-      body: {'device_token': deviceToken},
+      body: {
+        'device_token': deviceToken,
+        'platform': Platform.isIOS ? 'ios' : 'android',
+      },
       authenticated: true,
     );
   }
@@ -133,17 +244,66 @@ class ServiceBridgeClient {
         .toList();
   }
 
-  Future<List<ChatMessage>> messages(String conversationId) async {
+  /// 历史分页：默认只取一页，向上滚动时用 [before] 取更早的消息（B7）。
+  Future<MessagePage> messagePage(
+    String conversationId, {
+    int limit = 30,
+    String? before,
+  }) async {
+    final query = StringBuffer('?limit=$limit');
+    if (before != null && before.trim().isNotEmpty) {
+      query.write('&before=${Uri.encodeQueryComponent(before.trim())}');
+    }
     final payload = await _request(
       'GET',
-      '/api/conversations/${Uri.encodeComponent(conversationId)}/messages?limit=100',
+      '/api/conversations/${Uri.encodeComponent(conversationId)}/messages$query',
     );
-    return (payload['messages'] as List? ?? [])
+    final messages = (payload['messages'] as List? ?? [])
         .map(
           (item) =>
               ChatMessage.fromJson(Map<String, dynamic>.from(item as Map)),
         )
         .toList();
+    return MessagePage(
+      messages: messages,
+      hasMore: payload['has_more'] == true,
+      nextBefore: '${payload['next_before'] ?? ''}'.trim(),
+    );
+  }
+
+  /// 兼容旧调用：只返回消息列表。
+  Future<List<ChatMessage>> messages(String conversationId) async =>
+      (await messagePage(conversationId)).messages;
+
+  /// 撤回消息（B5）。仅对自己发送的文本/图片消息生效。
+  Future<ChatMessage?> revokeMessage(
+    String conversationId,
+    String messageId,
+  ) async {
+    final payload = await _request(
+      'POST',
+      '/api/conversations/${Uri.encodeComponent(conversationId)}'
+          '/messages/${Uri.encodeComponent(messageId)}/revoke',
+      body: const {},
+    );
+    final raw = payload['message'];
+    if (raw is! Map) return null;
+    return ChatMessage.fromJson(Map<String, dynamic>.from(raw));
+  }
+
+  /// 更新访客备注（B6）。
+  Future<Conversation?> updateRemark(
+    String conversationId,
+    String remark,
+  ) async {
+    final payload = await _request(
+      'PATCH',
+      '/api/conversations/${Uri.encodeComponent(conversationId)}/remark',
+      body: {'remark': remark},
+    );
+    final raw = payload['conversation'];
+    if (raw is! Map) return null;
+    return Conversation.fromJson(Map<String, dynamic>.from(raw));
   }
 
   Future<void> markRead(String conversationId) async {
@@ -188,6 +348,13 @@ class ServiceBridgeClient {
     final response = await request.send();
     final text = await response.stream.bytesToString();
     final payload = _decode(text);
+    if (response.statusCode == 401) {
+      _notifyUnauthorized();
+      throw const ServiceBridgeException(
+        '登录已失效，请重新登录',
+        unauthorized: true,
+      );
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ServiceBridgeException(_errorMessage(payload, response.statusCode));
     }
@@ -234,11 +401,13 @@ class ServiceBridgeClient {
   void connect() {
     if (token.isEmpty) return;
     _closedByUser = false;
+    _sessionRevoked = false;
+    _reconnectAttempts = 0;
     _connectNow();
   }
 
   void _connectNow() {
-    if (_closedByUser || token.isEmpty) return;
+    if (_closedByUser || _sessionRevoked || token.isEmpty) return;
     _socketSubscription?.cancel();
     _heartbeat?.cancel();
     _reconnectTimer?.cancel();
@@ -253,9 +422,17 @@ class ServiceBridgeClient {
         socketUri,
         pingInterval: const Duration(seconds: 20),
       );
+      // 连接建立成功后退避计数归零（B3）。
+      _channel!.ready.then((_) {
+        _reconnectAttempts = 0;
+      }).catchError((Object _) {});
       _socketSubscription = _channel!.stream.listen(
         (raw) {
           final decoded = _decode('$raw');
+          if (decoded['event'] == 'session.revoked') {
+            // 登录态被后台撤销：停止重连并关闭本地通道（B3）。
+            _stopReconnect(revoked: true);
+          }
           _eventController.add(Map<String, dynamic>.from(decoded));
         },
         onError: (_) => _scheduleReconnect(),
@@ -282,9 +459,30 @@ class ServiceBridgeClient {
   void _scheduleReconnect() {
     _heartbeat?.cancel();
     _channel = null;
-    if (_closedByUser || token.isEmpty) return;
+    if (_closedByUser || _sessionRevoked || token.isEmpty) return;
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 3), _connectNow);
+    final delaySeconds = _nextReconnectDelaySeconds(_reconnectAttempts);
+    _reconnectAttempts += 1;
+    _reconnectTimer = Timer(Duration(seconds: delaySeconds), _connectNow);
+  }
+
+  /// 指数退避序列：1, 2, 4, 8, 16, 30, 30 …（上限 30 秒）。
+  static int _nextReconnectDelaySeconds(int attempt) {
+    if (attempt <= 0) return 1;
+    if (attempt >= 5) return _maxReconnectDelaySeconds;
+    final value = 1 << attempt;
+    return value > _maxReconnectDelaySeconds
+        ? _maxReconnectDelaySeconds
+        : value;
+  }
+
+  void _stopReconnect({required bool revoked}) {
+    if (revoked) _sessionRevoked = true;
+    _heartbeat?.cancel();
+    _reconnectTimer?.cancel();
+    _socketSubscription?.cancel();
+    _socketSubscription = null;
+    _channel = null;
   }
 
   Future<Map<String, dynamic>> _request(
@@ -303,6 +501,13 @@ class ServiceBridgeClient {
     final streamed = await request.send().timeout(const Duration(seconds: 15));
     final text = await streamed.stream.bytesToString();
     final payload = _decode(text);
+    if (streamed.statusCode == 401) {
+      _notifyUnauthorized();
+      throw const ServiceBridgeException(
+        '登录已失效，请重新登录',
+        unauthorized: true,
+      );
+    }
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
       throw ServiceBridgeException(_errorMessage(payload, streamed.statusCode));
     }

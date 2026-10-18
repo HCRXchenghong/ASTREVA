@@ -13,9 +13,17 @@ type Props = {
   seo?: SEO;
   path: string;
   jsonLd?: unknown[];
+  /** Optional robots policy, e.g. "noindex, follow" for the 404 page. */
+  robots?: string;
 };
 
-const { content, seo, path, jsonLd = [] } = Astro.props;
+const {
+  content,
+  seo,
+  path,
+  jsonLd = [],
+  robots = 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'
+} = Astro.props;
 const title = pageTitle(seo, content.site);
 const description = pageDescription(seo, content.site);
 const canonical = absoluteUrl(path);
@@ -29,6 +37,7 @@ const verification = content.site.searchVerification || {};
 const isLogoImage = Boolean(image && imageSource === content.site.logoUrl);
 const structuredData = [organizationJsonLd(content.site), websiteJsonLd(content.site), ...jsonLd];
 const footer = content.site.footer;
+const isIndexable = !/noindex/i.test(robots);
 ---
 
 <!doctype html>
@@ -57,10 +66,10 @@ const footer = content.site.footer;
     </script>
     <title>{title}</title>
     <meta name="description" content={description} />
-    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
-    <meta name="googlebot" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
-    <meta name="bingbot" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
-    <meta name="baiduspider" content="index, follow" />
+    <meta name="robots" content={robots} />
+    <meta name="googlebot" content={robots} />
+    <meta name="bingbot" content={robots} />
+    {isIndexable && <meta name="baiduspider" content="index, follow" />}
     <meta name="theme-color" content="#0a4d8c" />
     {verification.google && <meta name="google-site-verification" content={verification.google} />}
     {verification.bing && <meta name="msvalidate.01" content={verification.bing} />}
@@ -153,6 +162,14 @@ const footer = content.site.footer;
           <div class="flex gap-6">
             <a href="/privacy/" class="hover:text-gray-300 transition-colors">{footer.privacyLabel}</a>
             <a href="/agreement/" class="hover:text-gray-300 transition-colors">{footer.agreementLabel}</a>
+            <button
+              type="button"
+              data-cookie-settings
+              aria-haspopup="dialog"
+              class="hover:text-gray-300 transition-colors"
+            >
+              {content.site.cookie.settingsLabel || 'Cookie settings'}
+            </button>
           </div>
         </div>
       </footer>

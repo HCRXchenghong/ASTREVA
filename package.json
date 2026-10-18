@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "workspaces": [
-    "frontend"
+    "frontend",
+    "admin-web"
   ],
   "dependencies": {
     "@aws-sdk/client-s3": "3.1115.0",
@@ -15,14 +16,13 @@
     "sharp": "0.35.3",
     "typescript": "6.0.3"
   },
-  "overrides": {
-    "vite": "8.2.2"
-  },
   "scripts": {
     "dev:frontend": "npm --workspace frontend run dev",
     "cms:contract": "node scripts/check-cms-content-contract.mjs",
     "build:frontend": "npm run cms:contract && npm --workspace frontend run build",
     "preview:frontend": "npm --workspace frontend run preview",
+    "dev:admin-web": "npm --workspace admin-web run dev",
+    "build:admin-web": "npm --workspace admin-web run build",
     "dev:admin": "node admin-server/server.mjs",
     "dev:cms": "npm run dev:admin",
     "dev:backend": "npm run dev:admin",

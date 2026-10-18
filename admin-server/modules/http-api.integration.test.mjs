@@ -105,6 +105,8 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
     const allContentPage = await fetch(base + '/site-admin/content/editor?section=allContent', { headers: { Cookie: cookie } });
     const seoEditorPage = await fetch(base + '/site-admin/content/editor?section=seo', { headers: { Cookie: cookie } });
     const unifiedPage = await fetch(base + '/site-admin/?view=media', { headers: { Cookie: cookie } });
+    const spaDeepLink = await fetch(base + '/site-admin/workspace');
+    const legacyAdmin2fa = await fetch(base + '/admin-2fa?returnTo=%2Fsite-admin%2Fmedia', { redirect: 'manual' });
     const translationPage = await fetch(base + '/site-admin/translations?embed=1', { headers: { Cookie: cookie } });
     const translationStatus = await fetch(base + '/site-admin-api/translations', { headers: { Cookie: cookie } });
     const protectedMediaPage = await fetch(base + '/site-admin/media', { redirect: 'manual' });
@@ -162,12 +164,22 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
     assert.match(await seoEditorPage.text(), /一键 AI 生成三语 SEO/);
     assert.equal(unifiedPage.status, 200);
     const unifiedHtml = await unifiedPage.text();
-    assert.match(unifiedHtml, /data-view="media"/);
-    assert.match(unifiedHtml, /id="view-media"/);
-    assert.match(unifiedHtml, /id="view-settings"/);
-    assert.match(unifiedHtml, /data-view="translations"/);
-    assert.match(unifiedHtml, /id="view-translations"/);
-    assert.match(unifiedHtml, /src="\/site-admin\/settings\?embed=1"/);
+    // Arco Design Pro Vue 控制台：SPA 入口 + 构建产物脚本。
+    assert.match(unifiedHtml, /id="app"/);
+    assert.match(unifiedHtml, /\/site-admin\/assets\//);
+    assert.equal(spaDeepLink.status, 200);
+    assert.match(await spaDeepLink.text(), /id="app"/);
+    // SPA 构建产物必须能真正取到（资产路由 + 目录包含校验）。
+    const assetPath = unifiedHtml.match(/\/site-admin\/assets\/[A-Za-z0-9._-]+\.js/)?.[0];
+    assert.ok(assetPath, 'SPA HTML 应引用 /site-admin/assets/*.js');
+    const assetResponse = await fetch(base + assetPath);
+    assert.equal(assetResponse.status, 200);
+    assert.match(assetResponse.headers.get('content-type') || '', /javascript/);
+    const assetTraversal = await fetch(base + '/site-admin/assets/%2e%2e%2f%2e%2e%2fpackage.json', { redirect: 'manual' });
+    assert.equal(assetTraversal.status, 404);
+    // 旧的 2FA 入口重定向到控制台登录页并保留 returnTo。
+    assert.equal(legacyAdmin2fa.status, 302);
+    assert.equal(legacyAdmin2fa.headers.get('location'), '/site-admin/login?returnTo=%2Fsite-admin%2Fmedia');
     assert.equal(protectedMediaPage.status, 302);
     assert.match(protectedMediaPage.headers.get('location') || '', /^\/admin-2fa\?returnTo=/);
     assert.equal(mediaPage.status, 200);

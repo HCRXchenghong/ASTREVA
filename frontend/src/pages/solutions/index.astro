@@ -2,11 +2,15 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import InnerPageHero from '../../components/InnerPageHero.astro';
 import { getContent, staticPage } from '../../lib/content';
+import { resolveVideoSource } from '../../lib/video';
 
 const content = await getContent();
 const page = staticPage(content, 'solutions');
 const solutionUi = page.sections;
-const solutionSections = solutionUi.solutionSections;
+const solutionSections = solutionUi.solutionSections.map((section) => ({
+  ...section,
+  video: resolveVideoSource(section.videoUrl)
+}));
 const systemCards = solutionUi.systemCards;
 ---
 
@@ -38,8 +42,19 @@ const systemCards = solutionUi.systemCards;
 
               {index === 0 && (
                 <div class="video-placeholder mb-12">
-                  {section.videoUrl ? (
-                    <video src={section.videoUrl} poster={section.videoImage || section.image} controls playsinline preload="metadata" class="h-full w-full object-cover"></video>
+                  {section.video.url ? (
+                    section.video.isYouTube ? (
+                      <iframe
+                        src={section.video.url}
+                        title={section.videoCaption || section.title}
+                        class="h-full w-full border-0"
+                        allow="autoplay; encrypted-media; picture-in-picture; web-share"
+                        allowfullscreen
+                        referrerPolicy="strict-origin-when-cross-origin"
+                      ></iframe>
+                    ) : (
+                      <video src={section.video.url} poster={section.videoImage || section.image} controls playsinline preload="metadata" class="h-full w-full object-cover"></video>
+                    )
                   ) : (section.videoImage || section.image) ? (
                     <>
                       <img src={section.videoImage || section.image} alt={section.title} class="h-full w-full object-cover opacity-60" />

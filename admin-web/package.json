@@ -1,0 +1,32 @@
+{
+  "name": "@astreva/admin-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5174",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 5174"
+  },
+  "dependencies": {
+    "@arco-design/web-vue": "^2.57.0",
+    "@vueuse/core": "^9.13.0",
+    "axios": "^1.7.7",
+    "dayjs": "^1.11.13",
+    "lodash": "^4.17.21",
+    "mitt": "^3.0.1",
+    "nprogress": "^0.2.0",
+    "pinia": "^2.2.4",
+    "sortablejs": "^1.15.3",
+    "vue": "^3.5.12",
+    "vue-i18n": "^9.14.1",
+    "vue-router": "^4.4.5"
+  },
+  "devDependencies": {
+    "@arco-plugins/vite-vue": "^1.4.5",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "less": "^4.2.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

@@ -1,0 +1,47 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { getContent } from '../lib/content';
+
+const content = await getContent();
+const notFound = content.site.notFound;
+const heading = notFound?.title || '404';
+const description = notFound?.description || 'The page you are looking for could not be found.';
+const seo = {
+  ...content.site.defaultSeo,
+  title: `${heading} | ${content.site.brandName}`,
+  description
+};
+const links = [
+  { label: notFound?.homeLabel || content.site.navigation.homeLabel, href: '/' },
+  { label: notFound?.productsLabel || content.site.navigation.productsLabel, href: '/products/' },
+  { label: notFound?.supportLabel || content.site.navigation.supportLabel, href: '/support/' }
+];
+---
+
+<BaseLayout content={content} seo={seo} path="/404/" robots="noindex, follow">
+  <div class="w-full pt-24">
+    <section class="relative overflow-hidden bg-[#071a31] text-white">
+      <div class="absolute inset-0 bg-[linear-gradient(120deg,#071a31_0%,#0a4d8c_65%,#061e38_100%)] opacity-90"></div>
+      <div class="relative z-10 mx-auto flex min-h-[320px] max-w-4xl flex-col items-center justify-center px-6 py-20 text-center">
+        <p class="text-7xl font-black tracking-tight text-[#d7a83d] md:text-9xl">{heading}</p>
+        <p class="mt-6 max-w-2xl text-base leading-8 text-slate-200 md:text-lg">{description}</p>
+      </div>
+    </section>
+
+    <section class="bg-white py-16 md:py-20">
+      <div class="mx-auto max-w-4xl px-6">
+        <div class="flex flex-wrap justify-center gap-4">
+          {links.map((link) => (
+            <a
+              href={link.href}
+              class="inline-flex items-center gap-2 rounded-lg border-2 border-[#d8dee7] bg-white px-7 py-3.5 text-sm font-black text-[#172033] transition-colors hover:border-[#0a66c2] hover:text-[#0a66c2]"
+            >
+              {link.label}
+              <span aria-hidden="true">&rarr;</span>
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
+  </div>
+</BaseLayout>

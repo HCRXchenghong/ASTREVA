@@ -417,7 +417,12 @@ func (s *PostgresStore) SetAgentStatus(agentID string, status domain.AgentStatus
 		}
 
 		if status == domain.AgentOnline {
-			for agent.CurrentConversations < agent.MaxConversations {
+			business, err := s.businessHoursTx(ctx, tx)
+			if err != nil {
+				return err
+			}
+			// 非营业时间不自动接单：客服仍可正常上线，只是不默认领取等待中的会话。
+			for businessOpen(business, now) && agent.CurrentConversations < agent.MaxConversations {
 				conversation, err := s.nextWaitingConversationForUpdateTx(ctx, tx)
 				if err != nil {
 					if errors.Is(err, pgx.ErrNoRows) {
@@ -427,6 +432,8 @@ func (s *PostgresStore) SetAgentStatus(agentID string, status domain.AgentStatus
 				}
 				agent.CurrentConversations++
 				conversation.AssignedAgentID = agent.ID
+				conversation.AssignedAgentName = agent.Name
+				conversation.AssignedAgentAvatar = agent.AvatarURL
 				conversation.UpdatedAt = now
 				// 静默分配：不改变会话状态，客服实际回复后才对外显示人工服务（无痕转人工）。
 				if _, err := tx.Exec(ctx, `
@@ -458,7 +465,14 @@ func (s *PostgresStore) ConversationsForAgent(agentID string) ([]domain.Conversa
 		return nil, err
 	}
 	defer rows.Close()
-	return scanConversations(rows)
+	conversations, err := scanConversations(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.fillConversationAgents(ctx, s.pool, conversations); err != nil {
+		return nil, err
+	}
+	return conversations, nil
 }
 
 func (s *PostgresStore) AllConversations() []domain.Conversation {
@@ -472,6 +486,9 @@ func (s *PostgresStore) AllConversations() []domain.Conversation {
 	defer rows.Close()
 	conversations, err := scanConversations(rows)
 	if err != nil {
+		return nil
+	}
+	if err := s.fillConversationAgents(ctx, s.pool, conversations); err != nil {
 		return nil
 	}
 	return conversations
@@ -498,7 +515,14 @@ func (s *PostgresStore) Conversation(id string) (domain.Conversation, bool) {
 	defer cancel()
 
 	conversation, err := s.conversationByID(ctx, id)
-	return conversation, err == nil
+	if err != nil {
+		return domain.Conversation{}, false
+	}
+	conversations := []domain.Conversation{conversation}
+	if err := s.fillConversationAgents(ctx, s.pool, conversations); err != nil {
+		return conversation, true
+	}
+	return conversations[0], true
 }
 
 func (s *PostgresStore) Messages(conversationID string) []domain.Message {
@@ -1239,16 +1263,13 @@ func (s *PostgresStore) UpdateContactSettings(next domain.ContactSettings) (doma
 	if err := validateContactSettings(next); err != nil {
 		return current, err
 	}
-	if strings.TrimSpace(next.Telephone) != "" {
-		current.Telephone = strings.TrimSpace(next.Telephone)
+	// PATCH 为整体替换语义：允许管理员把联系方式显式清空，未传/传空的字段即视为清空。
+	current = domain.ContactSettings{
+		Telephone:  strings.TrimSpace(next.Telephone),
+		WhatsApp:   strings.TrimSpace(next.WhatsApp),
+		Telegram:   strings.TrimSpace(next.Telegram),
+		EntryReply: strings.TrimSpace(next.EntryReply),
 	}
-	if strings.TrimSpace(next.WhatsApp) != "" {
-		current.WhatsApp = strings.TrimSpace(next.WhatsApp)
-	}
-	if strings.TrimSpace(next.Telegram) != "" {
-		current.Telegram = strings.TrimSpace(next.Telegram)
-	}
-	current.EntryReply = strings.TrimSpace(next.EntryReply)
 	_, _ = s.pool.Exec(ctx, `
 		INSERT INTO contact_settings (id, phone, wechat, wechat_reply_type, wechat_image_url, qq, qq_reply_type, qq_image_url, entry_reply, updated_at)
 		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -2068,6 +2089,14 @@ func (s *PostgresStore) assignHumanConversationTx(ctx context.Context, tx pgx.Tx
 	if conversation.AssignedAgentID != "" {
 		return nil
 	}
+	// 非营业时间不自动分配人工：AI 继续接待，访客留言由人工在营业时间内跟进。
+	business, err := s.businessHoursTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !businessOpen(business, dbNow()) {
+		return nil
+	}
 	now := dbNow()
 	row := tx.QueryRow(ctx, `
 		SELECT `+agentColumns+`
@@ -2090,6 +2119,8 @@ func (s *PostgresStore) assignHumanConversationTx(ctx context.Context, tx pgx.Tx
 		return err
 	}
 	conversation.AssignedAgentID = agent.ID
+	conversation.AssignedAgentName = agent.Name
+	conversation.AssignedAgentAvatar = agent.AvatarURL
 	conversation.UpdatedAt = now
 	// 静默分配：只记录客服，不改会话状态。客服实际回复后状态才变为 assigned（无痕转人工）。
 	return s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{
@@ -2226,9 +2257,23 @@ func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, co
 		return nil, false, nil
 	}
 	generated := []domain.Message{}
+	now := dbNow()
 	requestHuman := func() ([]domain.Message, bool, error) {
+		// 非营业时间只提示一次留言：只有从未进入过 human_requested 状态才追加提示。
+		wasHumanRequested := conversation.Status == domain.ConversationHumanRequested
 		if err := s.requestHumanTx(ctx, tx, conversation); err != nil {
 			return nil, false, err
+		}
+		business, err := s.businessHoursTx(ctx, tx)
+		if err != nil {
+			return nil, false, err
+		}
+		if !businessOpen(business, now) && conversation.AssignedAgentID == "" && !wasHumanRequested {
+			msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", domain.MessageSystem, offlineReplyText(business), nil)
+			if err != nil {
+				return nil, false, err
+			}
+			generated = append(generated, msg)
 		}
 		aiSettings, err := s.aiSettingsTx(ctx, tx)
 		if err != nil {
@@ -2276,6 +2321,23 @@ func (s *PostgresStore) generateAutoRepliesTx(ctx context.Context, tx pgx.Tx, co
 		return nil, false, err
 	}
 	if !aiSettings.Enabled || aiSettings.Mode == domain.AIModeManualOnly {
+		// AI 不可用且当前非营业时间：记录留言并进入人工队列，同样只提示一次。
+		business, err := s.businessHoursTx(ctx, tx)
+		if err != nil {
+			return nil, false, err
+		}
+		if !businessOpen(business, now) && conversation.AssignedAgentID == "" && conversation.Status != domain.ConversationHumanRequested {
+			conversation.Status = domain.ConversationHumanRequested
+			conversation.UpdatedAt = now
+			if err := s.updateConversationFieldsTx(ctx, tx, conversation.ID, map[string]any{"status": conversation.Status, "updated_at": now}); err != nil {
+				return nil, false, err
+			}
+			msg, err := s.createMessageTx(ctx, tx, conversation.ID, "", domain.SenderSystem, "system", domain.MessageSystem, offlineReplyText(business), nil)
+			if err != nil {
+				return nil, false, err
+			}
+			generated = append(generated, msg)
+		}
 		return generated, false, nil
 	}
 	// AI 优先介入：无论是否在营业时间，人工实际回复前都由 AI 接待。
@@ -2341,7 +2403,8 @@ func (s *PostgresStore) contactSettings(ctx context.Context, exec dbTx) (domain.
 		FROM contact_settings WHERE id=1
 	`).Scan(&out.Telephone, &out.WhatsApp, new(string), new(string), &out.Telegram, new(string), new(string), &out.EntryReply)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.ContactSettings{Telephone: "400-123-4567", WhatsApp: "+86 400 888 8888", Telegram: "@AstrevaSupport", EntryReply: "您好，欢迎咨询在线客服，请问有什么可以帮您？"}, nil
+		// 不再内置任何占位联系方式：未配置时返回空，由管理员在后台填写真实信息。
+		return domain.ContactSettings{}, nil
 	}
 	return out, err
 }
@@ -2476,23 +2539,6 @@ func (s *PostgresStore) seedDefaults(ctx context.Context) error {
 		},
 		{
 			sql: `
-				INSERT INTO keyword_rules (id, keyword, match_type, reply, enabled, priority, action)
-				VALUES
-					('kw_phone', '电话', 'contains', '客服电话：400-123-4567', true, 90, 'telephone'),
-					('kw_whatsapp', 'WhatsApp', 'contains', '官方 WhatsApp：+86 400 888 8888', true, 80, 'whatsapp'),
-					('kw_telegram', 'Telegram', 'contains', '官方 Telegram：@AstrevaSupport', true, 75, 'telegram')
-				ON CONFLICT (id) DO NOTHING
-			`,
-		},
-		{
-			sql: `
-				INSERT INTO contact_settings (id, phone, wechat, wechat_reply_type, qq, qq_reply_type, entry_reply)
-				VALUES (1, '400-123-4567', '+86 400 888 8888', 'text', '@AstrevaSupport', 'text', '您好，欢迎咨询在线客服，请问有什么可以帮您？')
-				ON CONFLICT (id) DO NOTHING
-			`,
-		},
-		{
-			sql: `
 				INSERT INTO ai_settings (id, enabled, mode, base_url, api_key_ciphertext, model, api_type, temperature, max_output_tokens, timeout_seconds, system_prompt)
 				VALUES (1, true, 'human_first', $1, $2, $3, $4, 0.70, 512, 20, $5)
 				ON CONFLICT (id) DO NOTHING
@@ -2554,7 +2600,12 @@ func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 		`ALTER TABLE contact_settings ADD CONSTRAINT contact_settings_wechat_reply_type_check CHECK (wechat_reply_type IN ('text', 'image'))`,
 		`ALTER TABLE contact_settings DROP CONSTRAINT IF EXISTS contact_settings_qq_reply_type_check`,
 		`ALTER TABLE contact_settings ADD CONSTRAINT contact_settings_qq_reply_type_check CHECK (qq_reply_type IN ('text', 'image'))`,
-		`UPDATE contact_settings SET entry_reply='您好，欢迎咨询在线客服，请问有什么可以帮您？' WHERE id=1 AND entry_reply=''`,
+		// 清理历史版本内置的假联系方式与假关键词规则：只清理与内置假值完全一致的数据，绝不动管理员配置的真实信息。
+		// 不再每次启动都把管理员清空的欢迎语写回。
+		`UPDATE contact_settings SET phone='' WHERE id=1 AND phone='400-123-4567'`,
+		`UPDATE contact_settings SET wechat='' WHERE id=1 AND wechat='+86 400 888 8888'`,
+		`UPDATE contact_settings SET qq='' WHERE id=1 AND qq='@AstrevaSupport'`,
+		`DELETE FROM keyword_rules WHERE (id='kw_phone' AND reply='客服电话：400-123-4567') OR (id='kw_whatsapp' AND reply='官方 WhatsApp：+86 400 888 8888') OR (id='kw_telegram' AND reply='官方 Telegram：@AstrevaSupport')`,
 		`ALTER TABLE keyword_rules ADD COLUMN IF NOT EXISTS show_in_quick_replies BOOLEAN NOT NULL DEFAULT false`,
 		`ALTER TABLE keyword_rules ADD COLUMN IF NOT EXISTS quick_reply_text TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE keyword_rules DROP CONSTRAINT IF EXISTS keyword_rules_match_type_check`,
@@ -2746,6 +2797,47 @@ func scanConversations(rows pgx.Rows) ([]domain.Conversation, error) {
 	return result, rows.Err()
 }
 
+// fillConversationAgents 批量补齐会话的只读客服名称/头像：按 assigned_agent_id 去重后一次查询，避免逐条 N+1。
+func (s *PostgresStore) fillConversationAgents(ctx context.Context, exec dbTx, conversations []domain.Conversation) error {
+	ids := make([]string, 0, len(conversations))
+	seen := map[string]bool{}
+	for _, conversation := range conversations {
+		if conversation.AssignedAgentID == "" || seen[conversation.AssignedAgentID] {
+			continue
+		}
+		seen[conversation.AssignedAgentID] = true
+		ids = append(ids, conversation.AssignedAgentID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := exec.Query(ctx, `SELECT id, name, COALESCE(avatar_url, '') FROM agents WHERE id=ANY($1)`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type agentBrief struct{ name, avatar string }
+	agents := map[string]agentBrief{}
+	for rows.Next() {
+		var id string
+		var brief agentBrief
+		if err := rows.Scan(&id, &brief.name, &brief.avatar); err != nil {
+			return err
+		}
+		agents[id] = brief
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range conversations {
+		if brief, ok := agents[conversations[i].AssignedAgentID]; ok {
+			conversations[i].AssignedAgentName = brief.name
+			conversations[i].AssignedAgentAvatar = brief.avatar
+		}
+	}
+	return nil
+}
+
 func scanMessage(row scanTarget) (domain.Message, error) {
 	var out domain.Message
 	var revokedAt sql.NullTime
@@ -2913,6 +3005,25 @@ func isBusinessTime(business domain.BusinessHours, now time.Time) bool {
 		return currentMinutes >= startMinutes && currentMinutes < endMinutes
 	}
 	return currentMinutes >= startMinutes || currentMinutes < endMinutes
+}
+
+// defaultOfflineReply 是非营业时间未配置留言提示时的内置兜底文案。
+const defaultOfflineReply = "当前非工作时间，已记录您的留言，我们会尽快回复。"
+
+// businessOpen 判断营业时间是否放行自动分配人工：开关关闭表示不限制。
+func businessOpen(business domain.BusinessHours, now time.Time) bool {
+	if !business.Enabled {
+		return true
+	}
+	return isBusinessTime(business, now)
+}
+
+// offlineReplyText 返回非营业时间给访客的留言提示，未配置时使用内置默认文案。
+func offlineReplyText(business domain.BusinessHours) string {
+	if reply := strings.TrimSpace(business.OfflineReply); reply != "" {
+		return reply
+	}
+	return defaultOfflineReply
 }
 
 const appReleaseColumns = `id, platform, version_name, version_code, file_name, file_path, download_url, file_size, checksum, release_notes, force_update, enabled, created_at`
