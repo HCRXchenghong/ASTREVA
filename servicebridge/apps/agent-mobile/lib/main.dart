@@ -10,6 +10,8 @@ import 'push_service.dart';
 import 'update_service.dart';
 import 'service_bridge.dart';
 import 'alert_models.dart';
+import 'language_labels.dart';
+import 'profile_models.dart';
 
 abstract final class AppColors {
   AppColors._();
@@ -1677,6 +1679,13 @@ class _ChatPageState extends State<ChatPage> {
   /// T3：当前会话页顶部展示的 SLA 提示；null 表示无提示。
   SlaAlert? _slaAlert;
 
+  /// T1（P5）：画像「依据消息」定位用的稳定 Key（只给有 server_msg_id 的消息）。
+  final Map<String, GlobalKey> _messageKeys = <String, GlobalKey>{};
+
+  /// T1（P5）：被画像依据定位到的消息 id，短暂高亮。
+  String _highlightedMessageId = '';
+  Timer? _highlightTimer;
+
   bool get _closed => _status == 'closed';
 
   AgentPreferences get _preferences => widget.preferences.preferences;
@@ -2204,6 +2213,88 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  /// T1（P5）：打开「访客画像」底部弹窗。
+  /// 入口在任何会话状态下都可用（未接管 / 围观 / 已结束），
+  /// 打开即 GET 画像；loading / 空（404）/ 错误（403 等）都在弹窗内处理，不崩溃。
+  /// 弹窗内点「依据消息」时返回该条证据，回到本页定位并高亮对应消息。
+  Future<void> _openVisitorProfile() async {
+    final target = await showModalBottomSheet<ProfileEvidence>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadii.card)),
+      ),
+      builder: (_) => _VisitorProfileSheet(
+        client: widget.client,
+        conversationId: widget.conversation.id,
+      ),
+    );
+    if (target == null || !mounted) return;
+    await _focusEvidenceMessage(target);
+  }
+
+  /// 定位消息用的 Key；无 server_msg_id 的消息不参与定位，返回 null。
+  Key? _messageKeyFor(ChatMessage message) {
+    if (message.id.isEmpty) return null;
+    return _messageKeys.putIfAbsent(message.id, () => GlobalKey());
+  }
+
+  /// T1（P5）：把画像依据里的消息定位到消息列表并短暂高亮。
+  /// 目标不在已加载窗口时向上翻页（最多 5 页，约 150 条）；仍未找到只做提示。
+  Future<void> _focusEvidenceMessage(ProfileEvidence evidence) async {
+    final id = evidence.messageId.trim();
+    if (id.isEmpty) {
+      _showMessage(context, '该依据没有可定位的消息 id');
+      return;
+    }
+    var attempts = 0;
+    while (_messages.indexWhere((item) => item.id == id) < 0 &&
+        _hasMore &&
+        attempts < 5) {
+      attempts++;
+      await _loadOlder();
+      if (!mounted) return;
+    }
+    final index = _messages.indexWhere((item) => item.id == id);
+    if (index < 0) {
+      if (mounted) _showMessage(context, '该消息不在当前已加载的历史中');
+      return;
+    }
+    _highlightTimer?.cancel();
+    setState(() => _highlightedMessageId = id);
+    // 列表是懒加载：先按比例滚到大致位置，等目标项构建出来后再精确对齐。
+    final key = _messageKeys[id];
+    if (key?.currentContext == null && _scrollController.hasClients) {
+      final position = _scrollController.position;
+      final ratio = _messages.length <= 1
+          ? 1.0
+          : index / (_messages.length - 1);
+      await _scrollController.animateTo(
+        (position.maxScrollExtent * ratio).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        ),
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      if (!mounted) return;
+    }
+    final target = _messageKeys[id]?.currentContext;
+    if (target != null && target.mounted) {
+      await Scrollable.ensureVisible(
+        target,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        alignment: 0.4,
+      );
+    }
+    _highlightTimer = Timer(const Duration(milliseconds: 2200), () {
+      if (mounted) setState(() => _highlightedMessageId = '');
+    });
+  }
+
   Future<void> _closeConversation() async {
     if (!await _confirm(context, '结束会话', '结束后访客将不能继续发送消息，确定继续吗？')) return;
     try {
@@ -2219,6 +2310,7 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    _highlightTimer?.cancel();
     _events?.cancel();
     widget.preferences.removeListener(_onPreferencesChanged);
     _messageController.removeListener(_onTypingChanged);
@@ -2248,6 +2340,12 @@ class _ChatPageState extends State<ChatPage> {
           ],
         ),
         actions: [
+          // T1（P5）：访客画像入口；未接管/围观/已结束都能查看（后端 403/404 另有文案）。
+          IconButton(
+            onPressed: _openVisitorProfile,
+            tooltip: '访客画像',
+            icon: const Icon(Icons.person_search_outlined),
+          ),
           IconButton(
             onPressed: _editRemark,
             tooltip: '访客备注',
@@ -2302,9 +2400,13 @@ class _ChatPageState extends State<ChatPage> {
                       }
                       final message = _messages[index - 1];
                       return _MessageBubble(
+                        key: _messageKeyFor(message),
                         message: message,
                         baseUrl: widget.client.baseUrl,
                         myAvatarUrl: widget.myAvatarUrl,
+                        highlighted:
+                            message.id.isNotEmpty &&
+                            message.id == _highlightedMessageId,
                         onLongPress: () => _showMessageActions(message),
                       );
                     },
@@ -2451,15 +2553,20 @@ class _HistoryHeader extends StatelessWidget {
 
 class _MessageBubble extends StatefulWidget {
   const _MessageBubble({
+    super.key,
     required this.message,
     required this.baseUrl,
     this.myAvatarUrl,
     this.onLongPress,
+    this.highlighted = false,
   });
   final ChatMessage message;
   final String baseUrl;
   final String? myAvatarUrl;
   final VoidCallback? onLongPress;
+
+  /// T1（P5）：从画像「依据消息」定位过来时短暂高亮。
+  final bool highlighted;
 
   @override
   State<_MessageBubble> createState() => _MessageBubbleState();
@@ -2543,14 +2650,12 @@ class _MessageBubbleState extends State<_MessageBubble> {
       avatar = const _VisitorAvatar();
     }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: isMine
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.start,
-        children: [
+    final row = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: isMine
+          ? MainAxisAlignment.end
+          : MainAxisAlignment.start,
+      children: [
           if (!isMine) ...[
             avatar,
             const SizedBox(width: 8),
@@ -2603,7 +2708,25 @@ class _MessageBubbleState extends State<_MessageBubble> {
             const SizedBox(width: 8),
             avatar,
           ],
-        ],
+      ],
+    );
+    // 普通消息保持原样；被画像依据定位到时才额外加高亮外框，避免影响既有布局。
+    if (!widget.highlighted) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: row,
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppColors.primarySoft,
+          borderRadius: BorderRadius.circular(AppRadii.card),
+          border: Border.all(color: AppColors.primary),
+        ),
+        child: row,
       ),
     );
   }
@@ -2734,37 +2857,6 @@ class _MessageBubbleState extends State<_MessageBubble> {
       ),
     );
   }
-}
-
-/// 语言代码 → 中文名（与后台的语种标签保持一致）。
-const Map<String, String> _languageNames = {
-  'zh': '中文',
-  'en': '英语',
-  'ar': '阿拉伯语',
-  'es': '西班牙语',
-  'fr': '法语',
-  'de': '德语',
-  'pt': '葡萄牙语',
-  'it': '意大利语',
-  'nl': '荷兰语',
-  'id': '印尼语',
-  'vi': '越南语',
-  'tr': '土耳其语',
-  'pl': '波兰语',
-  'ro': '罗马尼亚语',
-  'ru': '俄语',
-  'ja': '日语',
-  'ko': '韩语',
-  'th': '泰语',
-  'he': '希伯来语',
-  'hi': '印地语',
-  'el': '希腊语',
-};
-
-String languageLabelFor(String code) {
-  final key = code.trim().toLowerCase().split('-').first;
-  if (key.isEmpty) return '';
-  return _languageNames[key] ?? key.toUpperCase();
 }
 
 /// 翻译状态提示：翻译中 / 翻译失败 / 已翻译 / 语种标签；无需展示时返回 null。
@@ -4786,4 +4878,546 @@ class _VoicePlaybackController {
       // 停止失败无需向上抛出。
     }
   }
+}
+
+/// T1（P5）：访客画像底部弹窗。
+///
+/// 打开即 `GET /api/agent/conversations/{id}/profile`，四种状态：
+/// 加载中 / 错误（403 等，含可读 message 与重试）/ 无画像（404）/ 画像卡。
+/// 点「依据消息」返回该条证据，由会话页负责定位与高亮。
+class _VisitorProfileSheet extends StatefulWidget {
+  const _VisitorProfileSheet({
+    required this.client,
+    required this.conversationId,
+  });
+
+  final ServiceBridgeClient client;
+  final String conversationId;
+
+  @override
+  State<_VisitorProfileSheet> createState() => _VisitorProfileSheetState();
+}
+
+class _VisitorProfileSheetState extends State<_VisitorProfileSheet> {
+  bool _loading = true;
+  String _error = '';
+  bool _notFound = false;
+  bool _forbidden = false;
+  VisitorProfile? _profile;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = '';
+        _notFound = false;
+        _forbidden = false;
+      });
+    }
+    try {
+      final profile = await widget.client.conversationProfile(
+        widget.conversationId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _profile = profile;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      if (isUnauthorizedError(error)) {
+        setState(() {
+          _loading = false;
+          _error = '登录已失效，请重新登录';
+        });
+        return;
+      }
+      final status = error is ServiceBridgeException ? error.statusCode : 0;
+      setState(() {
+        _loading = false;
+        _notFound = status == 404;
+        _forbidden = status == 403;
+        _error = profileErrorText(
+          statusCode: status,
+          message: _readableError(error),
+        );
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * .78,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.person_search_outlined,
+                  size: 20,
+                  color: AppColors.primary,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    '访客画像',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  tooltip: '关闭',
+                  icon: const Icon(
+                    Icons.close,
+                    size: 20,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+            const Text(
+              '国籍为多来源加权后的「推测」结论，仅供参考。',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            Flexible(child: _buildBody(context)),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Widget _buildBody(BuildContext context) {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 48),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error.isNotEmpty) {
+      final icon = _forbidden
+          ? Icons.lock_outline
+          : _notFound
+          ? Icons.person_off_outlined
+          : Icons.error_outline;
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 40, color: AppColors.textMuted),
+            const SizedBox(height: 12),
+            Text(
+              _error,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton(onPressed: _load, child: const Text('重试')),
+          ],
+        ),
+      );
+    }
+    final profile = _profile;
+    if (profile == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 32),
+        child: Center(
+          child: Text(
+            profileNotFoundText,
+            style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+          ),
+        ),
+      );
+    }
+    return SingleChildScrollView(child: _buildCard(context, profile));
+  }
+
+  Widget _buildCard(BuildContext context, VisitorProfile profile) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      // 首行：国家/地区/城市 + 时区。
+      _ProfileSection(
+        title: '地理位置',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              profile.geoLine,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '时区：${profile.timezoneLine}',
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+      // 推测国籍：必须显式标注「推测」并给出置信度与依据中文名。
+      _ProfileSection(
+        title: '推测国籍',
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.primarySoft,
+            borderRadius: BorderRadius.circular(AppRadii.input),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                profile.nationalityGuessLine,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primaryDark,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                profile.basisLine,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      // 语言画像：按占比排序 + 方言 + 多语混说提示。
+      _ProfileSection(
+        title: '语言画像',
+        child: profile.hasLanguageData
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final share in profile.languageShares) ...[
+                    Row(
+                      children: [
+                        SizedBox(
+                          width: 108,
+                          child: Text(
+                            languageShareText(share, languageLabelFor),
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(AppRadii.chip),
+                            child: LinearProgressIndicator(
+                              value: share.percent / 100,
+                              minHeight: 6,
+                              backgroundColor: AppColors.border,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      if (profile.dialect.isNotEmpty)
+                        _ProfileChip(
+                          label: '方言：${profile.dialect}',
+                          color: AppColors.primary,
+                        ),
+                      if (profile.codeSwitching)
+                        _ProfileChip(
+                          label: codeSwitchingHint,
+                          color: AppColors.warning,
+                          icon: Icons.swap_horiz,
+                        ),
+                    ],
+                  ),
+                ],
+              )
+            : const Text(
+                '暂无语言数据',
+                style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+              ),
+      ),
+      // 标签与兴趣：Chip 形式。
+      _ProfileSection(
+        title: '标签与兴趣',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '标签',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+            const SizedBox(height: 6),
+            _profileChipWrap(profile.tags, emptyText: '暂无标签'),
+            const SizedBox(height: 10),
+            const Text(
+              '兴趣',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+            const SizedBox(height: 6),
+            _profileChipWrap(profile.interests, emptyText: '暂无兴趣'),
+          ],
+        ),
+      ),
+      // 摘要：全文展示，长文由外层滚动。
+      _ProfileSection(
+        title: '对话摘要',
+        child: Text(
+          profile.hasSummary ? profile.summary : '暂无摘要',
+          style: TextStyle(
+            fontSize: 13,
+            height: 1.5,
+            color: profile.hasSummary
+                ? AppColors.textPrimary
+                : AppColors.textMuted,
+          ),
+        ),
+      ),
+      // 依据消息：点一条定位并高亮对应消息。
+      _ProfileSection(
+        title: '依据消息',
+        child: profile.hasEvidence
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final item in profile.evidence) ...[
+                    _EvidenceTile(
+                      evidence: item,
+                      onTap: item.canJump
+                          ? () => Navigator.of(context).pop(item)
+                          : null,
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ],
+              )
+            : const Text(
+                '暂无依据消息',
+                style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+              ),
+      ),
+      // 底部信息：访问次数 / 最近访问页面 / 最近活跃 / IP（后端返回什么显示什么）。
+      _ProfileSection(
+        title: '访问信息',
+        child: Column(
+          children: [
+            _ProfileInfoRow(label: '访问次数', value: '${profile.visits} 次'),
+            _ProfileInfoRow(label: '最近访问页面', value: profile.lastPathLine),
+            _ProfileInfoRow(label: '最近活跃时间', value: profile.lastSeenLine),
+            _ProfileInfoRow(label: 'IP', value: profile.ipLine),
+          ],
+        ),
+      ),
+      const SizedBox(height: 8),
+    ],
+  );
+
+  Widget _profileChipWrap(List<String> values, {required String emptyText}) {
+    if (values.isEmpty) {
+      return Text(
+        emptyText,
+        style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
+      );
+    }
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        for (final value in values) _ProfileChip(label: value),
+      ],
+    );
+  }
+}
+
+/// 画像卡分区标题 + 内容。
+class _ProfileSection extends StatelessWidget {
+  const _ProfileSection({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        child,
+      ],
+    ),
+  );
+}
+
+/// 画像卡里的一个标签（标签 / 兴趣 / 方言 / 多语混说）。
+class _ProfileChip extends StatelessWidget {
+  const _ProfileChip({required this.label, this.color, this.icon});
+
+  final String label;
+  final Color? color;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final tone = color ?? AppColors.textPrimary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: tone.withValues(alpha: .10),
+        borderRadius: BorderRadius.circular(AppRadii.chip),
+        border: Border.all(color: tone.withValues(alpha: .35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 13, color: tone),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: tone,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 一条依据消息：文本截断 + 时间；可点时定位到消息列表。
+class _EvidenceTile extends StatelessWidget {
+  const _EvidenceTile({required this.evidence, this.onTap});
+
+  final ProfileEvidence evidence;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(AppRadii.input),
+    child: Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(AppRadii.input),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            evidence.text.isEmpty ? '（该消息无可展示文本）' : evidence.text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Text(
+                evidenceTimeLabel(evidence.createdAt),
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textMuted,
+                ),
+              ),
+              const Spacer(),
+              if (onTap != null)
+                const Text(
+                  '查看该消息',
+                  style: TextStyle(fontSize: 11, color: AppColors.primary),
+                ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// 底部信息的一行（标签 + 值）。
+class _ProfileInfoRow extends StatelessWidget {
+  const _ProfileInfoRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 96,
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 13,
+              color: AppColors.textPrimary,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }

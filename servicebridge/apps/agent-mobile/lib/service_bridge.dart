@@ -9,6 +9,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'alert_models.dart';
 import 'models.dart';
+import 'profile_models.dart';
 
 class LoginResult {
   const LoginResult({required this.token, required this.agent});
@@ -86,12 +87,20 @@ class AppConfig {
 }
 
 class ServiceBridgeException implements Exception {
-  const ServiceBridgeException(this.message, {this.unauthorized = false});
+  const ServiceBridgeException(
+    this.message, {
+    this.unauthorized = false,
+    this.statusCode = 0,
+  });
 
   final String message;
 
   /// 401/登录态失效时为 true，调用方据此清理本地状态并跳回登录页。
   final bool unauthorized;
+
+  /// HTTP 状态码；0 表示非 HTTP 层面的错误（如响应缺字段）。
+  /// 画像接口据此区分 403（越权）与 404（未开启画像/无画像）。
+  final int statusCode;
 
   @override
   String toString() => message;
@@ -262,6 +271,23 @@ class ServiceBridgeClient {
       body: {'conversation_id': conversationId},
     );
     return SuggestReplyResult.fromJson(payload);
+  }
+
+  /// 会话侧访客画像（`GET /api/agent/conversations/{id}/profile`）。
+  ///
+  /// 403：会话不属于当前客服；404：未开启画像或访客无画像。
+  /// 两者都以 [ServiceBridgeException.statusCode] 带出，由界面给中文文案。
+  Future<VisitorProfile> conversationProfile(String conversationId) async {
+    final payload = await _request(
+      'GET',
+      '/api/agent/conversations/${Uri.encodeComponent(conversationId)}'
+          '/profile',
+    );
+    final raw = payload['profile'];
+    if (raw is! Map) {
+      throw const ServiceBridgeException('画像响应不完整');
+    }
+    return VisitorProfile.fromJson(Map<String, dynamic>.from(raw));
   }
 
   /// 提醒渠道列表（`GET /api/agent/alert-channels`）。
@@ -510,7 +536,10 @@ class ServiceBridgeClient {
       );
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ServiceBridgeException(_errorMessage(payload, response.statusCode));
+      throw ServiceBridgeException(
+        _errorMessage(payload, response.statusCode),
+        statusCode: response.statusCode,
+      );
     }
     return '${payload['url'] ?? ''}';
   }
@@ -663,7 +692,10 @@ class ServiceBridgeClient {
       );
     }
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
-      throw ServiceBridgeException(_errorMessage(payload, streamed.statusCode));
+      throw ServiceBridgeException(
+        _errorMessage(payload, streamed.statusCode),
+        statusCode: streamed.statusCode,
+      );
     }
     return payload;
   }
