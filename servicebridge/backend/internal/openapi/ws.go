@@ -7,6 +7,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"customer-service/backend/internal/domain"
 	"customer-service/backend/internal/realtime"
 )
 
@@ -31,6 +32,10 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusServiceUnavailable
 		}
 		http.Error(w, err.Error(), status)
+		return
+	}
+	// WebSocket 订阅同样受权限范围约束；缺范围时返回统一的 403 JSON 错误体并写审计。
+	if !s.requireScope(w, r, apiApp, domain.APIScopeEventsSubscribe) {
 		return
 	}
 	conversationID := strings.TrimSpace(r.URL.Query().Get("conversation_id"))

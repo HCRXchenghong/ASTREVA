@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -160,6 +161,48 @@ func (s *Service) requireApp(w http.ResponseWriter, r *http.Request) (domain.API
 	return apiApp, true
 }
 
+// scopeDeniedCode 缺权限范围时的错误码：沿用统一后台「error 机器码 + message 中文说明」的错误体。
+const scopeDeniedCode = "forbidden"
+
+// requireScope 校验授权应用是否具备指定权限范围（附录 B4）。
+// 缺失时返回 403 {"error":"forbidden","message":"缺少权限范围 <scope>"}，
+// 并写审计（openapi.scope_denied，只含 app_id/scope/path，不含请求体）。
+func (s *Service) requireScope(w http.ResponseWriter, r *http.Request, apiApp domain.APIApp, scope string) bool {
+	if domain.HasAPIScope(apiApp.Scopes, scope) {
+		return true
+	}
+	s.recordScopeDenied(r, apiApp, scope)
+	writeOpenErrorCode(w, http.StatusForbidden, scopeDeniedCode, "缺少权限范围 "+scope)
+	return false
+}
+
+// recordScopeDenied 记录因缺权限范围被拒的审计与系统日志。
+// 审计只写入应用标识、缺失范围与请求路径；不记录请求体、Key 或任何请求参数。
+func (s *Service) recordScopeDenied(r *http.Request, apiApp domain.APIApp, scope string) {
+	path := ""
+	if r != nil && r.URL != nil {
+		path = r.URL.Path
+	}
+	ip, _ := s.resolveIP(r)
+	s.store.RecordAuditEvent(domain.AuditEvent{
+		// audit_events 的 actor_kind 仅允许 admin/agent/visitor；
+		// 开放接口以访客通道身份运行，应用标识放在 actor_id / resource_id。
+		ActorKind:  domain.AccountVisitor,
+		ActorID:    appSource(apiApp.ID),
+		Action:     "openapi.scope_denied",
+		Resource:   "api_app",
+		ResourceID: apiApp.ID,
+		IPAddress:  ip,
+		UserAgent:  r.UserAgent(),
+		Description: fmt.Sprintf("开放接口缺少权限范围：app_id=%s scope=%s path=%s",
+			apiApp.ID, scope, path),
+		CreatedAt: time.Now().UTC(),
+	})
+	if s.logger != nil {
+		s.logger.Warn("open api scope denied", "app_id", apiApp.ID, "scope", scope, "path", path)
+	}
+}
+
 type bucket struct {
 	tokens       float64
 	capacity     float64
@@ -223,6 +266,11 @@ func writeOpenJSON(w http.ResponseWriter, status int, payload any) {
 
 func writeOpenError(w http.ResponseWriter, status int, message string) {
 	writeOpenJSON(w, status, map[string]any{"error": message})
+}
+
+// writeOpenErrorCode 输出「机器码 + 中文说明」的错误体，与统一后台其它 Go 接口一致。
+func writeOpenErrorCode(w http.ResponseWriter, status int, code, message string) {
+	writeOpenJSON(w, status, map[string]any{"error": code, "message": message})
 }
 
 func mapStoreError(w http.ResponseWriter, err error) {

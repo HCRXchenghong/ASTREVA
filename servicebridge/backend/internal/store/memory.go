@@ -601,6 +601,12 @@ func (s *MemoryStore) UpdateAPIApp(id string, next domain.APIApp) (domain.APIApp
 	} else {
 		return domain.APIApp{}, err
 	}
+	// 空数组表示「不受限」（等同全部范围），与既有应用兼容；非空则自动补齐 me:read。
+	scopes, err := domain.NormalizeAPIScopes(next.Scopes)
+	if err != nil {
+		return domain.APIApp{}, ErrInvalidInput
+	}
+	current.Scopes = scopes
 	current.Enabled = next.Enabled
 	if strings.TrimSpace(next.KeyHash) != "" {
 		for _, app := range s.apiApps {
@@ -677,6 +683,12 @@ func validateAPIAppInput(next *domain.APIApp) error {
 	if next.RateLimit < 0 {
 		return ErrInvalidInput
 	}
+	// 权限范围校验与归一：空数组 = 不受限；非法范围拒绝保存。
+	scopes, err := domain.NormalizeAPIScopes(next.Scopes)
+	if err != nil {
+		return ErrInvalidInput
+	}
+	next.Scopes = scopes
 	return nil
 }
 

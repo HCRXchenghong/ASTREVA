@@ -45,6 +45,9 @@ func (s *Service) HandleMe(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.requireScope(w, r, apiApp, domain.APIScopeMeRead) {
+		return
+	}
 	writeOpenJSON(w, http.StatusOK, map[string]any{
 		"app": map[string]any{
 			"id":         apiApp.ID,
@@ -52,6 +55,8 @@ func (s *Service) HandleMe(w http.ResponseWriter, r *http.Request) {
 			"key_prefix": apiApp.KeyPrefix,
 			"rate_limit": apiApp.RateLimit,
 		},
+		// 实际生效的权限范围：空 scopes（不受限）展开为全部 7 个，便于对接方自检。
+		"scopes":      domain.EffectiveAPIScopes(apiApp.Scopes),
 		"server_time": time.Now().UTC(),
 	})
 }
@@ -71,8 +76,14 @@ func (s *Service) HandleConversations(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodPost:
+		if !s.requireScope(w, r, apiApp, domain.APIScopeConversationsCreate) {
+			return
+		}
 		s.createConversation(w, r, apiApp)
 	case http.MethodGet:
+		if !s.requireScope(w, r, apiApp, domain.APIScopeConversationsRead) {
+			return
+		}
 		s.listConversations(w, apiApp)
 	default:
 		writeOpenError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -140,6 +151,9 @@ func (s *Service) HandleConversation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.requireScope(w, r, apiApp, domain.APIScopeConversationsRead) {
+		return
+	}
 	conversation, ok := s.store.Conversation(r.PathValue("id"))
 	if !ok || !conversationOwnedBy(conversation, apiApp) {
 		writeOpenError(w, http.StatusNotFound, store.ErrNotFound.Error())
@@ -161,6 +175,20 @@ func (s *Service) HandleConversationMessages(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	// 按方法确定所需范围：GET 读消息、POST 代发消息；不支持的动词直接 405。
+	var scope string
+	switch r.Method {
+	case http.MethodGet:
+		scope = domain.APIScopeMessagesRead
+	case http.MethodPost:
+		scope = domain.APIScopeMessagesWrite
+	default:
+		writeOpenError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.requireScope(w, r, apiApp, scope) {
+		return
+	}
 	conversation, ok := s.store.Conversation(r.PathValue("id"))
 	if !ok || !conversationOwnedBy(conversation, apiApp) {
 		writeOpenError(w, http.StatusNotFound, store.ErrNotFound.Error())
@@ -175,8 +203,6 @@ func (s *Service) HandleConversationMessages(w http.ResponseWriter, r *http.Requ
 		writeOpenJSON(w, http.StatusOK, page)
 	case http.MethodPost:
 		s.sendVisitorMessage(w, r, conversation)
-	default:
-		writeOpenError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -238,6 +264,9 @@ func (s *Service) HandleConversationClose(w http.ResponseWriter, r *http.Request
 	}
 	apiApp, ok := s.requireApp(w, r)
 	if !ok {
+		return
+	}
+	if !s.requireScope(w, r, apiApp, domain.APIScopeConversationsClose) {
 		return
 	}
 	conversationID := r.PathValue("id")

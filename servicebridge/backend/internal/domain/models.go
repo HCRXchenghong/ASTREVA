@@ -847,12 +847,14 @@ type AppRelease struct {
 // APIApp 第三方平台 API 授权。API Key 只保存 SHA-256 哈希，
 // 明文仅在创建/重置时返回一次。
 type APIApp struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	KeyPrefix    string     `json:"key_prefix"`
-	KeyHash      string     `json:"-"`
-	Enabled      bool       `json:"enabled"`
-	RateLimit    int        `json:"rate_limit"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	KeyPrefix string `json:"key_prefix"`
+	KeyHash   string `json:"-"`
+	Enabled   bool   `json:"enabled"`
+	RateLimit int    `json:"rate_limit"`
+	// Scopes 权限范围；空数组表示「不受限」，等同全部范围（兼容既有应用）。
+	Scopes       []string   `json:"scopes"`
 	Note         string     `json:"note"`
 	RequestCount int64      `json:"request_count"`
 	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`

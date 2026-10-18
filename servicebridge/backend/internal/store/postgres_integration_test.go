@@ -1176,3 +1176,185 @@ func createIntegrationAgent(t *testing.T, st *PostgresStore, account string) dom
 	}
 	return agent
 }
+
+// TestPostgresAPIAppScopes 是开放 API 权限范围（附录 B）的真实 PostgreSQL 集成测试：
+// 验证历史库自动补 scopes 列、JSONB 默认值 '[]'、创建/更新往返，以及
+// 「空数组 = 不受限」的兼容语义与非法范围拒绝。
+func TestPostgresAPIAppScopes(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	options := Options{
+		DataEncryptionKey:      "integration-test-encryption-key-32chars",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	}
+
+	// 1) 模拟历史库：先删掉 scopes 列，再重开存储，验证 ensureCoreTables 幂等补列。
+	probe, err := NewPostgresStore(ctx, databaseURL, options)
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	if _, err := probe.pool.Exec(ctx, `ALTER TABLE api_apps DROP COLUMN IF EXISTS scopes`); err != nil {
+		probe.Close()
+		t.Fatalf("模拟历史库（删除 scopes 列）失败：%v", err)
+	}
+	probe.Close()
+
+	st, err := NewPostgresStore(ctx, databaseURL, options)
+	if err != nil {
+		t.Fatalf("重新打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	var columnDefault, isNullable string
+	if err := st.pool.QueryRow(ctx, `
+		SELECT COALESCE(column_default, ''), is_nullable FROM information_schema.columns
+		WHERE table_name = 'api_apps' AND column_name = 'scopes'`).Scan(&columnDefault, &isNullable); err != nil {
+		t.Fatalf("历史库未自动补齐 scopes 列：%v", err)
+	}
+	if !strings.Contains(columnDefault, "[]") || !strings.Contains(columnDefault, "jsonb") || isNullable != "NO" {
+		t.Fatalf("scopes 列应为 JSONB NOT NULL DEFAULT '[]'::jsonb，实际 default=%q nullable=%q", columnDefault, isNullable)
+	}
+
+	suffix := time.Now().Format("150405.000000")
+	rawID := "api_it_raw_" + suffix
+	createdAID := "api_it_scopes_a_" + suffix
+	createdBID := "api_it_scopes_b_" + suffix
+	t.Cleanup(func() {
+		for _, id := range []string{rawID, createdAID, createdBID} {
+			_, _ = st.pool.Exec(context.Background(), `DELETE FROM api_apps WHERE id = $1`, id)
+		}
+	})
+
+	// 2) 默认值：不传 scopes 直接插入历史形态的行，读回应为 '[]'。
+	if _, err := st.pool.Exec(ctx, `
+		INSERT INTO api_apps (id, name, key_prefix, key_hash) VALUES ($1, $2, $3, $4)
+	`, rawID, "历史应用", "ast_live_it", "it-scope-hash-raw-"+suffix); err != nil {
+		t.Fatalf("插入历史形态应用失败：%v", err)
+	}
+	var rawScopes string
+	if err := st.pool.QueryRow(ctx, `SELECT COALESCE(scopes::text, '') FROM api_apps WHERE id = $1`, rawID).Scan(&rawScopes); err != nil {
+		t.Fatalf("读取默认 scopes 失败：%v", err)
+	}
+	if strings.TrimSpace(rawScopes) != "[]" {
+		t.Fatalf("历史行 scopes 默认值应为 []，实际 %q", rawScopes)
+	}
+	rawApp, ok := st.APIAppByID(ctx, rawID)
+	if !ok || len(rawApp.Scopes) != 0 {
+		t.Fatalf("历史行应读回空 scopes（不受限），实际 %+v", rawApp.Scopes)
+	}
+
+	// 3) 带 scopes 创建：入库去重、排序并自动补齐 me:read。
+	created, err := st.CreateAPIApp(domain.APIApp{
+		ID:        createdAID,
+		Name:      "范围集成应用A",
+		KeyPrefix: "ast_live_it",
+		KeyHash:   "it-scope-hash-a-" + suffix,
+		Enabled:   true,
+		Scopes:    []string{domain.APIScopeMessagesWrite, domain.APIScopeConversationsRead, domain.APIScopeMessagesWrite},
+	})
+	if err != nil {
+		t.Fatalf("创建带范围应用失败：%v", err)
+	}
+	wantScopes := []string{domain.APIScopeMeRead, domain.APIScopeConversationsRead, domain.APIScopeMessagesWrite}
+	if strings.Join(created.Scopes, ",") != strings.Join(wantScopes, ",") {
+		t.Fatalf("创建返回的范围不符：got=%v want=%v", created.Scopes, wantScopes)
+	}
+	byKey, ok := st.APIAppByKeyHash("it-scope-hash-a-" + suffix)
+	if !ok || strings.Join(byKey.Scopes, ",") != strings.Join(wantScopes, ",") {
+		t.Fatalf("按 Key 读回的范围不符：%+v", byKey.Scopes)
+	}
+	var storedScopes string
+	if err := st.pool.QueryRow(ctx, `SELECT scopes::text FROM api_apps WHERE id = $1`, createdAID).Scan(&storedScopes); err != nil {
+		t.Fatalf("读取入库 scopes 失败：%v", err)
+	}
+	if !strings.Contains(storedScopes, domain.APIScopeMessagesWrite) || !strings.Contains(storedScopes, domain.APIScopeMeRead) {
+		t.Fatalf("入库 JSONB 不符：%q", storedScopes)
+	}
+	foundInList := false
+	for _, item := range st.APIApps() {
+		if item.ID == createdAID {
+			foundInList = strings.Join(item.Scopes, ",") == strings.Join(wantScopes, ",")
+		}
+	}
+	if !foundInList {
+		t.Fatalf("列表接口未返回正确的 scopes：%+v", st.APIApps())
+	}
+
+	// 4) 不传 scopes 创建 = 不受限（空数组），JSONB 存 '[]'。
+	empty, err := st.CreateAPIApp(domain.APIApp{
+		ID:        createdBID,
+		Name:      "范围集成应用B",
+		KeyPrefix: "ast_live_it",
+		KeyHash:   "it-scope-hash-b-" + suffix,
+		Enabled:   true,
+	})
+	if err != nil {
+		t.Fatalf("创建不受限应用失败：%v", err)
+	}
+	if len(empty.Scopes) != 0 {
+		t.Fatalf("未传 scopes 应存为不受限，实际 %v", empty.Scopes)
+	}
+	if err := st.pool.QueryRow(ctx, `SELECT scopes::text FROM api_apps WHERE id = $1`, createdBID).Scan(&storedScopes); err != nil {
+		t.Fatalf("读取不受限应用 scopes 失败：%v", err)
+	}
+	if strings.TrimSpace(storedScopes) != "[]" {
+		t.Fatalf("不受限应用应存 '[]'，实际 %q", storedScopes)
+	}
+
+	// 5) 更新：收窄范围自动补 me:read，写回后可读回；再更新回空数组恢复不受限。
+	narrowed, err := st.UpdateAPIApp(createdBID, domain.APIApp{
+		Name:      "范围集成应用B",
+		Enabled:   true,
+		RateLimit: 0,
+		Scopes:    []string{domain.APIScopeEventsSubscribe},
+	})
+	if err != nil {
+		t.Fatalf("收窄范围失败：%v", err)
+	}
+	if strings.Join(narrowed.Scopes, ",") != strings.Join([]string{domain.APIScopeMeRead, domain.APIScopeEventsSubscribe}, ",") {
+		t.Fatalf("收窄后范围不符：%v", narrowed.Scopes)
+	}
+	reread, ok := st.APIAppByID(ctx, createdBID)
+	if !ok || strings.Join(reread.Scopes, ",") != strings.Join(narrowed.Scopes, ",") {
+		t.Fatalf("收窄后读回不符：%+v", reread.Scopes)
+	}
+
+	// 6) 非法范围应被拒绝（ErrInvalidInput），且不覆盖已保存值。
+	if _, err := st.UpdateAPIApp(createdBID, domain.APIApp{
+		Name:      "范围集成应用B",
+		Enabled:   true,
+		RateLimit: 0,
+		Scopes:    []string{"bogus:scope"},
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("非法范围更新应返回 ErrInvalidInput，实际 %v", err)
+	}
+	afterInvalid, ok := st.APIAppByID(ctx, createdBID)
+	if !ok || strings.Join(afterInvalid.Scopes, ",") != strings.Join(narrowed.Scopes, ",") {
+		t.Fatalf("非法更新不得覆盖已有范围：%+v", afterInvalid.Scopes)
+	}
+
+	// 7) 显式空数组 = 不受限，JSONB 回到 '[]'。
+	unrestricted, err := st.UpdateAPIApp(createdBID, domain.APIApp{
+		Name:      "范围集成应用B",
+		Enabled:   true,
+		RateLimit: 0,
+		Scopes:    []string{},
+	})
+	if err != nil {
+		t.Fatalf("恢复不受限失败：%v", err)
+	}
+	if len(unrestricted.Scopes) != 0 {
+		t.Fatalf("显式空数组应收敛为不受限，实际 %v", unrestricted.Scopes)
+	}
+	if err := st.pool.QueryRow(ctx, `SELECT scopes::text FROM api_apps WHERE id = $1`, createdBID).Scan(&storedScopes); err != nil {
+		t.Fatalf("读取恢复后的 scopes 失败：%v", err)
+	}
+	if strings.TrimSpace(storedScopes) != "[]" {
+		t.Fatalf("恢复不受限后应存 '[]'，实际 %q", storedScopes)
+	}
+}

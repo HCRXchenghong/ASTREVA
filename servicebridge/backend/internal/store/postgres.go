@@ -3220,6 +3220,7 @@ func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 			key_hash TEXT NOT NULL UNIQUE,
 			enabled BOOLEAN NOT NULL DEFAULT true,
 			rate_limit INTEGER NOT NULL DEFAULT 0,
+			scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
 			note TEXT NOT NULL DEFAULT '',
 			request_count BIGINT NOT NULL DEFAULT 0,
 			last_used_at TIMESTAMPTZ,
@@ -3228,6 +3229,8 @@ func (s *PostgresStore) ensureServiceRatingsTable(ctx context.Context) error {
 			CONSTRAINT api_apps_rate_limit_check CHECK (rate_limit >= 0)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_apps_created ON api_apps(created_at DESC)`,
+		// 历史库补列：空数组 = 不受限（等同全部范围），既有应用行为不变。
+		`ALTER TABLE api_apps ADD COLUMN IF NOT EXISTS scopes JSONB NOT NULL DEFAULT '[]'::jsonb`,
 	}
 	for _, statement := range statements {
 		if _, err := s.pool.Exec(ctx, statement); err != nil {
@@ -3820,17 +3823,24 @@ func (s *PostgresStore) UpdateAgentPreferences(agentID string, next domain.Agent
 	return agent.Preferences.WithDefaults(), nil
 }
 
-const apiAppColumns = `id, name, key_prefix, key_hash, enabled, rate_limit, note, request_count, last_used_at, created_at, updated_at`
+const apiAppColumns = `id, name, key_prefix, key_hash, enabled, rate_limit, COALESCE(scopes::text, '[]'), note, request_count, last_used_at, created_at, updated_at`
 
 func scanAPIApp(row scanTarget) (domain.APIApp, error) {
 	var out domain.APIApp
 	var lastUsed sql.NullTime
-	err := row.Scan(&out.ID, &out.Name, &out.KeyPrefix, &out.KeyHash, &out.Enabled, &out.RateLimit, &out.Note, &out.RequestCount, &lastUsed, &out.CreatedAt, &out.UpdatedAt)
+	var scopesJSON string
+	err := row.Scan(&out.ID, &out.Name, &out.KeyPrefix, &out.KeyHash, &out.Enabled, &out.RateLimit, &scopesJSON, &out.Note, &out.RequestCount, &lastUsed, &out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		return domain.APIApp{}, err
 	}
 	if lastUsed.Valid {
 		out.LastUsedAt = &lastUsed.Time
+	}
+	// 空数组（或历史库的 '[]'）表示「不受限」，兼容既有应用；统一返回非 nil 空切片。
+	if parsed := parseStringListJSON(scopesJSON); len(parsed) > 0 {
+		out.Scopes = parsed
+	} else {
+		out.Scopes = []string{}
 	}
 	return out, nil
 }
@@ -3870,9 +3880,9 @@ func (s *PostgresStore) CreateAPIApp(next domain.APIApp) (domain.APIApp, error) 
 	next.UpdatedAt = now
 	next.RequestCount = 0
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO api_apps (id, name, key_prefix, key_hash, enabled, rate_limit, note, request_count, last_used_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 0, NULL, $8, $9)
-	`, next.ID, next.Name, next.KeyPrefix, next.KeyHash, next.Enabled, next.RateLimit, next.Note, next.CreatedAt, next.UpdatedAt)
+		INSERT INTO api_apps (id, name, key_prefix, key_hash, enabled, rate_limit, scopes, note, request_count, last_used_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, 0, NULL, $9, $10)
+	`, next.ID, next.Name, next.KeyPrefix, next.KeyHash, next.Enabled, next.RateLimit, marshalStringListJSON(next.Scopes), next.Note, next.CreatedAt, next.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return domain.APIApp{}, ErrConflict
@@ -3906,15 +3916,21 @@ func (s *PostgresStore) UpdateAPIApp(id string, next domain.APIApp) (domain.APIA
 	}
 	current.Note = note
 	current.Enabled = next.Enabled
+	// 空数组表示「不受限」（等同全部范围），非空则自动补齐 me:read。
+	scopes, err := domain.NormalizeAPIScopes(next.Scopes)
+	if err != nil {
+		return domain.APIApp{}, ErrInvalidInput
+	}
+	current.Scopes = scopes
 	if strings.TrimSpace(next.KeyHash) != "" {
 		current.KeyHash = strings.TrimSpace(next.KeyHash)
 		current.KeyPrefix = strings.TrimSpace(next.KeyPrefix)
 	}
 	current.UpdatedAt = dbNow()
 	if _, err := s.pool.Exec(ctx, `
-		UPDATE api_apps SET name=$2, rate_limit=$3, note=$4, enabled=$5, key_hash=$6, key_prefix=$7, updated_at=$8
+		UPDATE api_apps SET name=$2, rate_limit=$3, note=$4, enabled=$5, key_hash=$6, key_prefix=$7, scopes=$8::jsonb, updated_at=$9
 		WHERE id=$1
-	`, current.ID, current.Name, current.RateLimit, current.Note, current.Enabled, current.KeyHash, current.KeyPrefix, current.UpdatedAt); err != nil {
+	`, current.ID, current.Name, current.RateLimit, current.Note, current.Enabled, current.KeyHash, current.KeyPrefix, marshalStringListJSON(current.Scopes), current.UpdatedAt); err != nil {
 		if isUniqueViolation(err) {
 			return domain.APIApp{}, ErrConflict
 		}
