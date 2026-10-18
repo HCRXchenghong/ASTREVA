@@ -1990,7 +1990,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
       avatar = _AgentAvatar(
         radius: 18,
         imageUrl: myAvatarUrl,
-        baseUrl: baseUrl,
+        baseUrl: widget.baseUrl,
         name: '我',
       );
     } else {

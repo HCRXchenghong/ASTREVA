@@ -244,8 +244,59 @@ func TestAdminAIModelsUsesRealUpstreamAndRequiresAuth(t *testing.T) {
 	}
 }
 
-func TestVisitorMessagePageMasksRevokedAgentMessage(t *testing.T) {
+func TestAdminAIModelsFallsBackToSavedAPIKey(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer saved-secret" {
+			t.Fatalf("expected saved key to be used, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"model-saved"}]}`))
+	}))
+	defer upstream.Close()
+
 	st := store.NewMemoryStore(store.Options{})
+	_, _ = st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false})
+	service := app.NewService(st, realtime.NewHub(), slog.Default())
+	server := NewRouter(config.Config{Env: "test"}, slog.Default(), service)
+	adminToken := loginForToken(t, server, "/api/admin/login", "superadmin", "123456")
+
+	// 请求体和已保存配置都没有 Key 时才报错。
+	doJSON(t, server, http.MethodPost, "/api/admin/ai-settings/models", adminToken, map[string]any{
+		"base_url": upstream.URL, "api_type": "chat_completions", "timeout_seconds": 5,
+	}, http.StatusBadRequest)
+
+	if _, err := st.UpdateAISettings(domain.AISettings{
+		Enabled: true, Mode: domain.AIModeHumanFirst, BaseURL: upstream.URL, APIKey: "saved-secret",
+		Model: "gpt-4o-mini", APIType: "chat_completions", TimeoutSeconds: 5,
+	}); err != nil {
+		t.Fatalf("save AI settings: %v", err)
+	}
+
+	out := doJSON(t, server, http.MethodPost, "/api/admin/ai-settings/models", adminToken, map[string]any{
+		"base_url": upstream.URL, "api_type": "chat_completions", "timeout_seconds": 5,
+	}, http.StatusOK)
+	models, ok := out["models"].([]any)
+	if !ok || len(models) != 1 || models[0] != "model-saved" {
+		t.Fatalf("unexpected models payload: %#v", out)
+	}
+}
+
+func TestFormValueTruthyAcceptsHTMLCheckboxValues(t *testing.T) {
+	for _, value := range []string{"on", "ON", " true ", "True", "1", "yes", "YES"} {
+		if !formValueTruthy(value) {
+			t.Fatalf("expected %q to be truthy", value)
+		}
+	}
+	for _, value := range []string{"", "off", "false", "0", "no", "2"} {
+		if formValueTruthy(value) {
+			t.Fatalf("expected %q to be falsy", value)
+		}
+	}
+}
+
+
+	st := store.NewMemoryStore(store.Options{})
+	_, _ = st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false})
 	service := app.NewService(st, realtime.NewHub(), slog.Default())
 	router := NewRouter(config.Config{Env: "test"}, slog.Default(), service)
 
@@ -712,6 +763,8 @@ func newTestRouter() http.Handler {
 
 func newTestRouterWithConfig(cfg config.Config) http.Handler {
 	st := store.NewMemoryStore(store.Options{})
+	// 默认关闭营业时间限制（Enabled=false 表示不限制），让既有用例不依赖运行时刻。
+	_, _ = st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false})
 	service := app.NewService(st, realtime.NewHub(), slog.Default())
 	return NewRouter(cfg, slog.Default(), service)
 }

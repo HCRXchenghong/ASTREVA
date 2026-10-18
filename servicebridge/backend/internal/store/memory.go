@@ -305,6 +305,8 @@ func (s *MemoryStore) SetAgentStatus(agentID string, status domain.AgentStatus) 
 				continue
 			}
 			conversation.AssignedAgentID = ""
+			conversation.AssignedAgentName = ""
+			conversation.AssignedAgentAvatar = ""
 			// 人工已实际接待过的会话才需要重新排队；AI 接待中的会话保持原状态，继续由 AI 服务。
 			if conversation.Status == domain.ConversationAssigned {
 				conversation.Status = domain.ConversationHumanRequested
@@ -357,6 +359,9 @@ func (s *MemoryStore) ConversationsForAgent(agentID string) ([]domain.Conversati
 			result = append(result, *conversation)
 		}
 	}
+	for i := range result {
+		s.fillAssignedAgentLocked(&result[i])
+	}
 	sortConversations(result)
 	return result, nil
 }
@@ -368,6 +373,9 @@ func (s *MemoryStore) AllConversations() []domain.Conversation {
 	result := make([]domain.Conversation, 0, len(s.conversations))
 	for _, conversation := range s.conversations {
 		result = append(result, *conversation)
+	}
+	for i := range result {
+		s.fillAssignedAgentLocked(&result[i])
 	}
 	sortConversations(result)
 	return result
@@ -930,7 +938,9 @@ func (s *MemoryStore) Conversation(id string) (domain.Conversation, bool) {
 	if !ok {
 		return domain.Conversation{}, false
 	}
-	return *conversation, true
+	out := *conversation
+	s.fillAssignedAgentLocked(&out)
+	return out, true
 }
 
 func (s *MemoryStore) Messages(conversationID string) []domain.Message {
@@ -1232,7 +1242,8 @@ func (s *MemoryStore) TransferConversation(actor domain.AuthSession, conversatio
 	target.CurrentConversations++
 	target.Updated = now
 	conversation.AssignedAgentID = target.ID
-	// 转接只更换客服，不改变会话状态：客服实际回复后才对外显示人工服务（无痕转人工）。
+	s.fillAssignedAgentLocked(conversation)
+	// 转接只更换客服，不改变会话状态：客服实际回复后状态才对外显示人工服务（无痕转人工）。
 	conversation.UpdatedAt = now
 	msg := s.createMessageLocked(conversationID, "", domain.SenderSystem, "system", domain.MessageHandoff, "会话已转接至 "+target.Name+"（仅客服端可见）。", nil)
 	return *conversation, msg, nil

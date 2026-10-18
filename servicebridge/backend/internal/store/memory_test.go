@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"customer-service/backend/internal/domain"
 )
@@ -50,6 +51,7 @@ func TestAgentCannotEditUnassignedConversation(t *testing.T) {
 
 func TestHumanKeywordSilentlyAssignsAndKeepsAIUntilAgentReplies(t *testing.T) {
 	s := NewMemoryStore(Options{})
+	openBusinessForTest(t, s)
 	agentSession, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
 		t.Fatalf("login agent: %v", err)
@@ -93,6 +95,7 @@ func TestHumanKeywordSilentlyAssignsAndKeepsAIUntilAgentReplies(t *testing.T) {
 
 func TestAgentOfflineKeepsTakenOverConversationInHumanQueue(t *testing.T) {
 	s := NewMemoryStore(Options{})
+	openBusinessForTest(t, s)
 	agentSession, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
 		t.Fatalf("login agent: %v", err)
@@ -133,6 +136,12 @@ func TestAgentOfflineKeepsTakenOverConversationInHumanQueue(t *testing.T) {
 
 func TestAlwaysAIModeStillHonorsExplicitHumanHandoff(t *testing.T) {
 	s := NewMemoryStore(Options{})
+	openBusinessForTest(t, s)
+	if _, err := s.CreateKeywordRule(domain.KeywordRule{
+		Keyword: "电话", MatchType: "contains", Reply: "客服热线请以官网公示为准。", Enabled: true, Priority: 90, Action: "telephone",
+	}); err != nil {
+		t.Fatalf("create keyword rule: %v", err)
+	}
 	if _, err := s.UpdateAISettings(domain.AISettings{Enabled: true, Mode: domain.AIModeAlwaysAI, APIKey: "sk-test-123456", Model: "gpt-4o-mini", APIType: "chat_completions", TimeoutSeconds: 5}); err != nil {
 		t.Fatalf("update AI settings: %v", err)
 	}
@@ -158,29 +167,230 @@ func TestAlwaysAIModeStillHonorsExplicitHumanHandoff(t *testing.T) {
 	}
 }
 
-func TestPhoneKeywordGeneratesStructuredContactReply(t *testing.T) {
+func TestDefaultContactSettingsAndKeywordRulesHaveNoPlaceholderData(t *testing.T) {
 	s := NewMemoryStore(Options{})
-	visitor, err := s.CreateVisitorConversation("192.0.2.19", "web", "zh", "direct", "")
+
+	contacts := s.ContactSettings()
+	if contacts.Telephone != "" || contacts.WhatsApp != "" || contacts.Telegram != "" {
+		t.Fatalf("默认联系方式必须为空，不能内置任何占位号码: %#v", contacts)
+	}
+	if rules := s.KeywordRules(); len(rules) != 0 {
+		t.Fatalf("默认关键词规则必须为空，不能内置假联系方式规则: %#v", rules)
+	}
+}
+
+func TestUpdateContactSettingsReplacesWholeRecord(t *testing.T) {
+	s := NewMemoryStore(Options{})
+
+	if _, err := s.UpdateContactSettings(domain.ContactSettings{
+		Telephone:  "021-8888-0000",
+		WhatsApp:   "wa-real-account",
+		Telegram:   "tg-real-account",
+		EntryReply: "欢迎咨询",
+	}); err != nil {
+		t.Fatalf("update contact settings: %v", err)
+	}
+
+	// PATCH 为整体替换语义：未传字段即清空，允许管理员显式删除联系方式。
+	cleared, err := s.UpdateContactSettings(domain.ContactSettings{EntryReply: "欢迎咨询"})
+	if err != nil {
+		t.Fatalf("clear contact settings: %v", err)
+	}
+	if cleared.Telephone != "" || cleared.WhatsApp != "" || cleared.Telegram != "" {
+		t.Fatalf("联系方式应可被显式清空: %#v", cleared)
+	}
+	if cleared.EntryReply != "欢迎咨询" {
+		t.Fatalf("欢迎语不应被意外清空: %q", cleared.EntryReply)
+	}
+}
+
+func TestUpdateAppReleaseKeepsReleaseNotesWhenEmpty(t *testing.T) {
+	s := NewMemoryStore(Options{})
+
+	release, err := s.CreateAppRelease(domain.AppRelease{
+		Platform:     "android",
+		VersionName:  "1.0.0",
+		VersionCode:  1,
+		FilePath:     "releases/1.0.0.apk",
+		ReleaseNotes: "首个版本",
+	})
+	if err != nil {
+		t.Fatalf("create app release: %v", err)
+	}
+
+	// 与 Postgres 对齐：未带 release_notes 的 PATCH 不应清空已有说明。
+	updated, err := s.UpdateAppRelease(release.ID, domain.AppRelease{})
+	if err != nil {
+		t.Fatalf("update app release without notes: %v", err)
+	}
+	if updated.ReleaseNotes != "首个版本" {
+		t.Fatalf("release_notes 不应被空值清空: %q", updated.ReleaseNotes)
+	}
+
+	updated, err = s.UpdateAppRelease(release.ID, domain.AppRelease{ReleaseNotes: "修复若干问题"})
+	if err != nil {
+		t.Fatalf("update app release with notes: %v", err)
+	}
+	if updated.ReleaseNotes != "修复若干问题" {
+		t.Fatalf("release_notes 未按预期更新: %q", updated.ReleaseNotes)
+	}
+}
+
+func TestBusinessHoursBlocksAssignmentAndEmitsOfflineReplyOnce(t *testing.T) {
+	s := NewMemoryStore(Options{})
+	_, agent, err := s.LoginAgent("admin", "123456")
+	if err != nil {
+		t.Fatalf("login agent: %v", err)
+	}
+	// 非营业时间窗口：以当前时刻为基准避开现在，避免用例受运行时间影响。
+	setTestBusinessWindow(t, s, time.Hour, 2*time.Hour)
+	if _, _, err := s.SetAgentStatus(agent.ID, domain.AgentOnline); err != nil {
+		t.Fatalf("set agent online off-hours: %v", err)
+	}
+
+	visitor, err := s.CreateVisitorConversation("192.0.2.77", "web", "zh", "direct", "")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
 	}
-
-	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "c1", "客服电话是多少？", domain.MessageText, nil)
-	if err != nil {
-		t.Fatalf("add visitor message: %v", err)
+	if visitor.Conversation.AssignedAgentID != "" {
+		t.Fatalf("非营业时间不应自动分配人工: %q", visitor.Conversation.AssignedAgentID)
 	}
 
-	if result.NeedAI {
-		t.Fatal("keyword reply should not call AI")
+	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "c1", "我要转人工", domain.MessageText, nil)
+	if err != nil {
+		t.Fatalf("add handoff message: %v", err)
+	}
+	if result.Conversation.AssignedAgentID != "" {
+		t.Fatalf("非营业时间转人工不应自动分配客服: %q", result.Conversation.AssignedAgentID)
+	}
+	if result.Conversation.Status != domain.ConversationHumanRequested {
+		t.Fatalf("非营业时间应进入人工队列: %s", result.Conversation.Status)
 	}
 	if len(result.Generated) != 1 {
-		t.Fatalf("expected one generated keyword reply, got %d", len(result.Generated))
+		t.Fatalf("非营业时间应给出一次留言提示: %#v", result.Generated)
 	}
-	if result.Generated[0].MessageType != domain.MessageContactTelephone {
-		t.Fatalf("expected phone contact message, got %s", result.Generated[0].MessageType)
+	hint := result.Generated[0]
+	if hint.SenderType != domain.SenderSystem || hint.MessageType != domain.MessageSystem {
+		t.Fatalf("留言提示应为 system 消息: %#v", hint)
 	}
-	if result.Generated[0].Content != "客服电话：400-123-4567" {
-		t.Fatalf("unexpected reply content: %q", result.Generated[0].Content)
+	if hint.Content != defaultOfflineReply {
+		t.Fatalf("未配置时留言提示应使用内置文案: %q", hint.Content)
+	}
+	// AI 仍继续接待：非营业时间只拦截人工分配，不打断 AI。
+	if !result.NeedAI {
+		t.Fatal("非营业时间 AI 应继续接待")
+	}
+
+	again, err := s.AddVisitorMessage(visitor.Conversation.ID, "c2", "我要转人工", domain.MessageText, nil)
+	if err != nil {
+		t.Fatalf("add repeated handoff message: %v", err)
+	}
+	if len(again.Generated) != 0 {
+		t.Fatalf("留言提示同一会话只应给出一次: %#v", again.Generated)
+	}
+}
+
+func TestBusinessHoursUsesConfiguredOfflineReply(t *testing.T) {
+	s := NewMemoryStore(Options{})
+	if _, err := s.UpdateBusinessHours(domain.BusinessHours{
+		Timezone:     "UTC",
+		Enabled:      true,
+		OfflineReply: "现在是休息时间，请留言，我们稍后回复。",
+	}); err != nil {
+		t.Fatalf("update business hours: %v", err)
+	}
+	setTestBusinessWindow(t, s, time.Hour, 2*time.Hour)
+
+	visitor, err := s.CreateVisitorConversation("192.0.2.78", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("create visitor conversation: %v", err)
+	}
+	result, err := s.AddVisitorMessage(visitor.Conversation.ID, "c1", "转人工", domain.MessageText, nil)
+	if err != nil {
+		t.Fatalf("add handoff message: %v", err)
+	}
+	if len(result.Generated) != 1 || result.Generated[0].Content != "现在是休息时间，请留言，我们稍后回复。" {
+		t.Fatalf("应使用后台配置的留言文案: %#v", result.Generated)
+	}
+}
+
+func TestBusinessHoursAllowsAssignmentDuringOpenHours(t *testing.T) {
+	s := NewMemoryStore(Options{})
+	_, agent, err := s.LoginAgent("admin", "123456")
+	if err != nil {
+		t.Fatalf("login agent: %v", err)
+	}
+	// 营业时间窗口覆盖当前时刻。
+	setTestBusinessWindow(t, s, -time.Hour, time.Hour)
+	if _, _, err := s.SetAgentStatus(agent.ID, domain.AgentOnline); err != nil {
+		t.Fatalf("set agent online: %v", err)
+	}
+
+	visitor, err := s.CreateVisitorConversation("192.0.2.79", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("create visitor conversation: %v", err)
+	}
+	if visitor.Conversation.AssignedAgentID != agent.ID {
+		t.Fatalf("营业时间内应自动分配在线客服: %q", visitor.Conversation.AssignedAgentID)
+	}
+}
+
+func TestConversationCarriesAssignedAgentIdentity(t *testing.T) {
+	s := NewMemoryStore(Options{})
+	openBusinessForTest(t, s)
+	_, agent, err := s.LoginAgent("admin", "123456")
+	if err != nil {
+		t.Fatalf("login agent: %v", err)
+	}
+	if _, _, err := s.SetAgentStatus(agent.ID, domain.AgentOnline); err != nil {
+		t.Fatalf("set agent online: %v", err)
+	}
+	if _, err := s.UpdateAgentAvatar(agent.ID, "https://cdn.example.com/avatar.png"); err != nil {
+		t.Fatalf("update agent avatar: %v", err)
+	}
+
+	visitor, err := s.CreateVisitorConversation("192.0.2.91", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("create visitor conversation: %v", err)
+	}
+	if visitor.Conversation.AssignedAgentID != agent.ID {
+		t.Fatalf("expected assignment to online agent, got %q", visitor.Conversation.AssignedAgentID)
+	}
+	if visitor.Conversation.AssignedAgentName != "客服-李雪" {
+		t.Fatalf("会话应带上客服名称: %q", visitor.Conversation.AssignedAgentName)
+	}
+	if visitor.Conversation.AssignedAgentAvatar != "https://cdn.example.com/avatar.png" {
+		t.Fatalf("会话应带上客服头像: %q", visitor.Conversation.AssignedAgentAvatar)
+	}
+
+	fetched, ok := s.Conversation(visitor.Conversation.ID)
+	if !ok {
+		t.Fatal("conversation not found")
+	}
+	if fetched.AssignedAgentName != "客服-李雪" || fetched.AssignedAgentAvatar != "https://cdn.example.com/avatar.png" {
+		t.Fatalf("读取路径应补齐客服信息: %#v", fetched)
+	}
+}
+
+// setTestBusinessWindow 把营业时间设为以当前时刻为基准的相对窗口，让用例不受运行时间影响。
+func setTestBusinessWindow(t *testing.T, s *MemoryStore, startOffset, endOffset time.Duration) {
+	t.Helper()
+	now := time.Now().UTC()
+	if _, err := s.UpdateBusinessHours(domain.BusinessHours{
+		Timezone: "UTC",
+		Start:    now.Add(startOffset).Format("15:04"),
+		End:      now.Add(endOffset).Format("15:04"),
+		Enabled:  true,
+	}); err != nil {
+		t.Fatalf("set business window: %v", err)
+	}
+}
+
+// openBusinessForTest 关闭营业时间限制（Enabled=false 表示不限制），让既有用例保持随时可分配的行为。
+func openBusinessForTest(t *testing.T, s *MemoryStore) {
+	t.Helper()
+	if _, err := s.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false}); err != nil {
+		t.Fatalf("open business hours: %v", err)
 	}
 }
 
@@ -242,6 +452,12 @@ func TestPagedMessagesReturnsNewestPageAndCursor(t *testing.T) {
 
 func TestHumanTakeoverBlocksKeywordAndAIReplies(t *testing.T) {
 	s := NewMemoryStore(Options{})
+	openBusinessForTest(t, s)
+	if _, err := s.CreateKeywordRule(domain.KeywordRule{
+		Keyword: "电话", MatchType: "contains", Reply: "客服热线请以官网公示为准。", Enabled: true, Priority: 90, Action: "telephone",
+	}); err != nil {
+		t.Fatalf("create keyword rule: %v", err)
+	}
 	agentSession, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
 		t.Fatalf("login agent: %v", err)
@@ -313,6 +529,7 @@ func TestUpdateAISettingsMasksAndPreservesAPIKey(t *testing.T) {
 
 func TestRevokeAgentMessageUpdatesConversationAndPreservesOriginalContent(t *testing.T) {
 	s := NewMemoryStore(Options{})
+	openBusinessForTest(t, s)
 
 	agentSession, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
@@ -491,6 +708,7 @@ func TestAgentCreateDisableAndLoginBoundary(t *testing.T) {
 
 func TestAdminTransferConversationReleasesOldAgent(t *testing.T) {
 	s := NewMemoryStore(Options{})
+	openBusinessForTest(t, s)
 	adminSession, _, err := s.LoginAdmin("superadmin", "123456")
 	if err != nil {
 		t.Fatalf("login admin: %v", err)

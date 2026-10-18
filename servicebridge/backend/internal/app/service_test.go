@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -15,6 +16,24 @@ import (
 	"customer-service/backend/internal/realtime"
 	"customer-service/backend/internal/store"
 )
+
+func TestAIReplyTimeoutTracksConfiguredTimeout(t *testing.T) {
+	// 未配置或配置小于默认值时，至少给默认 20s，再加翻译余量。
+	if got := aiReplyTimeout(domain.AISettings{}); got != defaultAITimeout+translationWindow {
+		t.Fatalf("unexpected default ai reply timeout: %s", got)
+	}
+	if got := aiReplyTimeout(domain.AISettings{TimeoutSeconds: 5}); got != defaultAITimeout+translationWindow {
+		t.Fatalf("small configured timeout must fall back to default: %s", got)
+	}
+	// 配置值更大时，外层超时随之增大，保证 AI 请求不会被提前掐断。
+	if got := aiReplyTimeout(domain.AISettings{TimeoutSeconds: 30}); got != 30*time.Second+translationWindow {
+		t.Fatalf("configured timeout not honored: %s", got)
+	}
+	// 上限 150s，避免外层的翻译余量把超时推得过大。
+	if got := aiReplyTimeout(domain.AISettings{TimeoutSeconds: 120}); got != maxAIReplyTimeout {
+		t.Fatalf("configured timeout must be capped: %s", got)
+	}
+}
 
 func TestVisitorWebSocketCannotSendToAnotherConversation(t *testing.T) {
 	st := store.NewMemoryStore(store.Options{})

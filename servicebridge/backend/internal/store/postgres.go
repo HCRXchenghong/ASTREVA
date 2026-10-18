@@ -991,6 +991,8 @@ func (s *PostgresStore) TransferConversation(actor domain.AuthSession, conversat
 		if err != nil {
 			return err
 		}
+		out.AssignedAgentName = target.Name
+		out.AssignedAgentAvatar = target.AvatarURL
 		// 转接只更换客服，不改变会话状态：客服实际回复后才对外显示人工服务（无痕转人工）。
 		msg, err = s.createMessageTx(ctx, tx, conversationID, "", domain.SenderSystem, "system", domain.MessageHandoff, "会话已转接至 "+target.Name+"（仅客服端可见）。", nil)
 		return err

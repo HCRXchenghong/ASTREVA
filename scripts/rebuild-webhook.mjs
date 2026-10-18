@@ -19,6 +19,7 @@ const secret = process.env.REBUILD_WEBHOOK_SECRET || '';
 let running = false;
 let queued = false;
 let queuedSource = 'current';
+let queuedPreview = null;
 let lastBuild = {
   status: 'idle',
   startedAt: null,
@@ -33,10 +34,11 @@ function json(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-async function runBuild(source = 'current') {
+async function runBuild(source = 'current', previewContent = null) {
   if (running) {
     queued = true;
     queuedSource = source;
+    queuedPreview = previewContent;
     return;
   }
   running = true;
@@ -49,7 +51,11 @@ async function runBuild(source = 'current') {
     source
   };
   try {
-    await buildFrontend({ source });
+    if (previewContent) {
+      await buildFrontend({ source: 'current', snapshotContent: previewContent, target: 'preview' });
+    } else {
+      await buildFrontend({ source });
+    }
     lastBuild = {
       ...lastBuild,
       status: 'succeeded',
@@ -73,8 +79,10 @@ async function runBuild(source = 'current') {
     if (queued) {
       queued = false;
       const nextSource = queuedSource;
+      const nextPreview = queuedPreview;
       queuedSource = 'current';
-      void runBuild(nextSource);
+      queuedPreview = null;
+      void runBuild(nextSource, nextPreview);
     }
   }
 }
@@ -103,22 +111,31 @@ createServer(async (req, res) => {
   let raw = '';
   for await (const chunk of req) {
     raw += chunk;
-    if (raw.length > 4096) {
+    // 草稿预览会把整份内容 JSON 一并提交，上限放宽到 8 MiB。
+    if (raw.length > 8 * 1024 * 1024) {
       json(res, 413, { error: 'request body too large' });
       return;
     }
   }
   let source = 'current';
+  let previewContent = null;
   if (raw) {
     try {
-      const requested = JSON.parse(raw).source;
-      if (requested === 'fallback') source = 'fallback';
+      const payload = JSON.parse(raw);
+      if (payload.source === 'fallback') source = 'fallback';
+      if (payload.source === 'preview') {
+        if (!payload.content || typeof payload.content !== 'object') {
+          json(res, 400, { error: 'preview 需要提供 content 对象' });
+          return;
+        }
+        previewContent = payload.content;
+      }
     } catch {
       json(res, 400, { error: 'invalid json' });
       return;
     }
   }
-  void runBuild(source);
+  void runBuild(source, previewContent);
   json(res, 202, { ok: true, running, queued, lastBuild });
 }).listen(port, () => {
   console.log(`Rebuild webhook listening on http://127.0.0.1:${port}/rebuild`);

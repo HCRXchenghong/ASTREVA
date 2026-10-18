@@ -5,7 +5,8 @@ export function createPublishRouter({ platformStore, publishService, verifySessi
       pathname === '/site-admin-api/audit-events' ||
       pathname === '/site-admin-api/publish-jobs' ||
       pathname === '/site-admin-api/status' ||
-      pathname === '/site-admin-api/publish';
+      pathname === '/site-admin-api/publish' ||
+      pathname === '/site-admin-api/preview';
     if (!isRoute) return false;
     const session = verifySession(req);
     if (!session) {
@@ -34,6 +35,23 @@ export function createPublishRouter({ platformStore, publishService, verifySessi
       } catch (error) {
         await auditEvent(req, 'publish.request.failed', 'publish-job', error.jobId || '', { message: error.message || '' });
         json(res, 503, { error: { message: `重建服务未启动或发布失败：${error.message}` } });
+      }
+      return true;
+    }
+    // 草稿预览：把编辑器当前内容构建到 /__preview/，不修改线上内容。
+    if (pathname === '/site-admin-api/preview' && req.method === 'POST') {
+      try {
+        const payload = await bodyJson(req, 8 * 1024 * 1024);
+        const content = payload?.content;
+        if (!content || typeof content !== 'object' || !content.site || !content.home) {
+          json(res, 400, { error: { message: '预览内容无效：缺少 site/home 节点。' } });
+          return true;
+        }
+        const rebuild = await publishService.requestPreview(content);
+        await auditEvent(req, 'publish.preview-requested', 'site-content', 'preview', {});
+        json(res, 202, { data: { ok: true, rebuild } });
+      } catch (error) {
+        json(res, 503, { error: { message: `草稿预览构建失败：${error.message}` } });
       }
       return true;
     }

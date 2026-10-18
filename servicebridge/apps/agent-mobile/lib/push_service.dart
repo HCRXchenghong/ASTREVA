@@ -30,7 +30,6 @@ class PushService {
       _apiKey.isNotEmpty && _appId.isNotEmpty && _projectId.isNotEmpty;
 
   FlutterLocalNotificationsPlugin? _localNotifications;
-  FirebaseMessaging? _messaging;
   ServiceBridgeClient? _client;
   Future<void>? _initFuture;
   bool _firebaseReady = false;
@@ -58,7 +57,11 @@ class PushService {
   }
 
   Future<void> _doInit() async {
-    await _initLocalNotifications();
+    try {
+      await _initLocalNotifications();
+    } catch (error) {
+      debugPrint('[push] 本地通知初始化失败，聊天功能不受影响：$error');
+    }
     if (dartDefineConfigured) {
       // 显式构建配置优先，无需等待服务端。
       await _initializeFirebase(
@@ -137,7 +140,6 @@ class PushService {
     if (_messagingConfigured) return;
     _messagingConfigured = true;
     final messaging = FirebaseMessaging.instance;
-    _messaging = messaging;
     try {
       await messaging.requestPermission(
         alert: true,
@@ -153,7 +155,9 @@ class PushService {
         sound: true,
       );
 
-      _deviceToken = await messaging.getToken();
+      _deviceToken = await messaging.getToken(
+        vapidKey: _vapidKey.isEmpty ? null : _vapidKey,
+      );
       debugPrint('[push] FCM token: $_deviceToken');
 
       FirebaseMessaging.onMessage.listen(_showForegroundNotification);

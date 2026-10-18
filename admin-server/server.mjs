@@ -1239,6 +1239,7 @@ const handlePublish = createPublishRouter({
   publishService,
   verifySession,
   auditEvent,
+  bodyJson,
   json,
   publicOrigin: PUBLIC_ORIGIN
 });

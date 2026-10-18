@@ -25,3 +25,6 @@ backups/
 
 # 本地 npm 缓存（避免使用系统 ~/.npm）
 .npm-cache/
+
+# 本地 pub 缓存（避免使用系统 ~/.pub-cache）
+.pub-cache/

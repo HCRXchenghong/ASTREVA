@@ -1,9 +1,9 @@
 /** 发布队列与构建 webhook 适配层。 */
 export function createPublishService({ rebuildUrl, rebuildSecret, siteOrigin, platformStore }) {
-  async function trigger(source = 'current') {
+  async function trigger(source = 'current', extra = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (rebuildSecret) headers.Authorization = `Bearer ${rebuildSecret}`;
-    const response = await fetch(rebuildUrl, { method: 'POST', headers, body: JSON.stringify({ source }) });
+    const response = await fetch(rebuildUrl, { method: 'POST', headers, body: JSON.stringify({ source, ...extra }) });
     const body = await response.text();
     if (!response.ok) throw new Error(`重建服务返回 ${response.status}: ${body}`);
     try {
@@ -40,7 +40,12 @@ export function createPublishService({ rebuildUrl, rebuildSecret, siteOrigin, pl
       });
     }
     return {
-      preview: { url: siteOrigin, ...preview },
+      preview: {
+        url: siteOrigin,
+        // 草稿预览产物由构建服务写到发布卷的 preview/ 目录，由官网容器以 /__preview/ 暴露。
+        draftUrl: `${siteOrigin.replace(/\/$/, '')}/__preview/`,
+        ...preview
+      },
       rebuild: {
         url: rebuildStatusUrl,
         ok: Boolean(rebuildResponse),
@@ -64,5 +69,10 @@ export function createPublishService({ rebuildUrl, rebuildSecret, siteOrigin, pl
     }
   }
 
-  return { statusPayload, requestPublish };
+  /** 草稿预览：不落库、不影响线上内容，只把编辑器里的内容快照构建到 preview/。 */
+  async function requestPreview(content) {
+    return trigger('preview', { content });
+  }
+
+  return { statusPayload, requestPublish, requestPreview };
 }

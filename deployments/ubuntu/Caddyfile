@@ -20,6 +20,11 @@
 		reverse_proxy admin-server:1337
 	}
 
+	# 草稿预览：构建服务写入发布卷的 preview/ 目录，由官网容器暴露。
+	handle /__preview/* {
+		reverse_proxy frontend:80
+	}
+
 	handle {
 		reverse_proxy frontend:80
 	}

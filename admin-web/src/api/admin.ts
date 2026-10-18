@@ -184,3 +184,6 @@ export const publishSite = (source = 'current') =>
   client
     .post(`/site-admin-api/publish?source=${encodeURIComponent(source)}`)
     .then((r) => r.data);
+// 草稿预览：把编辑器当前内容构建到 /__preview/，不修改线上内容。
+export const requestPreview = (content: unknown) =>
+  client.post('/site-admin-api/preview', { content }).then((r) => r.data);

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="customer-service-api-base" content="">
     <meta name="description" content="点击进入在线客服，有问题随时咨询，我们会尽快为您处理。">
     <meta property="og:type" content="website">
@@ -96,6 +96,54 @@
 
         html.embed-mode #entry-view .entry-view-inner {
             display: none;
+        }
+
+        /* === B13：阿拉伯语 RTL 适配（气泡三角、边距、横幅） === */
+        html[dir="rtl"] .bubble-left::before {
+            left: auto;
+            right: -5px;
+            border-width: 5px 0 5px 6px;
+            border-color: transparent transparent transparent var(--wc-bubble-ai);
+        }
+
+        html[dir="rtl"] .bubble-right::before {
+            right: auto;
+            left: -5px;
+            border-width: 5px 6px 5px 0;
+            border-color: transparent var(--wc-bubble-user) transparent transparent;
+        }
+
+        html[dir="rtl"] .voice-bubble-btn {
+            direction: rtl;
+        }
+
+        html[dir="rtl"] .voice-duration {
+            text-align: left;
+        }
+
+        html[dir="rtl"] .msg-wrapper .ml-1 {
+            margin-left: 0;
+            margin-right: 0.25rem;
+        }
+
+        html[dir="rtl"] .msg-wrapper .mr-2 {
+            margin-right: 0;
+            margin-left: 0.5rem;
+        }
+
+        html[dir="rtl"] .quick-replies-card .text-left {
+            text-align: right;
+        }
+
+        html[dir="rtl"] #sys-banner > i.fa-times {
+            right: auto;
+            left: 0.75rem;
+        }
+
+        html[dir="rtl"] #header-typing {
+            left: auto;
+            right: 50%;
+            transform: translateX(50%);
         }
 
         /* 隐藏滚动条但保留滚动能力 */
@@ -562,6 +610,14 @@
                             </div>
                             <span class="text-xs text-gray-500" data-i18n="addTelegram">加Telegram</span>
                         </div>
+
+                        <!-- 5. 转人工客服 -->
+                        <div class="flex flex-col items-center gap-1 cursor-pointer group" onclick="triggerAction('human')">
+                            <div class="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm group-active:bg-gray-100">
+                                <i class="fas fa-headset text-[26px] text-[#07c160]"></i>
+                            </div>
+                            <span class="text-xs text-gray-500" data-i18n="transferToHuman">转人工</span>
+                        </div>
                     </div>
                 </div>
             </footer>
@@ -645,6 +701,17 @@
 
     <script src="./assets/i18n.js"></script>
     <script>
+        // === B13：按当前语言同步文档书写方向（阿拉伯语 RTL） ===
+        (function applyDocumentDirection() {
+            const lang = (window.__CHAT_LANG__ || 'zh').toLowerCase();
+            const isRTL = lang === 'ar';
+            document.documentElement.setAttribute('dir', isRTL ? 'rtl' : 'ltr');
+            document.documentElement.setAttribute(
+                'lang',
+                isRTL ? 'ar' : (lang === 'en' ? 'en' : 'zh-CN')
+            );
+        })();
+
         const AVATAR_ASSETS = Object.freeze({
             service: './assets/img/avatar-service.png',
             visitor: Object.freeze({
@@ -658,11 +725,41 @@
             return AVATAR_ASSETS.visitor[window.__CHAT_LANG__] || AVATAR_ASSETS.visitor.zh;
         }
 
+        // === B12：客服姓名与头像统一取自会话下发的 assigned_agent_* 字段 ===
+        function agentAvatarURL() {
+            const assigned = String(State.assignedAgentAvatar || '').trim();
+            return assigned ? resolveAssetURL(assigned) : AVATAR_ASSETS.service;
+        }
+
+        function agentDisplayName() {
+            const assigned = String(State.assignedAgentName || '').trim();
+            if (assigned) return assigned;
+            return State.sessionType === 'HUMAN' ? t('humanAgentFallback') : t('agentNameDefault');
+        }
+
+        // 把会话对象里的客服信息写入 State，缺失时回退到默认文案/头像。
+        function applyAssignedAgent(conversation) {
+            if (!conversation) return;
+            const name = String(conversation.assigned_agent_name || '').trim();
+            const avatar = String(conversation.assigned_agent_avatar || '').trim();
+            State.assignedAgentName = name;
+            State.assignedAgentAvatar = avatar;
+        }
+
         // === 状态管理 ===
         const State = {
             sessionType: 'AI', // 'AI', 'QUEUING', 'HUMAN', 'ENDED'
             agentName: t('agentNameDefault'),
             agentAvatar: AVATAR_ASSETS.service,
+            // B12：真实客服信息（来自 assigned_agent_name / assigned_agent_avatar）。
+            assignedAgentName: '',
+            assignedAgentAvatar: '',
+            // B11：是否已提交转人工请求（等待人工接入）。
+            humanRequested: false,
+            // B14：恢复已结束会话时保留历史，不直接踢回入口页。
+            keepHistoryOnEnd: false,
+            // B15：等待服务端回执的本地消息（client_msg_id -> { timer }）。
+            pendingSends: new Map(),
             soundEnabled: true,
             activePanel: null, // 'emoji', 'more', or null
             entryVisible: true,
@@ -1161,7 +1258,17 @@
             const attrs = [];
             if (meta.serverMsgId) attrs.push(`data-server-msg-id="${escapeHTML(meta.serverMsgId)}"`);
             if (meta.clientMsgId) attrs.push(`data-client-msg-id="${escapeHTML(meta.clientMsgId)}"`);
+            // B15：失败重发所需的元数据。
+            if (meta.msgType) attrs.push(`data-msg-type="${escapeHTML(meta.msgType)}"`);
+            if (meta.displayText) attrs.push(`data-display-text="${escapeHTML(meta.displayText)}"`);
+            if (meta.retryText) attrs.push(`data-retry-text="${escapeHTML(meta.retryText)}"`);
             return attrs.join(' ');
+        }
+
+        // B15：失败消息统一的重试图标。
+        function retryIconHTML(retryText) {
+            const safeRetryText = escapeHTML(retryText).replace(/\n/g, '&#10;');
+            return `<i class="fas fa-exclamation-circle text-red-500 text-xl mx-2 cursor-pointer retry-icon" role="button" tabindex="0" title="${escapeHTML(t('tapToRetry'))}" aria-label="${escapeHTML(t('tapToRetry'))}" data-retry-text="${safeRetryText}"></i>`;
         }
 
         function findMessageElement(meta = {}) {
@@ -1411,24 +1518,23 @@
         // 构建普通文本消息
         function createMessageHTML(text, isUser = false, isFailed = false, meta = {}, extraBubbleClass = '', aiTag = false) {
             const safeText = escapeHTML(text).replace(/\n/g, '<br>');
-            const safeRetryText = escapeHTML(text).replace(/\n/g, '&#10;');
-            const avatar = isUser ? visitorAvatar() : State.agentAvatar;
+            const avatar = isUser ? visitorAvatar() : agentAvatarURL();
             const bubbleBg = isUser ? 'bg-wc-user' : 'bg-wc-ai border border-gray-200/50';
             const bubbleDir = isUser ? 'bubble-right' : 'bubble-left';
             const textStyle = isUser ? 'text-wc-main' : 'text-wc-main';
-            
-            // 失败重试图标
-            const failIcon = (isUser && isFailed) ? 
-                `<i class="fas fa-exclamation-circle text-red-500 text-xl mr-2 cursor-pointer retry-icon" data-retry-text="${safeRetryText}"></i>` : '';
+            const wrapperMeta = { ...meta, retryText: meta.retryText || text };
 
-            // AI 头像旁显示名字
-            const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
+            // B15：发送失败时展示重试图标。
+            const failIcon = (isUser && isFailed) ? retryIconHTML(text) : '';
+
+            // 客服/AI 头像旁显示名字（B12：使用真实客服名，缺失时回退默认文案）。
+            const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${escapeHTML(agentDisplayName())}</span>` : '';
             // AI 生成消息气泡下方的小标识
             const aiTagLabel = (!isUser && aiTag) ? `<span class="ai-tag text-[10px] text-gray-400 mt-1 ml-1 block select-none" dir="auto">${t('aiGenerated')}</span>` : '';
 
             return `
-                <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(meta)}>
-                    <img src="${avatar}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
+                <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(wrapperMeta)}>
+                    <img src="${escapeHTML(avatar)}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
                     <div class="flex flex-col max-w-[70%] ${isUser ? 'items-end' : 'items-start'}">
                         ${nameLabel}
                         <div class="flex items-center ${isUser ? 'flex-row-reverse' : 'flex-row'}">
@@ -1444,19 +1550,24 @@
         }
 
         // 构建图片消息 (微信中的图片没有气泡尖角和背景)
-        function createImageMessageHTML(imgSrc, isUser = false, meta = {}, aiTag = false) {
-            const avatar = isUser ? visitorAvatar() : State.agentAvatar;
-            const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
+        function createImageMessageHTML(imgSrc, isUser = false, meta = {}, aiTag = false, isFailed = false) {
+            const avatar = isUser ? visitorAvatar() : agentAvatarURL();
+            const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${escapeHTML(agentDisplayName())}</span>` : '';
             const safeSrc = escapeHTML(safeImageSrc(imgSrc));
             const aiTagLabel = (!isUser && aiTag) ? `<span class="ai-tag text-[10px] text-gray-400 mt-1 ml-1 block select-none" dir="auto">${t('aiGenerated')}</span>` : '';
+            const wrapperMeta = { ...meta, retryText: meta.retryText || imgSrc };
+            const failIcon = (isUser && isFailed) ? retryIconHTML(imgSrc) : '';
 
             return `
-                <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(meta)}>
-                    <img src="${avatar}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
+                <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(wrapperMeta)}>
+                    <img src="${escapeHTML(avatar)}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
                     <div class="flex flex-col max-w-[70%] ${isUser ? 'items-end' : 'items-start'}">
                         ${nameLabel}
-                        <div class="bubble-image mt-0.5">
-                            <img src="${safeSrc}" alt="${t('image')}" class="border border-gray-200/50 shadow-sm">
+                        <div class="flex items-center ${isUser ? 'flex-row-reverse' : 'flex-row'}">
+                            <div class="bubble-image mt-0.5">
+                                <img src="${safeSrc}" alt="${t('image')}" class="border border-gray-200/50 shadow-sm">
+                            </div>
+                            ${failIcon}
                         </div>
                         ${aiTagLabel}
                     </div>
@@ -1464,26 +1575,31 @@
             `;
         }
 
-        function createAudioMessageHTML(audioSrc, isUser = false, meta = {}, aiTag = false) {
-            const avatar = isUser ? visitorAvatar() : State.agentAvatar;
-            const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${State.agentName}</span>` : '';
+        function createAudioMessageHTML(audioSrc, isUser = false, meta = {}, aiTag = false, isFailed = false) {
+            const avatar = isUser ? visitorAvatar() : agentAvatarURL();
+            const nameLabel = !isUser ? `<span class="text-[11px] text-gray-500 ml-1 mb-1 block">${escapeHTML(agentDisplayName())}</span>` : '';
             const safeSrc = escapeHTML(resolveAssetURL(audioSrc));
             const bubbleBg = isUser ? 'bg-wc-user' : 'bg-wc-ai border border-gray-200/50';
             const bubbleDir = isUser ? 'bubble-right' : 'bubble-left';
             const aiTagLabel = (!isUser && aiTag) ? `<span class="ai-tag text-[10px] text-gray-400 mt-1 ml-1 block select-none" dir="auto">${t('aiGenerated')}</span>` : '';
+            const wrapperMeta = { ...meta, retryText: meta.retryText || audioSrc };
+            const failIcon = (isUser && isFailed) ? retryIconHTML(audioSrc) : '';
 
             return `
-                <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(meta)}>
-                    <img src="${avatar}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
+                <div class="flex gap-3 msg-wrapper ${isUser ? 'flex-row-reverse' : ''}" ${messageDataAttrs(wrapperMeta)}>
+                    <img src="${escapeHTML(avatar)}" class="w-10 h-10 rounded shadow-sm shrink-0 object-cover" alt="Avatar">
                     <div class="flex flex-col max-w-[70%] ${isUser ? 'items-end' : 'items-start'}">
                         ${nameLabel}
-                        <div class="${bubbleBg} bubble-audio rounded-2xl shadow-sm relative ${bubbleDir}">
-                            <button type="button" class="voice-bubble-btn ${isUser ? 'voice-bubble-self' : 'voice-bubble-other'}" data-audio-bubble aria-label="${t('playVoiceMessage')}">
-                                <span class="voice-play-icon"><i class="fas fa-play" data-voice-icon></i></span>
-                                <span class="voice-wave" aria-hidden="true"><i></i><i></i><i></i></span>
-                                <span class="voice-duration" data-audio-duration>${t('voice')}</span>
-                            </button>
-                            <audio class="voice-audio-element" preload="metadata" src="${safeSrc}"></audio>
+                        <div class="flex items-center ${isUser ? 'flex-row-reverse' : 'flex-row'}">
+                            <div class="${bubbleBg} bubble-audio rounded-2xl shadow-sm relative ${bubbleDir}">
+                                <button type="button" class="voice-bubble-btn ${isUser ? 'voice-bubble-self' : 'voice-bubble-other'}" data-audio-bubble aria-label="${t('playVoiceMessage')}">
+                                    <span class="voice-play-icon"><i class="fas fa-play" data-voice-icon></i></span>
+                                    <span class="voice-wave" aria-hidden="true"><i></i><i></i><i></i></span>
+                                    <span class="voice-duration" data-audio-duration>${t('voice')}</span>
+                                </button>
+                                <audio class="voice-audio-element" preload="metadata" src="${safeSrc}"></audio>
+                            </div>
+                            ${failIcon}
                         </div>
                         ${aiTagLabel}
                     </div>
@@ -1618,23 +1734,84 @@
             closeAllPanels();
             removeQuickReplyCards();
 
-            // 渲染用户消息
-            appendMessage(createMessageHTML(renderedText, true), true);
-
-            if (State.connected) {
-                sendSocketMessage(outgoingText);
-            } else {
-                appendMessage(createMessageHTML(t("serverDisconnected"), false), false);
+            // B15：未连接时直接渲染失败气泡，点击重试图标可重发。
+            if (!State.connected || !State.ws) {
+                appendMessage(createMessageHTML(renderedText, true, true, {
+                    msgType: 'text',
+                    displayText: renderedText,
+                    retryText: outgoingText
+                }), true);
+                showToast(t("messageNotSentReconnecting"));
+                return;
             }
+            const clientId = sendSocketMessage(outgoingText, 'text');
+            appendMessage(createMessageHTML(renderedText, true, false, {
+                clientMsgId: clientId,
+                msgType: 'text',
+                displayText: renderedText,
+                retryText: outgoingText
+            }), true);
         }
 
-        // 失败重试全局函数
+        // === B15：发送失败检测与重试 ===
+        function trackPendingSend(clientMsgId) {
+            if (!clientMsgId) return;
+            clearPendingSend(clientMsgId);
+            const timer = setTimeout(() => markMessageFailed(clientMsgId), 15000);
+            State.pendingSends.set(clientMsgId, timer);
+        }
+
+        function clearPendingSend(clientMsgId) {
+            const timer = State.pendingSends.get(clientMsgId);
+            if (timer) clearTimeout(timer);
+            State.pendingSends.delete(clientMsgId);
+        }
+
+        function failAllPendingSends() {
+            [...State.pendingSends.keys()].forEach((id) => markMessageFailed(id));
+        }
+
+        // 把已渲染的本地消息就地替换成失败态（带重试图标）。
+        function markMessageFailed(clientMsgId) {
+            if (!clientMsgId) return;
+            clearPendingSend(clientMsgId);
+            const wrapper = DOM.chatList.querySelector(`.msg-wrapper[data-client-msg-id="${clientMsgId}"]`);
+            if (!wrapper || wrapper.querySelector('.retry-icon')) return;
+            const type = wrapper.dataset.msgType || 'text';
+            const retryText = wrapper.dataset.retryText || '';
+            const displayText = wrapper.dataset.displayText || retryText;
+            const meta = { clientMsgId, msgType: type, displayText, retryText };
+            let html;
+            if (type === 'image') html = createImageMessageHTML(retryText, true, meta, false, true);
+            else if (type === 'audio') html = createAudioMessageHTML(retryText, true, meta, false, true);
+            else html = createMessageHTML(displayText, true, true, meta);
+            replaceMessageElement(wrapper, html);
+        }
+
+        // 失败重试全局函数（B15）：点击重试图标重发同一条消息。
         window.retryMsg = function(icon, text) {
             const wrapper = icon.closest('.msg-wrapper');
-            wrapper.remove(); // 移除旧消息
-            DOM.input.value = text;
-            DOM.input.dispatchEvent(new Event('input'));
-            showToast(t("contentRestored"));
+            if (!wrapper) return;
+            if (State.sessionType === 'ENDED') {
+                showToast(t("sessionEndedCannotSend"));
+                return;
+            }
+            if (!State.connected || !State.ws) {
+                showToast(t("messageNotSentReconnecting"));
+                return;
+            }
+            const type = wrapper.dataset.msgType || 'text';
+            const displayText = wrapper.dataset.displayText || text;
+            const retryText = wrapper.dataset.retryText || text;
+            const newId = sendSocketMessage(retryText, type);
+            if (!newId) return;
+            const meta = { clientMsgId: newId, msgType: type, displayText, retryText };
+            let html;
+            if (type === 'image') html = createImageMessageHTML(retryText, true, meta);
+            else if (type === 'audio') html = createAudioMessageHTML(retryText, true, meta);
+            else html = createMessageHTML(displayText, true, false, meta);
+            replaceMessageElement(wrapper, html);
+            scrollToBottom();
         };
 
         async function uploadMedia(file, filename = '') {
@@ -1902,6 +2079,8 @@
             };
             State.ws.onclose = () => {
                 State.connected = false;
+                // B15：断线时把待回执的消息标记为失败，允许手动重发。
+                failAllPendingSends();
                 if (!State.entryVisible && State.conversationId && State.sessionType !== 'ENDED') {
                     setTimeout(connectSocket, 2000);
                 }
@@ -1917,11 +2096,11 @@
 
         function sendSocketMessage(text, type = 'text') {
             if (!State.connected || !State.ws) {
-                appendMessage(createMessageHTML(t("messageNotSentReconnecting"), false), false);
                 return '';
             }
             const id = clientMsgId();
             State.renderedClientMsgIds.add(id);
+            trackPendingSend(id);
             State.ws.send(JSON.stringify({
                 event: 'message.send',
                 data: {
@@ -1938,6 +2117,7 @@
             if (payload.event === 'message.ack') {
                 // 回执按 client_msg_id 去重：本地已渲染的不会重复出现；
                 // 人工客服请求等由服务端补齐文案的消息会在此渲染为访客气泡。
+                clearPendingSend(payload.data?.client_msg_id || '');
                 renderServerMessage(payload.data, 'append');
                 return;
             }
@@ -1968,10 +2148,21 @@
             }
             if (payload.event === 'error') {
                 const code = payload.data?.code || '';
-                if (code === 'unauthorized' || code === 'forbidden' || code === 'not_found') {
+                if (code === 'unauthorized') {
                     returnToEntry(t("sessionExpired"));
                     return;
                 }
+                if (code === 'forbidden' || code === 'not_found') {
+                    // B14：会话已结束/已失效时保留历史，给出"会话已结束"与评价入口。
+                    if (State.keepHistoryOnEnd || State.sessionType === 'ENDED') {
+                        enterEndedSessionState({ keepHistory: true, promptRating: false });
+                        return;
+                    }
+                    returnToEntry(t("sessionExpired"));
+                    return;
+                }
+                // 普通错误（如会话已关闭导致发送被拒）：把待回执的消息标记为失败可重试。
+                failAllPendingSends();
                 showToast(payload.data?.message || t("channelError"));
             }
         }

@@ -128,14 +128,29 @@ async function publishBuild(distDir, publishDir) {
   console.log(`[build] 已原子发布官网静态文件：${releaseName}`);
 }
 
+/** 把草稿预览产物写入 publishDir/preview，不影响 current 正式发布。 */
+async function publishPreview(distDir, publishDir) {
+  const previewDir = path.join(publishDir, 'preview');
+  await fs.rm(previewDir, { recursive: true, force: true });
+  await fs.cp(distDir, previewDir, { recursive: true });
+  console.log('[build] 已生成草稿预览产物：preview/');
+}
+
 export async function buildFrontend(options = {}) {
   const source = options.source || process.env.BUILD_CONTENT_SOURCE || 'current';
-  const snapshot = await resolveBuildSnapshot(source);
+  const isPreview = options.target === 'preview';
+  const snapshot = options.snapshotContent
+    ? { content: options.snapshotContent, version: { id: 'draft-preview', name: '草稿预览' } }
+    : await resolveBuildSnapshot(source);
   await withSnapshotContentApi(snapshot, (contentApiUrl) => run('npm', ['run', 'build:frontend'], {
     env: { ...process.env, CONTENT_API_URL: contentApiUrl }
   }));
   const publishDir = process.env.PUBLISH_DIR || '';
-  if (publishDir) await publishBuild(path.join(ROOT, 'frontend', 'dist'), path.resolve(publishDir));
+  if (!publishDir) return;
+  const resolvedPublishDir = path.resolve(publishDir);
+  const distDir = path.join(ROOT, 'frontend', 'dist');
+  if (isPreview) await publishPreview(distDir, resolvedPublishDir);
+  else await publishBuild(distDir, resolvedPublishDir);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
