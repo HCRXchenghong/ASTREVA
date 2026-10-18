@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'alert_models.dart';
 import 'models.dart';
 
 class LoginResult {
@@ -261,6 +262,107 @@ class ServiceBridgeClient {
       body: {'conversation_id': conversationId},
     );
     return SuggestReplyResult.fromJson(payload);
+  }
+
+  /// 提醒渠道列表（`GET /api/agent/alert-channels`）。
+  /// 服务端只回传掩码，不回传明文密钥。
+  Future<List<AlertChannel>> alertChannels() async {
+    final payload = await _request('GET', '/api/agent/alert-channels');
+    return (payload['channels'] as List? ?? [])
+        .map(
+          (item) => AlertChannel.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .toList();
+  }
+
+  /// 新增提醒渠道（`POST /api/agent/alert-channels`）。
+  /// 超过 3 个时后端返回 400，错误 message 由 [ServiceBridgeException] 带出。
+  Future<AlertChannel> createAlertChannel({
+    required String kind,
+    required Map<String, dynamic> config,
+    bool? enabled,
+  }) async {
+    final payload = await _request(
+      'POST',
+      '/api/agent/alert-channels',
+      body: <String, dynamic>{
+        'kind': kind,
+        'config': config,
+        'enabled': ?enabled,
+      },
+    );
+    return _alertChannelFrom(payload);
+  }
+
+  /// 启停 / 修改渠道（`PATCH /api/agent/alert-channels/{id}`）。
+  /// 只提交显式提供的字段。
+  Future<AlertChannel> updateAlertChannel(
+    String id, {
+    bool? enabled,
+    Map<String, dynamic>? config,
+  }) async {
+    final payload = await _request(
+      'PATCH',
+      '/api/agent/alert-channels/${Uri.encodeComponent(id)}',
+      body: <String, dynamic>{
+        'enabled': ?enabled,
+        'config': ?config,
+      },
+    );
+    return _alertChannelFrom(payload);
+  }
+
+  /// 删除渠道（`DELETE /api/agent/alert-channels/{id}`）。
+  Future<void> deleteAlertChannel(String id) async {
+    await _request(
+      'DELETE',
+      '/api/agent/alert-channels/${Uri.encodeComponent(id)}',
+    );
+  }
+
+  /// 立即发一条测试消息（`POST /api/agent/alert-channels/test`）。
+  /// 未配置 SMTP 时邮件渠道会失败，message 原样抛给界面展示。
+  Future<AlertChannelTestResult> testAlertChannel({
+    required String kind,
+    required Map<String, dynamic> config,
+  }) async {
+    final payload = await _request(
+      'POST',
+      '/api/agent/alert-channels/test',
+      body: <String, dynamic>{'kind': kind, 'config': config},
+    );
+    return AlertChannelTestResult.fromJson(payload);
+  }
+
+  AlertChannel _alertChannelFrom(Map<String, dynamic> payload) {
+    final raw = payload['channel'];
+    if (raw is! Map) {
+      throw const ServiceBridgeException('渠道响应不完整');
+    }
+    return AlertChannel.fromJson(Map<String, dynamic>.from(raw));
+  }
+
+  /// 客服接管会话（`POST /api/agent/conversations/{id}/takeover`）。
+  /// 后端为下一波实现，失败按普通请求错误抛出（界面展示可读文案）。
+  Future<void> takeoverConversation(String conversationId) async {
+    await _request(
+      'POST',
+      '/api/agent/conversations/${Uri.encodeComponent(conversationId)}'
+          '/takeover',
+      body: const {},
+    );
+  }
+
+  /// 只读围观会话（`POST /api/agent/conversations/{id}/watch`）：
+  /// 围观时不显示已读、不能发送消息。后端为下一波实现。
+  Future<void> watchConversation(String conversationId) async {
+    await _request(
+      'POST',
+      '/api/agent/conversations/${Uri.encodeComponent(conversationId)}/watch',
+      body: const {},
+    );
   }
 
   /// 公开接口：拉取服务端下发的 Firebase / 推送开关配置（B1）。

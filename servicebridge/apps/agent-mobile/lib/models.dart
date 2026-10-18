@@ -45,6 +45,7 @@ class Conversation {
     this.remark = '',
     this.assignedAgentName = '',
     this.assignedAgentAvatar = '',
+    this.assignedAgentId = '',
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) => Conversation(
@@ -58,6 +59,8 @@ class Conversation {
     // 依赖后端 A7：会话对象新增 assigned_agent_name / assigned_agent_avatar。
     assignedAgentName: '${json['assigned_agent_name'] ?? ''}',
     assignedAgentAvatar: '${json['assigned_agent_avatar'] ?? ''}',
+    // T2：判断「是否已由自己接管」，为空或不是自己时提供「只读围观」入口。
+    assignedAgentId: '${json['assigned_agent_id'] ?? ''}',
   );
 
   final String id;
@@ -69,6 +72,13 @@ class Conversation {
   final String remark;
   final String assignedAgentName;
   final String assignedAgentAvatar;
+
+  /// 当前会话的接管客服 ID；为空表示尚未被接管（AI 接待中）。
+  final String assignedAgentId;
+
+  /// 未接管，或接管的不是 [agentId]：此时只能围观。
+  bool isAssignedTo(String agentId) =>
+      assignedAgentId.isNotEmpty && assignedAgentId == agentId;
 
   Conversation copyWith({
     String? visitorLabel,
@@ -86,6 +96,7 @@ class Conversation {
     remark: remark ?? this.remark,
     assignedAgentName: assignedAgentName,
     assignedAgentAvatar: assignedAgentAvatar,
+    assignedAgentId: assignedAgentId,
   );
 }
 
@@ -161,6 +172,7 @@ class AgentPreferences {
     required this.translationDialectMode,
     required this.aiSuggestReplies,
     required this.knowledgeSuggestEnabled,
+    required this.takeoverPopupEnabled,
   });
 
   factory AgentPreferences.fromJson(Map<String, dynamic> json) {
@@ -178,13 +190,14 @@ class AgentPreferences {
           : dialectModeStandard,
       aiSuggestReplies: json['ai_suggest_replies'] != false,
       knowledgeSuggestEnabled: json['knowledge_suggest_enabled'] != false,
+      takeoverPopupEnabled: json['takeover_popup_enabled'] != false,
     );
   }
 
   static const String dialectModeStandard = 'standard';
   static const String dialectModeDialect = 'dialect';
 
-  /// 服务端默认值：6 项均为 true / standard。
+  /// 服务端默认值：7 项均为 true / standard。
   static const AgentPreferences defaults = AgentPreferences(
     autoTranslateIncoming: true,
     autoTranslateOutgoing: true,
@@ -192,6 +205,7 @@ class AgentPreferences {
     translationDialectMode: dialectModeStandard,
     aiSuggestReplies: true,
     knowledgeSuggestEnabled: true,
+    takeoverPopupEnabled: true,
   );
 
   final bool autoTranslateIncoming;
@@ -207,6 +221,9 @@ class AgentPreferences {
   /// 因此会话页应隐藏/禁用「AI 建议」入口，避免点了必然为空。
   final bool knowledgeSuggestEnabled;
 
+  /// T2：访客等待接入时是否弹出「接管」弹窗；关闭后只在会话列表显示等待提示。
+  final bool takeoverPopupEnabled;
+
   bool get usesDialect => translationDialectMode == dialectModeDialect;
 
   AgentPreferences copyWith({
@@ -216,6 +233,7 @@ class AgentPreferences {
     String? translationDialectMode,
     bool? aiSuggestReplies,
     bool? knowledgeSuggestEnabled,
+    bool? takeoverPopupEnabled,
   }) => AgentPreferences(
     autoTranslateIncoming: autoTranslateIncoming ?? this.autoTranslateIncoming,
     autoTranslateOutgoing: autoTranslateOutgoing ?? this.autoTranslateOutgoing,
@@ -226,6 +244,8 @@ class AgentPreferences {
     aiSuggestReplies: aiSuggestReplies ?? this.aiSuggestReplies,
     knowledgeSuggestEnabled:
         knowledgeSuggestEnabled ?? this.knowledgeSuggestEnabled,
+    takeoverPopupEnabled:
+        takeoverPopupEnabled ?? this.takeoverPopupEnabled,
   );
 }
 
@@ -238,6 +258,7 @@ class AgentPreferencesPatch {
     this.translationDialectMode,
     this.aiSuggestReplies,
     this.knowledgeSuggestEnabled,
+    this.takeoverPopupEnabled,
   });
 
   final bool? autoTranslateIncoming;
@@ -246,6 +267,7 @@ class AgentPreferencesPatch {
   final String? translationDialectMode;
   final bool? aiSuggestReplies;
   final bool? knowledgeSuggestEnabled;
+  final bool? takeoverPopupEnabled;
 
   bool get isEmpty =>
       autoTranslateIncoming == null &&
@@ -253,7 +275,8 @@ class AgentPreferencesPatch {
       reviewTranslationBeforeSend == null &&
       translationDialectMode == null &&
       aiSuggestReplies == null &&
-      knowledgeSuggestEnabled == null;
+      knowledgeSuggestEnabled == null &&
+      takeoverPopupEnabled == null;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     if (autoTranslateIncoming != null)
@@ -267,6 +290,8 @@ class AgentPreferencesPatch {
     if (aiSuggestReplies != null) 'ai_suggest_replies': aiSuggestReplies,
     if (knowledgeSuggestEnabled != null)
       'knowledge_suggest_enabled': knowledgeSuggestEnabled,
+    if (takeoverPopupEnabled != null)
+      'takeover_popup_enabled': takeoverPopupEnabled,
   };
 }
 

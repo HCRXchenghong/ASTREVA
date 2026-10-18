@@ -9,6 +9,7 @@ import 'models.dart';
 import 'push_service.dart';
 import 'update_service.dart';
 import 'service_bridge.dart';
+import 'alert_models.dart';
 
 abstract final class AppColors {
   AppColors._();
@@ -530,6 +531,22 @@ class _HomePageState extends State<HomePage> {
   int _tab = 0;
   bool _sessionExpired = false;
 
+  /// T2：已收到但尚未处理的接管请求（会话列表上的等待提示数据源）。
+  final Map<String, TakeoverRequest> _takeoverRequests =
+      <String, TakeoverRequest>{};
+
+  /// T2：本次运行内已弹过弹窗的会话，避免「稍后」之后反复打扰。
+  final TakeoverNoticeRegistry _takeoverNotices = TakeoverNoticeRegistry();
+
+  /// T3：每个会话当前展示的 SLA 类型（会话列表上的橙色标签）。
+  final Map<String, String> _slaKinds = <String, String>{};
+
+  /// T3：同一会话同一 kind 只提示一次，新的 kind 覆盖。
+  final SlaAlertTracker _slaTracker = SlaAlertTracker();
+
+  /// 当前正打开的会话页：接管弹窗由会话页负责，列表页不重复弹。
+  String? _openConversationId;
+
   @override
   void initState() {
     super.initState();
@@ -637,16 +654,25 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openConversation(Conversation conversation) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ChatPage(
-          client: widget.client,
-          conversation: conversation,
-          myAvatarUrl: _profile.avatarUrl,
-          preferences: _preferences,
+    _openConversationId = conversation.id;
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ChatPage(
+            client: widget.client,
+            conversation: conversation,
+            myAvatarUrl: _profile.avatarUrl,
+            preferences: _preferences,
+            takeoverNotices: _takeoverNotices,
+            onLocalReplySent: _onLocalReplySent,
+            initialSlaKind: _slaKinds[conversation.id],
+            initialTakeoverRequest: _takeoverRequests[conversation.id],
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      _openConversationId = null;
+    }
     if (mounted && !_sessionExpired) _refresh(silent: true);
   }
 
@@ -660,6 +686,76 @@ class _HomePageState extends State<HomePage> {
     // 返回后无需重启 App：_preferences 是同一份状态，会话页在监听它。
   }
 
+  /// T1：打开「提醒渠道」配置页。
+  Future<void> _openAlertChannels() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AlertChannelsPage(client: widget.client),
+      ),
+    );
+  }
+
+  /// T3：会话页本地回复成功后清除该会话的 SLA 提示。
+  void _onLocalReplySent(String conversationId) {
+    _slaTracker.clear(conversationId);
+    if (!mounted) return;
+    if (_slaKinds.containsKey(conversationId)) {
+      setState(() => _slaKinds.remove(conversationId));
+    }
+  }
+
+  /// T2：`conversation.takeover_request` —— 记录等待提示，必要时弹接管弹窗。
+  void _handleTakeoverRequest(Map<String, dynamic> data) {
+    final request = TakeoverRequest.fromJson(data);
+    if (!request.isValid) return;
+    if (mounted) {
+      setState(() => _takeoverRequests[request.conversationId] = request);
+    }
+    // 新访客可能刚出现在列表里，静默刷新一次。
+    unawaited(_refresh(silent: true));
+    if (!_preferences.preferences.takeoverPopupEnabled) return;
+    // 该会话页正打开时由会话页弹窗，避免弹两次。
+    if (_openConversationId == request.conversationId) return;
+    if (!_takeoverNotices.markNotified(request.conversationId)) return;
+    unawaited(_promptTakeover(request));
+  }
+
+  /// T2：接管弹窗；「稍后」只关闭弹窗，不改变任何服务端状态。
+  Future<void> _promptTakeover(TakeoverRequest request) async {
+    final accepted = await _showTakeoverDialog(context, request: request);
+    if (!mounted || !accepted) return;
+    await _takeover(request.conversationId);
+  }
+
+  /// T2：调用接管接口；后端为下一波实现，失败给出可读错误且不崩溃。
+  Future<void> _takeover(String conversationId) async {
+    try {
+      await widget.client.takeoverConversation(conversationId);
+      if (!mounted) return;
+      _slaTracker.clear(conversationId);
+      setState(() {
+        _takeoverRequests.remove(conversationId);
+        _slaKinds.remove(conversationId);
+      });
+      _showMessage(context, '已接管该会话');
+      await _refresh(silent: true);
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        await _handleUnauthorized();
+        return;
+      }
+      if (mounted) _showMessage(context, '接管失败：${_readableError(error)}');
+    }
+  }
+
+  /// T3：`conversation.sla` —— 列表标签 + 会话页提示条，不发系统通知。
+  void _handleSla(Map<String, dynamic> data) {
+    final alert = SlaAlert.fromJson(data);
+    if (!alert.isValid) return;
+    if (!_slaTracker.offers(alert.conversationId, alert.kind)) return;
+    if (mounted) setState(() => _slaKinds[alert.conversationId] = alert.kind);
+  }
+
   void _handleEvent(Map<String, dynamic> event) {
     final type = '${event['event'] ?? ''}';
     if (type == 'session.revoked') {
@@ -667,6 +763,14 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     final data = Map<String, dynamic>.from(event['data'] as Map? ?? {});
+    if (type == 'conversation.takeover_request') {
+      _handleTakeoverRequest(data);
+      return;
+    }
+    if (type == 'conversation.sla') {
+      _handleSla(data);
+      return;
+    }
     if (type == 'agent.notification') {
       final title = '${data['title'] ?? ''}'.trim();
       final body = '${data['body'] ?? ''}'.trim();
@@ -788,6 +892,8 @@ class _HomePageState extends State<HomePage> {
           ChatListView(
             conversations: _conversations,
             loading: _loading,
+            slaKinds: _slaKinds,
+            takeoverRequests: _takeoverRequests,
             onRefresh: _refresh,
             onOpen: _openConversation,
             onDelete: _deleteConversation,
@@ -806,6 +912,7 @@ class _HomePageState extends State<HomePage> {
               builder: (_) => ChangePasswordDialog(client: widget.client),
             ),
             onOpenPreferences: _openPreferences,
+            onOpenAlertChannels: _openAlertChannels,
             onLogout: _logout,
           ),
         ],
@@ -826,12 +933,21 @@ class ChatListView extends StatelessWidget {
     super.key,
     required this.conversations,
     required this.loading,
+    required this.slaKinds,
+    required this.takeoverRequests,
     required this.onRefresh,
     required this.onOpen,
     required this.onDelete,
   });
   final List<Conversation> conversations;
   final bool loading;
+
+  /// T3：conversation_id -> SLA kind（first_response / idle）。
+  final Map<String, String> slaKinds;
+
+  /// T2：conversation_id -> 最近的接管请求（等待提示）。
+  final Map<String, TakeoverRequest> takeoverRequests;
+
   final Future<void> Function() onRefresh;
   final ValueChanged<Conversation> onOpen;
   final ValueChanged<Conversation> onDelete;
@@ -867,6 +983,8 @@ class ChatListView extends StatelessWidget {
                       final conversation = conversations[index];
                       return _ConversationRow(
                         conversation: conversation,
+                        slaKind: slaKinds[conversation.id],
+                        takeoverRequest: takeoverRequests[conversation.id],
                         onTap: () => onOpen(conversation),
                         onLongPress: conversation.status == 'closed'
                             ? () => onDelete(conversation)
@@ -884,13 +1002,23 @@ class _ConversationRow extends StatelessWidget {
     required this.conversation,
     required this.onTap,
     this.onLongPress,
+    this.slaKind,
+    this.takeoverRequest,
   });
   final Conversation conversation;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
 
+  /// T3：首响超时 / 待回复超时，null 表示无提示。
+  final String? slaKind;
+
+  /// T2：访客等待接入提示。
+  final TakeoverRequest? takeoverRequest;
+
   @override
   Widget build(BuildContext context) {
+    final waiting = takeoverRequest;
+    final sla = slaKind;
     return InkWell(
       onTap: onTap,
       onLongPress: onLongPress,
@@ -969,6 +1097,28 @@ class _ConversationRow extends StatelessWidget {
                         ),
                     ],
                   ),
+                  // T2/T3：等待接入提示 + SLA 橙色标签。
+                  if (waiting != null || sla != null) ...[
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        if (waiting != null)
+                          _RowChip(
+                            text: waiting.listLabel,
+                            color: AppColors.primary,
+                            icon: Icons.pan_tool_alt_outlined,
+                          ),
+                        if (sla != null)
+                          _RowChip(
+                            text: SlaAlert.shortLabelFor(sla),
+                            color: AppColors.warning,
+                            icon: Icons.timer_outlined,
+                          ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -977,6 +1127,43 @@ class _ConversationRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 会话列表行上的小标签（等待接入 / 首响超时 等）。
+class _RowChip extends StatelessWidget {
+  const _RowChip({
+    required this.text,
+    required this.color,
+    required this.icon,
+  });
+
+  final String text;
+  final Color color;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: .12),
+      borderRadius: BorderRadius.circular(AppRadii.chip),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: color),
+        const SizedBox(width: 3),
+        Text(
+          text,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: color,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _VisitorAvatar extends StatelessWidget {
@@ -1106,6 +1293,7 @@ class MePage extends StatelessWidget {
     required this.onStatusChanged,
     required this.onChangePassword,
     required this.onOpenPreferences,
+    required this.onOpenAlertChannels,
     required this.onLogout,
   });
   final AgentProfile profile;
@@ -1118,6 +1306,7 @@ class MePage extends StatelessWidget {
   final ValueChanged<String> onStatusChanged;
   final VoidCallback onChangePassword;
   final VoidCallback onOpenPreferences;
+  final VoidCallback onOpenAlertChannels;
   final VoidCallback onLogout;
 
   @override
@@ -1238,6 +1427,13 @@ class MePage extends StatelessWidget {
                   icon: Icons.translate_outlined,
                   title: '我的偏好',
                   onTap: onOpenPreferences,
+                ),
+                const Divider(height: 1, indent: 52),
+                // T1：提醒渠道（Telegram / Bark / 邮箱），最多 3 个。
+                _MeMenuTile(
+                  icon: Icons.notifications_active_outlined,
+                  title: '提醒渠道',
+                  onTap: onOpenAlertChannels,
                 ),
               ],
             ),
@@ -1421,12 +1617,28 @@ class ChatPage extends StatefulWidget {
     required this.client,
     required this.conversation,
     required this.preferences,
+    required this.takeoverNotices,
     this.myAvatarUrl,
+    this.onLocalReplySent,
+    this.initialSlaKind,
+    this.initialTakeoverRequest,
   });
   final ServiceBridgeClient client;
   final Conversation conversation;
   final AgentPreferencesController preferences;
+
+  /// T2：与会话列表共享的「已弹过接管弹窗」记录，避免两处重复弹窗。
+  final TakeoverNoticeRegistry takeoverNotices;
   final String? myAvatarUrl;
+
+  /// T3：本地回复成功后通知列表页清除该会话的 SLA 提示。
+  final ValueChanged<String>? onLocalReplySent;
+
+  /// T3：进入页面时已有的 SLA 提示（列表页可能先收到事件）。
+  final String? initialSlaKind;
+
+  /// T2：进入页面时尚未处理的接管请求（避免进页面瞬间漏掉事件）。
+  final TakeoverRequest? initialTakeoverRequest;
   @override
   State<ChatPage> createState() => _ChatPageState();
 }
@@ -1454,6 +1666,17 @@ class _ChatPageState extends State<ChatPage> {
   String _visitorLabel = '';
   DateTime _lastTypingSent = DateTime.fromMillisecondsSinceEpoch(0);
 
+  /// T2：是否已由自己接管；未接管时展示「只读围观」入口。
+  bool _assignedToMe = false;
+
+  /// T2：围观模式：隐藏发送框并提示「围观中 · 不显示已读」。
+  bool _watching = false;
+  bool _watchBusy = false;
+  bool _takeoverBusy = false;
+
+  /// T3：当前会话页顶部展示的 SLA 提示；null 表示无提示。
+  SlaAlert? _slaAlert;
+
   bool get _closed => _status == 'closed';
 
   AgentPreferences get _preferences => widget.preferences.preferences;
@@ -1463,10 +1686,27 @@ class _ChatPageState extends State<ChatPage> {
     super.initState();
     _status = widget.conversation.status;
     _visitorLabel = widget.conversation.visitorLabel;
+    _assignedToMe = widget.conversation.isAssignedTo(
+      widget.client.agent?.id ?? '',
+    );
+    _slaAlert = widget.initialSlaKind == null
+        ? null
+        : SlaAlert(
+            conversationId: widget.conversation.id,
+            kind: widget.initialSlaKind!,
+          );
     _events = widget.client.events.listen(_handleEvent);
     // T3：偏好在偏好页被改动后立刻反映到本页的输入区提示。
     widget.preferences.addListener(_onPreferencesChanged);
     unawaited(widget.preferences.load());
+    // T2：进入页面前收到的接管请求，首帧后补弹一次
+    //（已被列表页弹过的会话会被 takeoverNotices 去重）。
+    final pendingTakeover = widget.initialTakeoverRequest;
+    if (pendingTakeover != null && pendingTakeover.isValid) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_handleTakeoverRequest(pendingTakeover));
+      });
+    }
     _messageController.addListener(_onTypingChanged);
     _scrollController.addListener(_onScroll);
     _loadMessages();
@@ -1497,7 +1737,10 @@ class _ChatPageState extends State<ChatPage> {
             type == 'message.revoked') &&
         data['conversation_id'] == widget.conversation.id) {
       _loadMessages(silent: true);
-      widget.client.markRead(widget.conversation.id).catchError((_) {});
+      // 围观态不显示已读，避免访客看到「已读」却等不到回复。
+      if (!_watching) {
+        widget.client.markRead(widget.conversation.id).catchError((_) {});
+      }
     }
     if (type == 'conversation.status_changed' &&
         data['id'] == widget.conversation.id) {
@@ -1508,6 +1751,74 @@ class _ChatPageState extends State<ChatPage> {
       if (status == 'closed' && mounted) {
         _showMessage(context, '该会话已结束');
       }
+    }
+    // T2：访客发起 / 分配时提示客服接管。
+    if (type == 'conversation.takeover_request') {
+      final request = TakeoverRequest.fromJson(data);
+      if (!request.isValid ||
+          request.conversationId != widget.conversation.id) {
+        return;
+      }
+      unawaited(_handleTakeoverRequest(request));
+    }
+    // T3：SLA 提醒只在页面内提示，不发系统通知。
+    if (type == 'conversation.sla') {
+      final alert = SlaAlert.fromJson(data);
+      if (!alert.isValid ||
+          alert.conversationId != widget.conversation.id) {
+        return;
+      }
+      if (alert.kind == _slaAlert?.kind) return;
+      setState(() => _slaAlert = alert);
+    }
+  }
+
+  /// T2：偏好关闭接管弹窗时不打扰客服，仅由会话列表显示等待提示。
+  Future<void> _handleTakeoverRequest(TakeoverRequest request) async {
+    if (!_preferences.takeoverPopupEnabled) return;
+    if (!widget.takeoverNotices.markNotified(request.conversationId)) return;
+    final accepted = await _showTakeoverDialog(context, request: request);
+    if (!mounted || !accepted) return;
+    await _takeover();
+  }
+
+  /// T2：接管当前会话（后端下一波实现，失败给出可读错误）。
+  Future<void> _takeover() async {
+    if (_takeoverBusy) return;
+    setState(() => _takeoverBusy = true);
+    try {
+      await widget.client.takeoverConversation(widget.conversation.id);
+      if (!mounted) return;
+      setState(() {
+        _assignedToMe = true;
+        _watching = false;
+        _slaAlert = null;
+      });
+      widget.onLocalReplySent?.call(widget.conversation.id);
+      _showMessage(context, '已接管该会话');
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      if (mounted) _showMessage(context, '接管失败：${_readableError(error)}');
+    } finally {
+      if (mounted) setState(() => _takeoverBusy = false);
+    }
+  }
+
+  /// T2：只读围观（`POST /api/agent/conversations/{id}/watch`）。
+  /// 成功后隐藏发送框并提示「围观中 · 不显示已读」。
+  Future<void> _watchConversation() async {
+    if (_watchBusy || _watching) return;
+    setState(() => _watchBusy = true);
+    try {
+      await widget.client.watchConversation(widget.conversation.id);
+      if (!mounted) return;
+      setState(() => _watching = true);
+      _showMessage(context, '已进入围观模式');
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      if (mounted) _showMessage(context, '进入围观失败：${_readableError(error)}');
+    } finally {
+      if (mounted) setState(() => _watchBusy = false);
     }
   }
 
@@ -1616,6 +1927,9 @@ class _ChatPageState extends State<ChatPage> {
       widget.client.sendMessage(widget.conversation.id, content);
       widget.client.sendTyping(widget.conversation.id, typing: false);
       _messageController.clear();
+      // T3：本地回复成功即清除该会话的 SLA 提示（本页与列表页同步）。
+      if (_slaAlert != null) setState(() => _slaAlert = null);
+      widget.onLocalReplySent?.call(widget.conversation.id);
     } catch (error) {
       _showMessage(context, _readableError(error));
     }
@@ -1949,6 +2263,17 @@ class _ChatPageState extends State<ChatPage> {
       ),
       body: Column(
         children: [
+          // T3：SLA 提示条（首响超时 / 待回复超时），只提示、不发系统通知。
+          if (_slaAlert != null)
+            _SlaBanner(text: _slaAlert!.bannerText),
+          // T2：未接管（或接管的不是自己）时提供「只读围观」入口。
+          if (!_assignedToMe && !_watching && !closed)
+            _WatchEntryBanner(
+              busy: _watchBusy,
+              onWatch: _watchConversation,
+            ),
+          if (_watching)
+            const _WatchingBanner(),
           if (closed)
             Container(
               width: double.infinity,
@@ -1985,15 +2310,19 @@ class _ChatPageState extends State<ChatPage> {
                     },
                   ),
           ),
-          SafeArea(
-            top: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // T3：关闭出向自动翻译时常驻的浅色提示。
-                if (!_preferences.autoTranslateOutgoing)
-                  const _NoAutoTranslateHint(),
-                Container(
+          // T2：围观中隐藏发送框，只保留「围观中 · 不显示已读」提示。
+          if (_watching)
+            const SafeArea(top: false, child: _WatchingInputBar())
+          else
+            SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // T3：关闭出向自动翻译时常驻的浅色提示。
+                  if (!_preferences.autoTranslateOutgoing)
+                    const _NoAutoTranslateHint(),
+                  Container(
                   padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
                   decoration: const BoxDecoration(
                     color: AppColors.surface,
@@ -2481,6 +2810,160 @@ class _NoAutoTranslateHint extends StatelessWidget {
   );
 }
 
+/// T3：会话页顶部的 SLA 提示条（橙色，醒目但不发系统通知）。
+class _SlaBanner extends StatelessWidget {
+  const _SlaBanner({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    color: AppColors.warning.withValues(alpha: .14),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+    child: Row(
+      children: [
+        const Icon(Icons.timer_outlined, size: 15, color: AppColors.warning),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.warning,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// T2：未接管会话的「只读围观」入口。
+class _WatchEntryBanner extends StatelessWidget {
+  const _WatchEntryBanner({required this.busy, required this.onWatch});
+
+  final bool busy;
+  final VoidCallback onWatch;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    color: AppColors.primarySoft,
+    padding: const EdgeInsets.fromLTRB(14, 6, 8, 6),
+    child: Row(
+      children: [
+        const Expanded(
+          child: Text(
+            '该会话尚未由你接管，可先只读围观',
+            style: TextStyle(fontSize: 12, color: AppColors.primaryDark),
+          ),
+        ),
+        TextButton.icon(
+          onPressed: busy ? null : onWatch,
+          icon: busy
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.visibility_outlined, size: 16),
+          label: const Text('只读围观', style: TextStyle(fontSize: 13)),
+          style: TextButton.styleFrom(
+            minimumSize: const Size(0, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// T2：围观态顶部提示。
+class _WatchingBanner extends StatelessWidget {
+  const _WatchingBanner();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    color: AppColors.primarySoft,
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+    child: const Row(
+      children: [
+        Icon(Icons.visibility_outlined, size: 15, color: AppColors.primary),
+        SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            '围观中 · 不显示已读，也不会向访客发送消息',
+            style: TextStyle(fontSize: 12, color: AppColors.primary),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// T2：围观态替代输入框的提示条。
+class _WatchingInputBar extends StatelessWidget {
+  const _WatchingInputBar();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+    decoration: const BoxDecoration(
+      color: AppColors.surface,
+      border: Border(top: BorderSide(color: AppColors.border)),
+    ),
+    child: const Text(
+      '围观中 · 不显示已读',
+      textAlign: TextAlign.center,
+      style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+    ),
+  );
+}
+
+/// T2：接管弹窗。返回 true 表示点了「接管」；「稍后」只关闭弹窗，
+/// 不改变任何服务端状态（AI 继续接待）。
+Future<bool> _showTakeoverDialog(
+  BuildContext context, {
+  required TakeoverRequest request,
+}) async {
+  final waiting = request.waitingLabel;
+  final accepted = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('有新访客等待接入'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('访客：${request.displayVisitorName}'),
+          const SizedBox(height: 6),
+          Text(waiting == null ? '正在等待客服接管' : '$waiting，请尽快接管'),
+          const SizedBox(height: 10),
+          const Text(
+            '点「稍后」不会改变接待状态，AI 会继续接待该访客。',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('稍后'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('接管'),
+        ),
+      ],
+    ),
+  );
+  return accepted ?? false;
+}
+
 /// T2：发送前确认译文的底部弹窗。
 /// 返回 `发送译文` 的文本、`发送原文` 的原文，取消时返回 null。
 class _TranslationPreviewSheet extends StatefulWidget {
@@ -2880,6 +3363,7 @@ class AgentPreferencesController extends ChangeNotifier {
     String? translationDialectMode,
     bool? aiSuggestReplies,
     bool? knowledgeSuggestEnabled,
+    bool? takeoverPopupEnabled,
   }) async {
     if (_saving) return null;
     final patch = AgentPreferencesPatch(
@@ -2889,6 +3373,7 @@ class AgentPreferencesController extends ChangeNotifier {
       translationDialectMode: translationDialectMode,
       aiSuggestReplies: aiSuggestReplies,
       knowledgeSuggestEnabled: knowledgeSuggestEnabled,
+      takeoverPopupEnabled: takeoverPopupEnabled,
     );
     if (patch.isEmpty) return null;
     final previous = _preferences;
@@ -2899,6 +3384,7 @@ class AgentPreferencesController extends ChangeNotifier {
       translationDialectMode: translationDialectMode,
       aiSuggestReplies: aiSuggestReplies,
       knowledgeSuggestEnabled: knowledgeSuggestEnabled,
+      takeoverPopupEnabled: takeoverPopupEnabled,
     );
     _saving = true;
     _error = null;
@@ -2958,6 +3444,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
     String? translationDialectMode,
     bool? aiSuggestReplies,
     bool? knowledgeSuggestEnabled,
+    bool? takeoverPopupEnabled,
   }) async {
     final error = await widget.controller.update(
       autoTranslateIncoming: autoTranslateIncoming,
@@ -2966,6 +3453,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
       translationDialectMode: translationDialectMode,
       aiSuggestReplies: aiSuggestReplies,
       knowledgeSuggestEnabled: knowledgeSuggestEnabled,
+      takeoverPopupEnabled: takeoverPopupEnabled,
     );
     if (!mounted) return;
     if (error == null) {
@@ -3099,6 +3587,21 @@ class _PreferencesPageState extends State<PreferencesPage> {
                       const SizedBox(height: 14),
                       _PreferencesInlineError(message: controller.error!),
                     ],
+                    const SizedBox(height: 18),
+                    const _PreferencesSectionLabel('接管提醒'),
+                    Container(
+                      decoration: AppTheme.cardDecoration(),
+                      child: _PreferenceSwitchTile(
+                        icon: Icons.pan_tool_alt_outlined,
+                        title: '访客等待接入时弹出接管提示',
+                        description:
+                            '开启后新访客等待接入会弹出「接管」确认框；关闭后仅在会话列表显示等待提示，不会打扰你。',
+                        value: preferences.takeoverPopupEnabled,
+                        onChanged: enabled
+                            ? (value) => _save(takeoverPopupEnabled: value)
+                            : null,
+                      ),
+                    ),
                     const SizedBox(height: 18),
                     const Text(
                       '偏好只对当前客服账号生效，修改后立即同步到服务端。',
@@ -3310,10 +3813,15 @@ class _PreferencesInlineError extends StatelessWidget {
 }
 
 class _PreferencesErrorState extends StatelessWidget {
-  const _PreferencesErrorState({required this.message, required this.onRetry});
+  const _PreferencesErrorState({
+    required this.message,
+    required this.onRetry,
+    this.title = '偏好加载失败',
+  });
 
   final String message;
   final VoidCallback onRetry;
+  final String title;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -3328,7 +3836,7 @@ class _PreferencesErrorState extends StatelessWidget {
             color: AppColors.textFaint,
           ),
           const SizedBox(height: 14),
-          const Text('偏好加载失败', style: TextStyle(fontWeight: FontWeight.w700)),
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
           Text(
             message,
@@ -3342,6 +3850,768 @@ class _PreferencesErrorState extends StatelessWidget {
           FilledButton(onPressed: onRetry, child: const Text('重试')),
         ],
       ),
+    ),
+  );
+}
+
+/// T1：提醒渠道配置页（我的 → 提醒渠道），最多 3 个。
+class AlertChannelsPage extends StatefulWidget {
+  const AlertChannelsPage({super.key, required this.client});
+
+  final ServiceBridgeClient client;
+
+  @override
+  State<AlertChannelsPage> createState() => _AlertChannelsPageState();
+}
+
+/// 新增 / 编辑表单的返回值。
+class _ChannelFormResult {
+  const _ChannelFormResult({
+    required this.kind,
+    required this.config,
+    required this.enabled,
+  });
+
+  final String kind;
+  final Map<String, dynamic> config;
+  final bool enabled;
+}
+
+class _AlertChannelsPageState extends State<AlertChannelsPage> {
+  List<AlertChannel> _channels = const <AlertChannel>[];
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+
+  /// 正在测试 / 启停 / 删除的渠道。
+  final Set<String> _busyIds = <String>{};
+
+  /// 本次进入页面后新建或编辑时填写的明文 config：
+  /// 服务端只回传掩码，「发送测试」优先用这里的值，省去重复输入。
+  final Map<String, Map<String, dynamic>> _configCache =
+      <String, Map<String, dynamic>>{};
+
+  bool get _canAdd => AlertChannelRules.canAdd(_channels.length);
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
+    try {
+      final items = await widget.client.alertChannels();
+      if (!mounted) return;
+      setState(() {
+        _channels = items;
+        _error = null;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        // 401 由 HomePage 统一跳回登录页，这里不重复报错。
+        if (!isUnauthorizedError(error)) _error = _readableError(error);
+      });
+    }
+  }
+
+  /// 新增：已达上限时按钮已禁用，这里再兜底一次。
+  Future<void> _addChannel() async {
+    if (!_canAdd) {
+      _showMessage(context, AlertChannelRules.limitMessage);
+      return;
+    }
+    final result = await _openForm();
+    if (result == null || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      final created = await widget.client.createAlertChannel(
+        kind: result.kind,
+        config: result.config,
+        enabled: result.enabled,
+      );
+      if (created.id.isNotEmpty) {
+        _configCache[created.id] = result.config;
+      }
+      await _load();
+      if (mounted) _showMessage(context, '已新增提醒渠道');
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      // 第 4 个渠道等 400 错误：原样展示后端 message。
+      if (mounted) _showMessage(context, '新增失败：${_readableError(error)}');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _editChannel(AlertChannel channel) async {
+    final result = await _openForm(channel: channel);
+    if (result == null || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      final updated = await widget.client.updateAlertChannel(
+        channel.id,
+        // 留空的字段不提交，避免把服务端已有配置覆盖为空。
+        config: result.config.isEmpty ? null : result.config,
+        enabled: result.enabled,
+      );
+      final merged = <String, dynamic>{
+        ...?_configCache[channel.id],
+        ...result.config,
+      };
+      // 只有拿得到完整配置时才缓存，供「发送测试」直接复用。
+      if (_isCompleteAlertConfig(channel.kind, merged)) {
+        _configCache[channel.id] = merged;
+      } else {
+        _configCache.remove(channel.id);
+      }
+      _applyUpdated(updated.id.isEmpty ? channel : updated);
+      if (mounted) _showMessage(context, '渠道已更新');
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      if (mounted) _showMessage(context, '保存失败：${_readableError(error)}');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<_ChannelFormResult?> _openForm({AlertChannel? channel}) {
+    return showDialog<_ChannelFormResult>(
+      context: context,
+      builder: (_) => _AlertChannelFormDialog(channel: channel),
+    );
+  }
+
+  /// 测试模式的表单：服务端不回传明文，需要重新收集 config。
+  Future<_ChannelFormResult?> _openTestForm(AlertChannel channel) {
+    return showDialog<_ChannelFormResult>(
+      context: context,
+      builder: (_) => _AlertChannelFormDialog(
+        fixedKind: channel.kind,
+        testMode: true,
+        masked: channel.maskedLabel,
+      ),
+    );
+  }
+
+  Future<void> _toggleChannel(AlertChannel channel, bool enabled) async {
+    if (!_busyIds.add(channel.id)) return;
+    setState(() {});
+    try {
+      final updated = await widget.client.updateAlertChannel(
+        channel.id,
+        enabled: enabled,
+      );
+      _applyUpdated(
+        updated.id.isEmpty ? channel.copyWith(enabled: enabled) : updated,
+      );
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      if (mounted) _showMessage(context, '保存失败：${_readableError(error)}');
+    } finally {
+      _busyIds.remove(channel.id);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _deleteChannel(AlertChannel channel) async {
+    final confirmed = await _confirm(
+      context,
+      '删除提醒渠道',
+      '确定删除 ${channel.kindLabel} 渠道（${channel.maskedLabel}）？删除后不再收到该渠道的提醒。',
+    );
+    if (!confirmed || !mounted) return;
+    if (!_busyIds.add(channel.id)) return;
+    setState(() {});
+    try {
+      await widget.client.deleteAlertChannel(channel.id);
+      _configCache.remove(channel.id);
+      if (mounted) _showMessage(context, '渠道已删除');
+      await _load();
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      if (mounted) _showMessage(context, '删除失败：${_readableError(error)}');
+    } finally {
+      _busyIds.remove(channel.id);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _testChannel(AlertChannel channel) async {
+    var config = _configCache[channel.id];
+    if (config == null || !_isCompleteAlertConfig(channel.kind, config)) {
+      // 服务端只回传掩码，只能请客服重新填写后再测试。
+      final result = await _openTestForm(channel);
+      if (result == null || !mounted) return;
+      config = result.config;
+    }
+    if (!_busyIds.add(channel.id)) return;
+    setState(() {});
+    try {
+      final result = await widget.client.testAlertChannel(
+        kind: channel.kind,
+        config: config,
+      );
+      if (!mounted) return;
+      if (result.ok) {
+        _showMessage(context, result.display);
+      } else {
+        // 未配置 SMTP 的邮件渠道等失败原因：如实展示后端 message。
+        _showMessage(context, '测试失败：${result.display}');
+      }
+    } catch (error) {
+      if (isUnauthorizedError(error)) return;
+      if (mounted) _showMessage(context, '测试失败：${_readableError(error)}');
+    } finally {
+      _busyIds.remove(channel.id);
+      if (mounted) setState(() {});
+    }
+  }
+
+  void _applyUpdated(AlertChannel updated) {
+    if (!mounted) return;
+    setState(() {
+      _channels = _channels
+          .map((item) => item.id == updated.id ? updated : item)
+          .toList();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          '提醒渠道',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        actions: [
+          if (_saving)
+            const Padding(
+              padding: EdgeInsets.only(right: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
+          // 已达上限时禁用，并给出「最多 3 个提醒渠道」提示。
+          Tooltip(
+            message: _canAdd
+                ? '新增渠道'
+                : '${AlertChannelRules.limitMessage}，已达上限',
+            child: IconButton(
+              onPressed: _canAdd && !_saving ? _addChannel : null,
+              icon: const Icon(Icons.add),
+            ),
+          ),
+        ],
+      ),
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading && _channels.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null && _channels.isEmpty) {
+      return _PreferencesErrorState(
+        title: '提醒渠道加载失败',
+        message: _error!,
+        onRetry: () => unawaited(_load()),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '已配置 ${_channels.length}/${AlertChannelRules.maxChannels}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (!_canAdd)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(AppRadii.input),
+                border: Border.all(
+                  color: AppColors.warning.withValues(alpha: .3),
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    size: 16,
+                    color: AppColors.warning,
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      AlertChannelRules.limitDetail,
+                      style: TextStyle(fontSize: 12, color: AppColors.warning),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (_channels.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 26),
+              decoration: AppTheme.cardDecoration(),
+              child: const Column(
+                children: [
+                  Icon(
+                    Icons.notifications_none,
+                    size: 46,
+                    color: AppColors.textFaint,
+                  ),
+                  SizedBox(height: 10),
+                  Text(
+                    '还没有提醒渠道',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    '添加后，新访客与 SLA 提醒会推送到你配置的渠道',
+                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                  ),
+                ],
+              ),
+            )
+          else
+            for (final channel in _channels) ...[
+              _AlertChannelCard(
+                channel: channel,
+                busy: _busyIds.contains(channel.id) || _saving,
+                onToggle: (value) => _toggleChannel(channel, value),
+                onTest: () => _testChannel(channel),
+                onEdit: () => _editChannel(channel),
+                onDelete: () => _deleteChannel(channel),
+              ),
+              const SizedBox(height: 12),
+            ],
+          if (!_canAdd) ...[
+            const SizedBox(height: 2),
+            const Text(
+              AlertChannelRules.limitMessage,
+              style: TextStyle(fontSize: 12, color: AppColors.warning),
+            ),
+          ],
+          FilledButton.icon(
+            onPressed: _canAdd && !_saving ? _addChannel : null,
+            icon: const Icon(Icons.add),
+            label: Text(
+              _canAdd
+                  ? '新增渠道'
+                  : '${AlertChannelRules.limitMessage}，已达上限',
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            '提醒渠道用于接收新访客咨询与 SLA 提醒，最多 3 个；密钥只保存在服务端，界面仅显示掩码。',
+            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 单个渠道卡片：类型图标 + 掩码 + 启停开关 + 测试 / 编辑 / 删除。
+class _AlertChannelCard extends StatelessWidget {
+  const _AlertChannelCard({
+    required this.channel,
+    required this.busy,
+    required this.onToggle,
+    required this.onTest,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final AlertChannel channel;
+  final bool busy;
+  final ValueChanged<bool> onToggle;
+  final VoidCallback onTest;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: AppTheme.cardDecoration(),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+            child: Row(
+              children: [
+                Icon(
+                  _alertChannelIcon(channel.kind),
+                  color: AppColors.primary,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        channel.kindLabel,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        channel.enabled
+                            ? '已启用 · ${channel.maskedLabel}'
+                            : '已停用 · ${channel.maskedLabel}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: channel.enabled,
+                  activeThumbColor: AppColors.primary,
+                  onChanged: busy ? null : onToggle,
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, indent: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: busy ? null : onTest,
+                  child: const Text('发送测试', style: TextStyle(fontSize: 13)),
+                ),
+                TextButton(
+                  onPressed: busy ? null : onEdit,
+                  child: const Text('编辑', style: TextStyle(fontSize: 13)),
+                ),
+                TextButton(
+                  onPressed: busy ? null : onDelete,
+                  style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+                  child: const Text('删除', style: TextStyle(fontSize: 13)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 判断一份 config 是否足够完整到可以发送测试消息。
+bool _isCompleteAlertConfig(String kind, Map<String, dynamic> config) {
+  final draft = AlertChannelDraft(kind: kind);
+  for (final field in AlertChannelSpec.fieldsFor(kind)) {
+    final value = config[field.name];
+    if (value != null) draft.setValue(field.name, '$value');
+  }
+  return draft.validate(requireSecrets: true) == null;
+}
+
+IconData _alertChannelIcon(String kind) {
+  switch (kind) {
+    case AlertChannelKind.telegram:
+      return Icons.send_rounded;
+    case AlertChannelKind.bark:
+      return Icons.notifications_active_outlined;
+    case AlertChannelKind.email:
+      return Icons.mail_outline;
+    default:
+      return Icons.notifications_none;
+  }
+}
+
+/// 新增 / 编辑 / 发送测试共用的表单弹窗。
+///
+/// - 新增：按类型显示对应字段，密钥用密码框，必填校验；
+/// - 编辑：与服务端 PATCH 语义一致，**留空的字段不提交**（密钥留空不修改）；
+/// - 测试：服务端只回传掩码，需重新填写配置后再发送测试消息。
+class _AlertChannelFormDialog extends StatefulWidget {
+  const _AlertChannelFormDialog({
+    this.channel,
+    this.fixedKind,
+    this.testMode = false,
+    this.masked = '',
+  });
+
+  final AlertChannel? channel;
+  final String? fixedKind;
+  final bool testMode;
+  final String masked;
+
+  bool get isEdit => channel != null;
+
+  @override
+  State<_AlertChannelFormDialog> createState() =>
+      _AlertChannelFormDialogState();
+}
+
+class _AlertChannelFormDialogState extends State<_AlertChannelFormDialog> {
+  late String _kind;
+  final Map<String, TextEditingController> _controllers =
+      <String, TextEditingController>{};
+  final Set<String> _revealed = <String>{};
+  bool _enabled = true;
+  String? _error;
+
+  bool get _isEdit => widget.isEdit;
+  bool get _isTest => widget.testMode;
+
+  @override
+  void initState() {
+    super.initState();
+    _kind = widget.channel?.kind ?? widget.fixedKind ?? AlertChannelKind.telegram;
+    _enabled = widget.channel?.enabled ?? true;
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  TextEditingController _controllerFor(String name) =>
+      _controllers.putIfAbsent(name, TextEditingController.new);
+
+  AlertChannelDraft _draft() {
+    final draft = AlertChannelDraft(kind: _kind);
+    for (final field in AlertChannelSpec.fieldsFor(_kind)) {
+      draft.setValue(field.name, _controllerFor(field.name).text);
+    }
+    return draft;
+  }
+
+  void _changeKind(String kind) {
+    if (kind == _kind) return;
+    setState(() {
+      _kind = kind;
+      _error = null;
+      // 类型切换后字段不同，清空避免把 Telegram 的 token 当成 Bark 的 key。
+      for (final controller in _controllers.values) {
+        controller.clear();
+      }
+      _revealed.clear();
+    });
+  }
+
+  void _submit() {
+    final draft = _draft();
+    // 编辑时密钥留空表示不修改；新增与测试必须填全。
+    final error = draft.validate(requireSecrets: !_isEdit);
+    if (error != null) {
+      setState(() => _error = error);
+      return;
+    }
+    if (_isEdit && !_isTest && draft.toConfigJson().isEmpty) {
+      // 什么都没改：仍然允许提交 enabled 变更。
+      Navigator.of(context).pop(
+        _ChannelFormResult(
+          kind: _kind,
+          config: const <String, dynamic>{},
+          enabled: _enabled,
+        ),
+      );
+      return;
+    }
+    Navigator.of(context).pop(
+      _ChannelFormResult(
+        kind: _kind,
+        config: draft.toConfigJson(),
+        enabled: _enabled,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fields = AlertChannelSpec.fieldsFor(_kind);
+    final title = _isTest
+        ? '发送测试'
+        : (_isEdit ? '编辑提醒渠道' : '新增提醒渠道');
+    final confirmText = _isTest ? '发送测试' : (_isEdit ? '保存' : '新增');
+    return AlertDialog(
+      title: Text(title),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_isEdit || _isTest)
+              Text(
+                '${AlertChannelKind.label(_kind)} · ${widget.masked.isEmpty ? (widget.channel?.maskedLabel ?? '') : widget.masked}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
+              )
+            else
+              DropdownButtonFormField<String>(
+                initialValue: _kind,
+                decoration: const InputDecoration(labelText: '渠道类型'),
+                items: [
+                  for (final kind in AlertChannelKind.all)
+                    DropdownMenuItem(value: kind, child: Text(_channelKindLabelWithHint(kind))),
+                ],
+                onChanged: (value) {
+                  if (value != null) _changeKind(value);
+                },
+              ),
+            const SizedBox(height: 12),
+            for (final field in fields) ...[
+              TextFormField(
+                controller: _controllerFor(field.name),
+                obscureText: field.secret && !_revealed.contains(field.name),
+                keyboardType: field.name == 'address'
+                    ? TextInputType.emailAddress
+                    : TextInputType.text,
+                decoration: InputDecoration(
+                  labelText: field.label,
+                  hintText: _isEdit && field.secret ? '留空不修改' : field.hint,
+                  suffixIcon: field.secret
+                      ? IconButton(
+                          onPressed: () => setState(() {
+                            if (!_revealed.remove(field.name)) {
+                              _revealed.add(field.name);
+                            }
+                          }),
+                          tooltip: '显示 / 隐藏',
+                          icon: Icon(
+                            _revealed.contains(field.name)
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                            size: 20,
+                          ),
+                        )
+                      : null,
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (_kind == AlertChannelKind.email)
+              _FormNote(
+                icon: Icons.info_outline,
+                color: AppColors.warning,
+                text: AlertChannelSpec.emailSmtpNote,
+              ),
+            if (_isEdit)
+              const _FormNote(
+                icon: Icons.lock_outline,
+                color: AppColors.textSecondary,
+                text: '为保护密钥，界面只显示掩码：只提交你填写的字段，留空的字段保持服务端原值。',
+              ),
+            if (_isTest)
+              const _FormNote(
+                icon: Icons.lock_outline,
+                color: AppColors.textSecondary,
+                text: '为保护密钥，测试需要重新填写该渠道配置；本次测试不会修改已保存的配置。',
+              ),
+            if (!_isTest)
+              SwitchListTile(
+                value: _enabled,
+                activeThumbColor: AppColors.primary,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('启用该渠道', style: TextStyle(fontSize: 14)),
+                onChanged: (value) => setState(() => _enabled = value),
+              ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  _error!,
+                  style: const TextStyle(fontSize: 12, color: AppColors.danger),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: Text(confirmText)),
+      ],
+    );
+  }
+}
+
+String _channelKindLabelWithHint(String kind) {
+  switch (kind) {
+    case AlertChannelKind.telegram:
+      return 'Telegram（Bot Token + Chat ID）';
+    case AlertChannelKind.bark:
+      return 'Bark（Key，可选服务器）';
+    case AlertChannelKind.email:
+      return '邮箱（收件地址）';
+    default:
+      return AlertChannelKind.label(kind);
+  }
+}
+
+class _FormNote extends StatelessWidget {
+  const _FormNote({
+    required this.icon,
+    required this.color,
+    required this.text,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(fontSize: 12, height: 1.3, color: color),
+          ),
+        ),
+      ],
     ),
   );
 }
