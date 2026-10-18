@@ -4,6 +4,14 @@
 
 统一控制台使用 `1337` 端口和一次 2FA 登录，侧栏包含工作台、客服管理（账号 / 服务评价）、运营（咨询单 / 关键词 / 审计日志）、应用管理（App 版本 / API 管理）、内容管理（官网内容 / 网站翻译 / R2 素材库）和系统设置（营业时间与联系方式 / AI / 推送）。客服使用 Flutter「在线客服」App 接待访客。
 
+## 安全与合规文档
+
+- [安全设计说明书](docs/security/安全设计说明书.md)
+- [等保三级自评表](docs/security/等保三级自评表.md)
+- [基线加固清单](docs/security/基线加固清单.md)
+- [日志留存与审计规范](docs/security/日志留存与审计规范.md)
+- [自动翻译与 AI 客户画像实施规格](docs/AI_TRANSLATION_AND_PROFILE.md)
+
 ## 目录
 
 - `frontend/`：Astro + React + Tailwind 官网，构建产物位于 `frontend/dist/`；中文在根路径，英语/阿拉伯语在 `/en/`、`/ar/`。
