@@ -9,5 +9,18 @@ const site = process.env.PUBLIC_SITE_URL || env.PUBLIC_SITE_URL || 'https://www.
 export default defineConfig({
   site,
   output: 'static',
-  integrations: [react(), sitemap()]
+  integrations: [
+    react(),
+    sitemap({
+      i18n: {
+        defaultLocale: 'zh-CN',
+        locales: {
+          'zh-CN': 'zh-CN',
+          en: 'en',
+          ar: 'ar'
+        }
+      },
+      filter: (page) => !/\/404\/?$/.test(page)
+    })
+  ]
 });

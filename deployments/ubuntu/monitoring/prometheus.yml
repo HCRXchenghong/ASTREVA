@@ -1,0 +1,87 @@
+# ASTREVA 生产监控：Prometheus 抓取配置
+#
+# 启用方式（默认不启动，必须显式指定 profile）：
+#   docker compose --env-file deployments/ubuntu/.env.ubuntu --profile monitoring up -d prometheus grafana
+#
+# 三个抓取目标都在生产 Compose 的 `astreva` 网络内，只走容器网络，不暴露到公网：
+#   - servicebridge-backend-1:8080 / -2:8080  → Go 客服后端，/metrics 需 Authorization: Bearer $METRICS_BEARER_TOKEN
+#   - admin-server:1337                       → 统一后台，/metrics 需 Authorization: Bearer $ADMIN_METRICS_BEARER_TOKEN
+#                                               （未配置该 token 时后台直接返回 404）
+#
+# Token 不写进仓库：Compose 把 ${METRICS_BEARER_TOKEN} 注入容器环境变量，
+# prometheus 容器的启动脚本在运行前写入 /tmp/prometheus-secrets/metrics_bearer_token，
+# 这里用 credentials_file 引用该文件。admin-server 的 token 在 Compose 中同样取自
+# ${METRICS_BEARER_TOKEN}，因此一个文件即可覆盖三个目标。
+# 如两个 token 实际不同，请为 admin-server 单独增加一个 credentials_file。
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    stack: astreva-ubuntu
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: servicebridge-backend
+    scheme: http
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /tmp/prometheus-secrets/metrics_bearer_token
+    static_configs:
+      - targets:
+          - servicebridge-backend-1:8080
+          - servicebridge-backend-2:8080
+        labels:
+          service: servicebridge-backend
+          env: production
+
+  - job_name: admin-server
+    scheme: http
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /tmp/prometheus-secrets/metrics_bearer_token
+    static_configs:
+      - targets:
+          - admin-server:1337
+        labels:
+          service: admin-server
+          env: production
+
+  # 可选：对外 HTTP(S) 可用性探测（“HTTP 不可用”告警的推荐做法）。
+  # 取消注释前需要先部署 blackbox_exporter（例如在 monitoring profile 内加一个服务，
+  # 监听 9115），并把下面的 targets 换成真实的站内地址。alerts.yml 里的
+  # AstrevaHttpEndpointUnavailable 规则依赖 probe_success，未部署时不会产生任何数据，
+  # 也就不会误报。
+  #
+  # - job_name: blackbox-http
+  #   metrics_path: /probe
+  #   params:
+  #     module: [http_2xx]
+  #   static_configs:
+  #     - targets:
+  #         - https://www.example.com/
+  #         - https://admin.example.com/
+  #         - https://service.example.com/
+  #   relabel_configs:
+  #     - source_labels: [__address__]
+  #       target_label: __param_target
+  #     - source_labels: [__param_target]
+  #       target_label: instance
+  #     - target_label: __address__
+  #       replacement: blackbox-exporter:9115
+
+  # 可选：宿主机磁盘/容器指标（“磁盘空间”“容器重启”告警的推荐做法）。
+  # 需要 node_exporter / cAdvisor；未部署时 alerts.yml 中对应规则不会产生数据。
+  #
+  # - job_name: node
+  #   static_configs:
+  #     - targets: ["node-exporter:9100"]
+  #
+  # - job_name: cadvisor
+  #   static_configs:
+  #     - targets: ["cadvisor:8080"]

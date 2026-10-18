@@ -4,7 +4,18 @@ import Navbar from '../components/Navbar';
 import ChatWidget from '../components/ChatWidget';
 import CookieConsent from '../components/CookieConsent';
 import LanguageController from '../components/LanguageController.astro';
-import { PUBLIC_CONTENT_API_URL } from '../lib/content';
+import { PUBLIC_CONTENT_API_URL, getAvailableLocales } from '../lib/content';
+import {
+  DEFAULT_LOCALE,
+  OG_LOCALES,
+  SITE_LOCALES,
+  isSiteLocale,
+  localePath,
+  localeSwitchPaths,
+  localizeHref,
+  stripLocalePrefix,
+  type SiteLocale
+} from '../lib/i18n';
 import { absoluteAssetUrl, absoluteUrl, organizationJsonLd, pageDescription, pageTitle, websiteJsonLd } from '../lib/seo';
 import type { SEO, SiteContent } from '../lib/types';
 
@@ -15,6 +26,8 @@ type Props = {
   jsonLd?: unknown[];
   /** Optional robots policy, e.g. "noindex, follow" for the 404 page. */
   robots?: string;
+  /** Real page language; zh-CN keeps the root path, en/ar live behind their prefix. */
+  locale?: SiteLocale;
 };
 
 const {
@@ -22,17 +35,30 @@ const {
   seo,
   path,
   jsonLd = [],
-  robots = 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'
+  robots = 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1',
+  locale: localeProp
 } = Astro.props;
+const locale: SiteLocale = isSiteLocale(localeProp)
+  ? localeProp
+  : isSiteLocale(content.site.locale)
+    ? content.site.locale
+    : DEFAULT_LOCALE;
 const title = pageTitle(seo, content.site);
 const description = pageDescription(seo, content.site);
 const canonical = absoluteUrl(path);
 const imageSource = seo?.image || content.site.defaultSeo.image || content.site.logoUrl;
 const image = absoluteAssetUrl(imageSource);
 const keywords = seo?.keywords || content.site.defaultSeo.keywords;
-const localeMap: Record<string, string> = { 'zh-CN': 'zh_CN', en: 'en_US', ar: 'ar_SA' };
-const ogLocale = localeMap[content.site.locale] || 'zh_CN';
-const alternateLocales = Object.values(localeMap).filter((locale) => locale !== ogLocale);
+const ogLocale = OG_LOCALES[locale];
+const availableLocales = await getAvailableLocales();
+if (!availableLocales.includes(locale)) availableLocales.push(locale);
+const alternateLocales = SITE_LOCALES.filter((item) => availableLocales.includes(item) && item !== locale);
+const basePath = stripLocalePrefix(path).path;
+const hreflangAlternates = availableLocales.map((item) => ({
+  locale: item,
+  href: absoluteUrl(localePath(item, basePath))
+}));
+const switchPaths = localeSwitchPaths(path, availableLocales);
 const verification = content.site.searchVerification || {};
 const isLogoImage = Boolean(image && imageSource === content.site.logoUrl);
 const structuredData = [organizationJsonLd(content.site), websiteJsonLd(content.site), ...jsonLd];
@@ -41,28 +67,14 @@ const isIndexable = !/noindex/i.test(robots);
 ---
 
 <!doctype html>
-<html lang={content.site.locale}>
+<html lang={locale} dir={locale === 'ar' ? 'rtl' : 'ltr'}>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <script is:inline>
-      (() => {
-        const root = document.documentElement;
-        const supported = new Set(['zh-CN', 'en', 'ar']);
-        let savedLocale = null;
-
-        try {
-          savedLocale = localStorage.getItem('astreva-site-locale');
-        } catch {}
-
-        root.dataset.astrevaLocalePending = '';
-        if (supported.has(savedLocale)) {
-          root.lang = savedLocale;
-          root.dir = savedLocale === 'ar' ? 'rtl' : 'ltr';
-        }
-
-        window.setTimeout(() => root.removeAttribute('data-astreva-locale-pending'), 5000);
-      })();
+    <script is:inline define:vars={{ astrevaLocale: locale, astrevaLocales: availableLocales, astrevaLocalePaths: switchPaths }}>
+      window.__ASTREVA_LOCALE__ = astrevaLocale;
+      window.__ASTREVA_LOCALES__ = astrevaLocales;
+      window.__ASTREVA_LOCALE_PATHS__ = astrevaLocalePaths;
     </script>
     <title>{title}</title>
     <meta name="description" content={description} />
@@ -81,10 +93,14 @@ const isIndexable = !/noindex/i.test(robots);
     {content.site.logoUrl && <link rel="apple-touch-icon" href={content.site.logoUrl} />}
     {keywords && <meta name="keywords" content={keywords} />}
     <link rel="canonical" href={canonical} />
+    {isIndexable && hreflangAlternates.map((alternate) => (
+      <link rel="alternate" hreflang={alternate.locale} href={alternate.href} />
+    ))}
+    {isIndexable && <link rel="alternate" hreflang="x-default" href={absoluteUrl(localePath(DEFAULT_LOCALE, basePath))} />}
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={content.site.brandName} />
     <meta property="og:locale" content={ogLocale} data-astreva-og-locale />
-    {alternateLocales.map((locale) => <meta property="og:locale:alternate" content={locale} />)}
+    {alternateLocales.map((alternate) => <meta property="og:locale:alternate" content={OG_LOCALES[alternate]} />)}
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
@@ -104,7 +120,12 @@ const isIndexable = !/noindex/i.test(robots);
     ))}
   </head>
   <body>
-    <LanguageController content={content} apiBase={PUBLIC_CONTENT_API_URL} />
+    <LanguageController
+      apiBase={PUBLIC_CONTENT_API_URL}
+      locale={locale}
+      availableLocales={availableLocales}
+      switchPaths={switchPaths}
+    />
     <div class="min-h-screen bg-white font-sans selection:bg-blue-200 selection:text-blue-900">
       <Navbar
         client:only="react"
@@ -112,6 +133,7 @@ const isIndexable = !/noindex/i.test(robots);
         categories={content.categories}
         products={content.products}
         currentPath={path}
+        locale={locale}
       />
       <main>
         <slot />
@@ -134,13 +156,13 @@ const isIndexable = !/noindex/i.test(robots);
           <div>
             <h4 class="text-lg font-semibold mb-6">{footer.quickLinksTitle}</h4>
             <ul class="space-y-3 text-gray-400 text-sm">
-              {footer.quickLinks.filter((link) => link.href !== '/projects/').map((link) => <li><a href={link.href} class="hover:text-blue-400 transition-colors">{link.label}</a></li>)}
+              {footer.quickLinks.filter((link) => link.href !== '/projects/').map((link) => <li><a href={localizeHref(locale, link.href)} class="hover:text-blue-400 transition-colors">{link.label}</a></li>)}
             </ul>
           </div>
           <div>
             <h4 class="text-lg font-semibold mb-6">{footer.supportTitle}</h4>
             <ul class="space-y-3 text-gray-400 text-sm">
-              {footer.supportLinks.map((link) => <li><a href={link.href} class="hover:text-blue-400 transition-colors">{link.label}</a></li>)}
+              {footer.supportLinks.map((link) => <li><a href={localizeHref(locale, link.href)} class="hover:text-blue-400 transition-colors">{link.label}</a></li>)}
             </ul>
           </div>
           <div>
@@ -160,8 +182,8 @@ const isIndexable = !/noindex/i.test(robots);
         <div class="max-w-7xl mx-auto px-6 pt-8 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-gray-500">
           <p>{content.site.copyright}</p>
           <div class="flex gap-6">
-            <a href="/privacy/" class="hover:text-gray-300 transition-colors">{footer.privacyLabel}</a>
-            <a href="/agreement/" class="hover:text-gray-300 transition-colors">{footer.agreementLabel}</a>
+            <a href={localePath(locale, '/privacy/')} class="hover:text-gray-300 transition-colors">{footer.privacyLabel}</a>
+            <a href={localePath(locale, '/agreement/')} class="hover:text-gray-300 transition-colors">{footer.agreementLabel}</a>
             <button
               type="button"
               data-cookie-settings
@@ -173,8 +195,8 @@ const isIndexable = !/noindex/i.test(robots);
           </div>
         </div>
       </footer>
-      <ChatWidget client:only="react" serviceBridgeUrl={content.site.serviceBridgeUrl} chat={content.site.chat} />
-      <CookieConsent client:only="react" cookie={content.site.cookie} />
+      <ChatWidget client:only="react" serviceBridgeUrl={content.site.serviceBridgeUrl} chat={content.site.chat} lang={locale} />
+      <CookieConsent client:only="react" cookie={content.site.cookie} privacyHref={localePath(locale, '/privacy/')} />
     </div>
   </body>
 </html>

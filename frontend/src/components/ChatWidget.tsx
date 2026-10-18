@@ -48,11 +48,14 @@ function sanitizeVisitorSession(data: unknown): VisitorSessionPayload | null {
   };
 }
 
-export default function ChatWidget({ serviceBridgeUrl, chat }: { serviceBridgeUrl: string; chat: ChatCopy }) {
+export default function ChatWidget({ serviceBridgeUrl, chat, lang }: { serviceBridgeUrl: string; chat: ChatCopy; lang?: string }) {
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(Number(chat.initialUnreadCount));
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
-  const [siteLocale, setSiteLocale] = useState<string>(() => (typeof document !== 'undefined' ? document.documentElement.lang || 'zh-CN' : 'zh-CN'));
+  const [siteLocale, setSiteLocale] = useState<string>(() => {
+    if (lang) return lang;
+    return typeof document !== 'undefined' ? document.documentElement.lang || 'zh-CN' : 'zh-CN';
+  });
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const envBridgeUrl = (import.meta.env.PUBLIC_SERVICEBRIDGE_URL || '').trim().replace(/\/$/, '');
 

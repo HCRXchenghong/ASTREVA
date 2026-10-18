@@ -1,0 +1,14 @@
+# Grafana 仪表盘自动加载（monitoring profile）
+apiVersion: 1
+
+providers:
+  - name: astreva
+    orgId: 1
+    folder: ASTREVA
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

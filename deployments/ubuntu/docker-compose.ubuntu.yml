@@ -333,6 +333,62 @@ services:
     networks:
       - astreva
 
+  # ---------------------------------------------------------------- 监控（profile: monitoring，默认不启动）
+  # 启用：docker compose --env-file deployments/ubuntu/.env.ubuntu --profile monitoring up -d
+  # 端口只绑定宿主机回环（PROMETHEUS_HOST_PORT / GRAFANA_HOST_PORT 默认 127.0.0.1），
+  # 需要从外部访问时请自行加 SSH 隧道或反向代理，不要把 9090/3000 直接暴露到公网。
+  # Prometheus token 不落仓库：启动时从 ${METRICS_BEARER_TOKEN} 写入容器内凭据文件。
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        mkdir -p /tmp/prometheus-secrets
+        printf '%s' "$$METRICS_BEARER_TOKEN" > /tmp/prometheus-secrets/metrics_bearer_token
+        chmod 0400 /tmp/prometheus-secrets/metrics_bearer_token
+        exec /bin/prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/prometheus \
+          --storage.tsdb.retention.time="$$PROMETHEUS_RETENTION" \
+          --web.listen-address=0.0.0.0:9090
+    environment:
+      METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:?METRICS_BEARER_TOKEN 未配置：请先复制 deployments/ubuntu/.env.ubuntu.example 为 .env.ubuntu 并填入强随机 token}
+      PROMETHEUS_RETENTION: ${PROMETHEUS_RETENTION:-15d}
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-127.0.0.1:9090}:9090"
+    networks:
+      - astreva
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD 未配置：请在 .env.ubuntu 中设置强随机密码}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_HTTP_ADDR: "0.0.0.0"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://127.0.0.1:3000}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_HOST_PORT:-127.0.0.1:3000}:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - astreva
+
 volumes:
   postgres-data:
   redis-data:
@@ -344,6 +400,8 @@ volumes:
   caddy-config:
   rebuild-webhook-home:
   frontend-published:
+  prometheus-data:
+  grafana-data:
 
 networks:
   astreva:

@@ -37,3 +37,13 @@ scripts/ubuntu-one-click.sh down
 后台使用 `SERVICEBRIDGE_API_URL` 通过容器内网访问客服引擎，并以 `SERVICEBRIDGE_ADMIN_ACCOUNT` 和 `ADMIN_BOOTSTRAP_PASSWORD` 代理管理员操作；凭证不会发送到浏览器。`?embed=1` 会隐藏客服独立页外壳，供官网 iframe 使用。
 
 移动 App 生产构建应把 `SERVICEBRIDGE_URL` 指向 `https://SERVICE_DOMAIN`。上线后还要完成推送、数据库备份、对象存储、日志采集、监控告警和容量验收，详见 `servicebridge/docs/商业上线验收清单.md`。
+
+## 监控（可选）
+
+监控栈（Prometheus + Grafana）以 Compose profile `monitoring` 提供，默认不启动，端口仅绑定宿主机回环：
+
+```bash
+docker compose --env-file deployments/ubuntu/.env.ubuntu --profile monitoring up -d
+```
+
+启用前请在 `.env.ubuntu` 中设置 `GRAFANA_ADMIN_PASSWORD`（以及已有的 `METRICS_BEARER_TOKEN`）。指标含义、告警阈值、RPO/RTO 与恢复演练见 `docs/OPERATIONS.md`。备份与隔离恢复演练使用 `scripts/backup-production.sh` 与 `scripts/restore-production.sh`。

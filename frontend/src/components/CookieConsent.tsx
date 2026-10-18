@@ -13,7 +13,7 @@ type CookieCopy = {
 /** Marker attribute used by the footer "cookie settings" entry. */
 const COOKIE_SETTINGS_TRIGGER = '[data-cookie-settings]';
 
-export default function CookieConsent({ cookie }: { cookie: CookieCopy }) {
+export default function CookieConsent({ cookie, privacyHref = '/privacy/' }: { cookie: CookieCopy; privacyHref?: string }) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -56,7 +56,7 @@ export default function CookieConsent({ cookie }: { cookie: CookieCopy }) {
         <div className="text-gray-600 text-sm leading-relaxed flex-1">
           <strong className="text-gray-900 font-bold mr-2 text-base">{cookie.title}</strong>
           {cookie.text}
-          <a href="/privacy/" className="text-[#0a66c2] hover:text-[#084b8c] hover:underline mx-1 font-semibold">
+          <a href={privacyHref} className="text-[#0a66c2] hover:text-[#084b8c] hover:underline mx-1 font-semibold">
             {cookie.privacyLabel}
           </a>
           {cookie.suffixText}

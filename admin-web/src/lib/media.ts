@@ -1,5 +1,32 @@
 // R2 素材库通用工具：格式化、复制、MIME 推断与直传辅助。
 // 迁移自 admin-server/public/media-admin.js 中的同名工具函数，行为保持一致。
+import { h } from 'vue';
+import { Message } from '@arco-design/web-vue';
+
+/** 让 Modal 内容保留换行（Arco 默认折叠空白）。 */
+export function preformatted(text: string) {
+  return () =>
+    h('div', { style: { whiteSpace: 'pre-line', lineHeight: '1.7' } }, String(text ?? ''));
+}
+
+/**
+ * 统一错误提示：HTTP 错误已由 api/interceptor.ts 弹出，这里只补充非 HTTP 错误
+ * （例如浏览器直传 R2 失败），避免同一错误重复弹窗。
+ */
+export function reportError(error: any, fallback = '操作失败。'): void {
+  if (error?.response || error?.isAxiosError || error?.code === 'ERR_CANCELED') return;
+  Message.error(error?.message || fallback);
+}
+
+/**
+ * 包装 Modal.confirm 的 onOk：Arco 不会处理 onOk 的 rejection，
+ * 必须在这里吞掉异常，否则浏览器控制台会出现未处理的 Promise 报错。
+ */
+export function runModalTask(task: () => Promise<unknown>) {
+  return () => {
+    task().catch((error) => reportError(error));
+  };
+}
 
 /** 人类可读的文件体积。 */
 export function formatBytes(bytes: unknown): string {

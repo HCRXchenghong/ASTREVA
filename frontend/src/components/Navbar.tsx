@@ -1,19 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, ArrowUpRight, BookOpen, ChevronDown, ChevronRight, FileText, Menu, Search, X } from 'lucide-react';
 import type { Category, Product, SiteSettings } from '../lib/types';
+import { DEFAULT_LOCALE, isSiteLocale, localizeHref, type SiteLocale } from '../lib/i18n';
 
 type Props = {
   site: SiteSettings;
   categories: Category[];
   products: Product[];
   currentPath: string;
+  locale?: SiteLocale;
 };
 
 const LANGUAGE_ORDER = [
-  { locale: 'en', flag: '/flags/us.svg' },
-  { locale: 'ar', flag: '/flags/sa.svg' },
-  { locale: 'zh-CN', flag: '/flags/cn.svg' }
+  { locale: 'en' as const, flag: '/flags/us.svg' },
+  { locale: 'ar' as const, flag: '/flags/sa.svg' },
+  { locale: 'zh-CN' as const, flag: '/flags/cn.svg' }
 ];
+
+/** Locales that actually have built routes, injected by BaseLayout. */
+function injectedLocales(): string[] {
+  if (typeof window === 'undefined') return LANGUAGE_ORDER.map((item) => item.locale);
+  const injected = (window as unknown as { __ASTREVA_LOCALES__?: unknown }).__ASTREVA_LOCALES__;
+  if (!Array.isArray(injected)) return LANGUAGE_ORDER.map((item) => item.locale);
+  const known = injected.filter((item): item is string => typeof item === 'string');
+  return known.length ? known : LANGUAGE_ORDER.map((item) => item.locale);
+}
 
 function LanguageSwitcher({ site }: { site: SiteSettings }) {
   const [locale, setLocale] = useState(() => {
@@ -22,12 +33,17 @@ function LanguageSwitcher({ site }: { site: SiteSettings }) {
     return LANGUAGE_ORDER.some((item) => item.locale === documentLocale) ? documentLocale : 'zh-CN';
   });
   const [open, setOpen] = useState(false);
+  const [available, setAvailable] = useState<string[]>(() => injectedLocales());
   const rootRef = useRef<HTMLDivElement>(null);
   const labels: Record<string, string> = {
     'zh-CN': site.localization.chineseLabel,
     en: site.localization.englishLabel,
     ar: site.localization.arabicLabel
   };
+
+  useEffect(() => {
+    setAvailable(injectedLocales());
+  }, []);
 
   useEffect(() => {
     const onLocale = (event: Event) => setLocale(String((event as CustomEvent).detail || 'zh-CN'));
@@ -53,8 +69,9 @@ function LanguageSwitcher({ site }: { site: SiteSettings }) {
     };
   }, [open]);
 
-  const current = LANGUAGE_ORDER.find((item) => item.locale === locale) || LANGUAGE_ORDER[2];
-  const others = LANGUAGE_ORDER.filter((item) => item.locale !== current.locale);
+  const options = LANGUAGE_ORDER.filter((item) => available.includes(item.locale));
+  const current = options.find((item) => item.locale === locale) || options[options.length - 1] || LANGUAGE_ORDER[2];
+  const others = options.filter((item) => item.locale !== current.locale);
 
   return (
     <div ref={rootRef} className="relative" data-lang-switch-root>
@@ -93,7 +110,9 @@ function LanguageSwitcher({ site }: { site: SiteSettings }) {
   );
 }
 
-export default function Navbar({ site, categories, products, currentPath }: Props) {
+export default function Navbar({ site, categories, products, currentPath, locale: localeProp }: Props) {
+  const locale: SiteLocale = isSiteLocale(localeProp) ? localeProp : DEFAULT_LOCALE;
+  const localHref = (path: string) => localizeHref(locale, path) as string;
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -102,13 +121,14 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
   const [hoveredCategory, setHoveredCategory] = useState(sortedCategories[0]?.slug || '');
   const navItems = useMemo(
     () => [
-      { href: '/', label: site.navigation.homeLabel, key: 'home' },
-      { href: '/products/', label: site.navigation.productsLabel, key: 'products', hasDropdown: true },
-      { href: '/solutions/', label: site.navigation.solutionsLabel, key: 'solutions' },
-      { href: '/support/', label: site.navigation.supportLabel, key: 'support' },
-      { href: '/about/', label: site.navigation.aboutLabel, key: 'about' }
+      { href: localHref('/'), label: site.navigation.homeLabel, key: 'home' },
+      { href: localHref('/products/'), label: site.navigation.productsLabel, key: 'products', hasDropdown: true },
+      { href: localHref('/solutions/'), label: site.navigation.solutionsLabel, key: 'solutions' },
+      { href: localHref('/support/'), label: site.navigation.supportLabel, key: 'support' },
+      { href: localHref('/about/'), label: site.navigation.aboutLabel, key: 'about' }
     ],
-    [site.navigation]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [site.navigation, locale]
   );
 
   useEffect(() => {
@@ -143,7 +163,7 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
   return (
     <div className={`fixed left-0 top-0 z-50 w-full transition-all duration-300 ${isScrolled ? 'bg-white shadow-md' : 'bg-white/95 shadow-sm backdrop-blur-sm'}`}>
       <div className="mx-auto flex h-24 max-w-7xl items-center justify-between px-7">
-        <a className="flex items-center gap-3" href="/">
+        <a className="flex items-center gap-3" href={localHref('/')}>
           {site.logoUrl ? (
             <img src={site.logoUrl} alt={site.brandName} className="h-[58px] w-[58px] object-contain" />
           ) : (
@@ -183,7 +203,7 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
                           return (
                             <a
                               key={category.slug}
-                              href={`/products/${category.slug}/`}
+                              href={localHref(`/products/${category.slug}/`)}
                               onMouseEnter={() => setHoveredCategory(category.slug)}
                               onFocus={() => setHoveredCategory(category.slug)}
                               className={`relative shrink-0 py-5 text-[15px] font-black transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-[3px] after:bg-[#0a66c2] after:transition-opacity ${
@@ -206,7 +226,7 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
                         <h3 className="mt-1.5 text-xl font-black text-[#172033]">{popularSeriesTitle}</h3>
                       </div>
                       {hoveredCategoryInfo && (
-                        <a href={`/products/${hoveredCategoryInfo.slug}/`} className="inline-flex items-center gap-2 text-sm font-black text-[#0a66c2] hover:text-[#084b8c]">
+                        <a href={localHref(`/products/${hoveredCategoryInfo.slug}/`)} className="inline-flex items-center gap-2 text-sm font-black text-[#0a66c2] hover:text-[#084b8c]">
                           {viewAllCategoryLabel} <ArrowRight size={16} />
                         </a>
                       )}
@@ -216,7 +236,7 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
                       {activeProducts.map((product) => (
                         <a
                           key={product.id}
-                          href={`/products/${product.categorySlug}/${product.slug}/`}
+                          href={localHref(`/products/${product.categorySlug}/${product.slug}/`)}
                           className="group flex min-w-0 items-center gap-4 px-4 py-4 first:pl-0 last:pr-0"
                         >
                           {product.coverImage ? (
@@ -235,7 +255,7 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
                     <div className="mx-auto grid max-w-7xl grid-cols-4 divide-x divide-[#e1e6ed] px-7">
                       {productMenu.utilityLinks.map(({ label, href, icon }) => {
                         const Icon = utilityIconMap[icon as keyof typeof utilityIconMap] || ArrowRight;
-                        return <a key={`${label}-${href}`} href={href} className="group flex items-center justify-center gap-3 px-5 py-4 text-sm font-black text-[#303a4b] transition-colors hover:bg-[#edf5ff] hover:text-[#0a5ca8]">
+                        return <a key={`${label}-${href}`} href={localHref(href)} className="group flex items-center justify-center gap-3 px-5 py-4 text-sm font-black text-[#303a4b] transition-colors hover:bg-[#edf5ff] hover:text-[#0a5ca8]">
                           <Icon size={17} className="text-[#0a66c2]" />
                           {label}
                           <ArrowRight size={14} className="text-[#0a66c2] opacity-70 transition-transform group-hover:translate-x-1 group-hover:opacity-100" />
@@ -285,7 +305,7 @@ export default function Navbar({ site, categories, products, currentPath }: Prop
                   {mobileProductsOpen && (
                     <div className="mb-2 grid grid-cols-1 gap-1 border-l-2 border-[#0a66c2] pl-4">
                       {sortedCategories.map((category) => (
-                        <a key={category.slug} href={`/products/${category.slug}/`} className="py-2 text-[15px] font-bold text-[#536173] hover:text-[#0a5ca8]">
+                        <a key={category.slug} href={localHref(`/products/${category.slug}/`)} className="py-2 text-[15px] font-bold text-[#536173] hover:text-[#0a5ca8]">
                           {category.name}
                         </a>
                       ))}

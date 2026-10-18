@@ -1,0 +1,198 @@
+# ASTREVA 告警规则（Prometheus rule_files）
+#
+# 说明：
+#   * 阈值是“起点”而不是圣旨。首次启用后请按本环境 2~4 周的真实基线回调，
+#     尤其是协程数与 WS 连接数——不同业务规模差异很大。
+#   * 依赖可选 exporter 的规则（probe_success / node_* / container_start_time_seconds /
+#     astreva_backup_*）在未部署对应 exporter 时不会产生序列，因此不会误报；
+#     它们生效后即为“HTTP 可用性 / 磁盘 / 容器重启 / 备份新鲜度”的正式告警。
+#   * 所有 alert 的处置步骤见 docs/OPERATIONS.md 的“监控与告警”章节。
+
+groups:
+  - name: astreva-availability
+    rules:
+      # 服务存活：只要 Prometheus 抓不到目标就触发（覆盖进程退出、网络隔离、
+      # /metrics 返回 401/404/5xx 等所有“抓取失败”的情况）。
+      - alert: AstrevaTargetDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "目标不可达：{{ $labels.job }} / {{ $labels.instance }}"
+          description: "Prometheus 连续 1 分钟抓取失败。若是 admin-server，先确认 ADMIN_METRICS_BEARER_TOKEN 已配置（未配置时 /metrics 返回 404）。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+      # 指标鉴权/配置错误：与 AstrevaTargetDown 同源但更长的窗口，用来区分
+      # “偶发抖动”与“token 配错、后台指标被关闭”这类持续性配置问题。
+      - alert: AstrevaMetricsScrapeMisconfigured
+        expr: up{job=~"servicebridge-backend|admin-server"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          category: observability
+        annotations:
+          summary: "指标长期抓取失败：{{ $labels.job }} / {{ $labels.instance }}"
+          description: "常见原因：METRICS_BEARER_TOKEN / ADMIN_METRICS_BEARER_TOKEN 缺失或与 Prometheus 凭据文件不一致；也可能是 /metrics 被反代拦截。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+      # HTTP 不可用：需要 blackbox_exporter（见 prometheus.yml 中注释的 blackbox-http job）。
+      - alert: AstrevaHttpEndpointUnavailable
+        expr: probe_success == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "HTTP 探测失败：{{ $labels.instance }}"
+          description: "blackbox_exporter 连续 2 分钟探测失败（DNS/连接/TLS/状态码/响应体任一不符合 http_2xx 模块）。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+      # 不可达告警的兜底：目标整体从服务发现中消失（Prometheus 重载后规则写错、
+      # 或所有实例一起下线时，up==0 只覆盖单个 instance，absent 覆盖“完全没有序列”）。
+      - alert: AstrevaScrapeTargetsMissing
+        expr: absent(up{job=~"servicebridge-backend|admin-server"})
+        for: 5m
+        labels:
+          severity: warning
+          category: observability
+        annotations:
+          summary: "监控目标整体缺失"
+          description: "Prometheus 中已没有任何 servicebridge-backend / admin-server 的 up 序列，通常是抓取配置被改坏或规则未加载。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+  - name: astreva-customer-service
+    rules:
+      # WebSocket 连接数异常下降：15 分钟窗口内总量跌到峰值的一半以下，
+      # 且峰值本身达到 20（小流量下的正常波动不告警）。
+      - alert: AstrevaWebSocketConnectionsDropped
+        expr: |
+          (
+            sum by (instance) (customer_service_ws_connections)
+            <
+            0.5 * max_over_time((sum by (instance) (customer_service_ws_connections))[15m:1m])
+          )
+          and
+          max_over_time((sum by (instance) (customer_service_ws_connections))[15m:1m]) >= 20
+        for: 5m
+        labels:
+          severity: critical
+          category: customer-service
+        annotations:
+          summary: "WS 连接数异常下降：{{ $labels.instance }}"
+          description: "当前连接数不足近 15 分钟峰值的一半且峰值 ≥ 20。排查顺序：后端进程存活 → Redis 投递 → 负载均衡/反代 → 客户端重连风暴。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+      # 访客连接全部掉线（比总量下降更明确：没有任何在线访客）。
+      - alert: AstrevaVisitorConnectionsZero
+        expr: |
+          sum(customer_service_ws_connections{role="visitor"}) == 0
+          and
+          max_over_time(sum(customer_service_ws_connections{role="visitor"})[1h:1m]) >= 5
+        for: 10m
+        labels:
+          severity: warning
+          category: customer-service
+        annotations:
+          summary: "近 1 小时曾有 ≥5 个访客在线，当前访客连接为 0"
+          description: "可能是访客链路中断，也可能是业务低谷。结合官网访问量与 AstrevaWebSocketConnectionsDropped 一起判断。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+      # Go 协程数异常升高（容量/泄漏信号）。
+      - alert: AstrevaGoroutineCountElevated
+        expr: customer_service_go_goroutines > 3000
+        for: 10m
+        labels:
+          severity: warning
+          category: capacity
+        annotations:
+          summary: "协程数偏高：{{ $labels.instance }} = {{ $value }}"
+          description: "绝对阈值 3000，仅作为容量预警起点；请按本环境基线调整。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+      - alert: AstrevaGoroutineLeakSuspected
+        expr: |
+          customer_service_go_goroutines > 1000
+          and
+          customer_service_go_goroutines > 3 * avg_over_time(customer_service_go_goroutines[1h])
+        for: 15m
+        labels:
+          severity: critical
+          category: capacity
+        annotations:
+          summary: "疑似协程泄漏：{{ $labels.instance }} = {{ $value }}"
+          description: "当前协程数是近 1 小时均值的 3 倍以上且绝对值 >1000。检查 WS 连接清理、定时任务与阻塞 IO；必要时滚动重启单个后端实例。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+  - name: astreva-infrastructure
+    rules:
+      # 磁盘空间：需要 node_exporter。
+      - alert: AstrevaDiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs|overlay"}
+            /
+            node_filesystem_size_bytes{fstype!~"tmpfs|ramfs|overlay"}
+          ) < 0.15
+        for: 15m
+        labels:
+          severity: warning
+          category: infrastructure
+        annotations:
+          summary: "磁盘可用空间低于 15%：{{ $labels.instance }} {{ $labels.mountpoint }}"
+          description: "检查备份目录、Docker 日志与镜像/卷增长；数据库所在分区建议保持 20% 以上余量。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+      - alert: AstrevaDiskSpaceCritical
+        expr: |
+          (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs|overlay"}
+            /
+            node_filesystem_size_bytes{fstype!~"tmpfs|ramfs|overlay"}
+          ) < 0.05
+        for: 5m
+        labels:
+          severity: critical
+          category: infrastructure
+        annotations:
+          summary: "磁盘可用空间低于 5%：{{ $labels.instance }} {{ $labels.mountpoint }}"
+          description: "立即清理或扩容；PostgreSQL 写满会导致服务不可用与数据风险。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+      # 容器重启：需要 cAdvisor（container_start_time_seconds）。
+      - alert: AstrevaContainerRestarted
+        expr: changes(container_start_time_seconds[30m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          category: infrastructure
+        annotations:
+          summary: "容器 30 分钟内重启：{{ $labels.name }}"
+          description: "cAdvisor 观测到容器启动时间变化。结合 docker inspect 的 RestartCount 与容器日志确认是崩溃重启还是人工操作。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+      # 容器重启的“无需额外 exporter”版本：用 up 的翻转次数近似。
+      - alert: AstrevaTargetFlapping
+        expr: changes(up[30m]) >= 3
+        for: 0m
+        labels:
+          severity: warning
+          category: availability
+        annotations:
+          summary: "目标 30 分钟内反复上下线：{{ $labels.job }} / {{ $labels.instance }}"
+          description: "典型原因是容器反复重启（OOM、健康检查失败、配置错误）。查看 docker compose logs 与宿主机内存。"
+          runbook: "docs/OPERATIONS.md#监控与告警"
+
+      # 备份新鲜度：需要 node_exporter textfile collector 暴露
+      # astreva_backup_last_success_timestamp_seconds（见 docs/OPERATIONS.md）。
+      - alert: AstrevaBackupStale
+        expr: time() - astreva_backup_last_success_timestamp_seconds > 129600
+        for: 1h
+        labels:
+          severity: critical
+          category: backup
+        annotations:
+          summary: "数据库备份超过 36 小时未成功"
+          description: "RPO 目标为 24 小时，36 小时未成功即已违约。检查备份 cron、ASTREVA_BACKUP_DIR 磁盘空间与 pg_dump 日志。"
+          runbook: "docs/OPERATIONS.md#备份与恢复"
