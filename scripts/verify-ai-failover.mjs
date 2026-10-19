@@ -19,6 +19,11 @@
  *      provider, that the answer is NOT a local fallback string, and that the
  *      health endpoint reports the broken provider with a failure signal
  *      (consecutive_failures >= 1 / state open) while MiMo stays healthy.
+ *   4. Phase 2 drives the broken provider to the breaker threshold (3) so the
+ *      circuit actually OPENS, then sends one more message and asserts the dead
+ *      provider is SKIPPED rather than dialed: `consecutive_failures` stays put,
+ *      `state` stays `open`, `opened_until` is not reset, MiMo still answers,
+ *      and the engine log records `attempted=1 skipped=1`.
  *
  * Runner (plain Node, no new dependencies)
  * ----------------------------------------
@@ -32,6 +37,16 @@
  *     ASTREVA_E2E_MIMO_BASE_URL     default https://api.xiaomimimo.com/v1
  *     ASTREVA_E2E_MIMO_MODEL        default mimo-v2.6-flash
  *
+ * Negative control for the Phase 2 skip assertion (expected to FAIL, exit 1):
+ *     ASTREVA_E2E_PHASE2_NEGATIVE_CONTROL=1 node scripts/verify-ai-failover.mjs
+ *   It skips the breaker-open loop on purpose, so the "skip turn" actually dials
+ *   the dead provider and `consecutive_failures` increases — proving the
+ *   "unchanged" assertion is discriminating rather than vacuous.
+ *
+ * Phase 2 assumes the circuit cooldown outlasts one MiMo round-trip; with the
+ * default AI_CIRCUIT_COOLDOWN_MS (30s) it does. The script never restarts the
+ * engine or changes its environment.
+ *
  * Secrets are never printed: API keys are masked as `sk-****`.
  *
  * Idempotency / safety
@@ -43,10 +58,10 @@
  *     is fresh, guaranteeing priority 0 is actually attempted.
  *   - Previous binding targets and the previous `ai_keyword_priority` policy are
  *     restored verbatim in a finally block, even on failure.
- *   - A throwaway API app is created for the visitor flow and deleted afterwards.
+ *   - Throwaway API app and visitor conversations are deleted afterwards.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -64,6 +79,10 @@ const BROKEN_API_KEY = 'sk-e2e-broken-placeholder';
 const BROKEN_PROVIDER_NAME = 'E2E Broken Failover (auto)';
 
 const MIMO_PROVIDER_NAME = 'E2E MiMo (auto)';
+// MiMo normally answers in ~5-15s but can occasionally take >30s; give it
+// generous headroom so a transient slow upstream does not look like a failover
+// failure. Budget stays under the engine's 120s max (25s floor + 3s + 60s).
+const MIMO_TIMEOUT_MS = 60_000;
 const APP_NAME = 'E2E Failover Visitor (auto)';
 
 const TEST_MESSAGE =
@@ -187,6 +206,15 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/** Read only the bytes appended to a log file since `offset` (best effort). */
+function readLogChunk(path, offset) {
+  try {
+    return readFileSync(path).subarray(offset).toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // HTTP helper
 // ---------------------------------------------------------------------------
@@ -285,6 +313,7 @@ async function ensureMimoProvider(token, providers) {
       normalizeUrl(found.base_url) !== normalizeUrl(cfg.mimoBaseUrl) ||
       found.default_model !== cfg.mimoModel ||
       found.enabled !== true ||
+      found.timeout_ms !== MIMO_TIMEOUT_MS ||
       (cfg.mimoKey ? true : !found.api_key_masked);
     if (!needsPatch) {
       log(`reusing real MiMo provider id=${found.id} name="${found.name}" base_url=${found.base_url} model=${found.default_model} key=${maskProviderKey(found)}`);
@@ -294,7 +323,7 @@ async function ensureMimoProvider(token, providers) {
       base_url: cfg.mimoBaseUrl,
       default_model: cfg.mimoModel,
       models: [cfg.mimoModel],
-      timeout_ms: 30_000,
+      timeout_ms: MIMO_TIMEOUT_MS,
       enabled: true,
     };
     if (cfg.mimoKey) patch.api_key = cfg.mimoKey;
@@ -325,7 +354,7 @@ async function ensureMimoProvider(token, providers) {
         api_key: cfg.mimoKey,
         models: [cfg.mimoModel],
         default_model: cfg.mimoModel,
-        timeout_ms: 30_000,
+        timeout_ms: MIMO_TIMEOUT_MS,
         allowed_hosts: '',
         enabled: true,
         sort_order: 0,
@@ -511,7 +540,33 @@ async function main() {
     appId: '',
     appKey: '',
     conversationId: '',
+    conversationIds: [],
   };
+
+  // Create a fresh throwaway visitor conversation and post one message through
+  // the public Open API, then wait for the AI reply. Used by Phase 2 so each
+  // breaker turn is independent of prior conversation state.
+  let turnCounter = 0;
+  async function newVisitorTurn(text) {
+    turnCounter += 1;
+    const conv = expectStatus(
+      await request('POST', '/open/v1/conversations', { apiKey: state.appKey, body: { lang: 'zh' } }),
+      201,
+      'POST /open/v1/conversations',
+    );
+    const conversationId = conv.json.conversation.id;
+    state.conversationIds.push(conversationId);
+    expectStatus(
+      await request('POST', `/open/v1/conversations/${encodeURIComponent(conversationId)}/messages`, {
+        apiKey: state.appKey,
+        body: { content: text, message_type: 'text', client_msg_id: `e2e-${Date.now()}-${turnCounter}` },
+      }),
+      201,
+      'POST visitor message',
+    );
+    const { reply, page } = await pollForAiReply(state.appKey, conversationId);
+    return { conversationId, reply, page };
+  }
 
   try {
     // 1. Authenticate as the seeded superadmin.
@@ -625,6 +680,7 @@ async function main() {
       'POST /open/v1/conversations',
     );
     state.conversationId = convRes.json.conversation.id;
+    state.conversationIds.push(state.conversationId);
     log(`created visitor conversation id=${state.conversationId} status=${convRes.json.conversation.status}`);
 
     // A previous failed run may have left a provider in circuit cooldown; wait it
@@ -706,6 +762,132 @@ async function main() {
         mimoHealth.state === 'closed',
       mimoHealth ?? 'no health entry (provider never failed)',
     );
+
+    // =====================================================================
+    // Phase 2: prove the circuit breaker OPENS and then SKIPS the dead
+    // provider. Field/value names are taken from the real code:
+    //   internal/app/ai_circuit.go  aiCircuitFailureThreshold = 3
+    //                               state: closed | open | half_open
+    //                               opened_until = now + cooldown (default 30s)
+    //   internal/app/ai_runtime.go  when !circuit.allow(id): skipped++, NO fail()
+    //   GET /api/admin/ai-providers/health -> {state, consecutive_failures,
+    //                                          opened_until, last_error}
+    // =====================================================================
+    log('--- Phase 2: circuit breaker open + skip ---');
+    const BREAKER_THRESHOLD = 3; // aiCircuitFailureThreshold
+    const negativeControl = process.env.ASTREVA_E2E_PHASE2_NEGATIVE_CONTROL === '1';
+    const logPath = resolve(ROOT, '.local-logs/servicebridge-backend.log');
+    const healthFor = async (id) => (await getHealth(state.token)).find((h) => h.id === id);
+
+    // 11. Drive the broken provider until the breaker opens (each closed turn
+    //     must really dial it: failures +1 — this is the built-in control that
+    //     makes the later "unchanged" skip assertion discriminating).
+    let openingTurn = 0;
+    let brokenNow = await healthFor(state.brokenId);
+    if (negativeControl) {
+      log('NEGATIVE CONTROL: skipping the breaker-open loop on purpose; the skip assertions below are EXPECTED to FAIL');
+    } else {
+      while ((brokenNow?.consecutive_failures ?? 0) < BREAKER_THRESHOLD && openingTurn < 8) {
+        openingTurn += 1;
+        const failuresBefore = brokenNow?.consecutive_failures ?? 0;
+        const stateBefore = brokenNow?.state;
+        const turn = await newVisitorTurn(`Follow-up ${openingTurn}: what are your support hours?`);
+        const after = await healthFor(state.brokenId);
+        const failuresAfter = after?.consecutive_failures ?? 0;
+        const turnReply = String(turn.reply?.content || '').trim();
+        check(
+          `[control] opening turn ${openingTurn}: breaker not open, so the broken provider IS dialed (failures ${failuresBefore} -> ${failuresAfter})`,
+          failuresAfter === failuresBefore + 1,
+          `state_before=${stateBefore} state_after=${after?.state}`,
+        );
+        check(
+          `opening turn ${openingTurn}: a real MiMo reply is still delivered (not a fallback)`,
+          turnReply.length > 0 && !fallbackStrings.includes(turnReply),
+          turnReply ? `len=${turnReply.length}` : 'no AI reply observed',
+        );
+        brokenNow = after;
+      }
+    }
+
+    const openedHealth = await healthFor(state.brokenId);
+    const openedUntilMs = Date.parse(openedHealth?.opened_until || '');
+    const remainingMs = Number.isFinite(openedUntilMs) ? openedUntilMs - Date.now() : -1;
+    if (!negativeControl) {
+      check(
+        `broken provider circuit is OPEN after >= ${BREAKER_THRESHOLD} consecutive failures`,
+        (openedHealth?.consecutive_failures ?? 0) >= BREAKER_THRESHOLD && openedHealth?.state === 'open',
+        openedHealth,
+      );
+      check(
+        'health exposes a positive cooldown/remaining-time signal while open (opened_until in the future)',
+        remainingMs > 0,
+        `opened_until=${openedHealth?.opened_until} remaining_ms=${remainingMs}`,
+      );
+      if (remainingMs > 0 && remainingMs < 20_000) {
+        log(
+          `warn: circuit cooldown remaining ${Math.round(remainingMs / 1000)}s is short; a half-open probe could race the skip check (default AI_CIRCUIT_COOLDOWN_MS is 30s)`,
+        );
+      }
+    }
+
+    // 12. ONE more message while the breaker is open: the dead provider must be
+    //     skipped (not dialed) and MiMo must still answer.
+    const logOffset = existsSync(logPath) ? statSync(logPath).size : -1;
+    const beforeSkip = await healthFor(state.brokenId);
+    const skipTurn = await newVisitorTurn('One more question: do you offer refunds?');
+    const afterSkip = await healthFor(state.brokenId);
+    const skipReply = String(skipTurn.reply?.content || '').trim();
+
+    check(
+      'breaker OPEN: a real MiMo reply is still delivered on the skip turn (not a fallback)',
+      skipReply.length > 0 && !fallbackStrings.includes(skipReply),
+      skipReply ? `len=${skipReply.length}` : 'no AI reply observed',
+    );
+    check(
+      'breaker OPEN: broken provider consecutive_failures did NOT increase (request skipped, not dialed)',
+      (afterSkip?.consecutive_failures ?? -1) === (beforeSkip?.consecutive_failures ?? -2),
+      `failures_before=${beforeSkip?.consecutive_failures} failures_after=${afterSkip?.consecutive_failures} state_before=${beforeSkip?.state} state_after=${afterSkip?.state}`,
+    );
+    check(
+      'breaker OPEN: circuit state stays open and the cooldown is not reset by the skipped request',
+      afterSkip?.state === 'open' &&
+        String(afterSkip?.opened_until || '') !== '' &&
+        String(afterSkip?.opened_until || '') === String(beforeSkip?.opened_until || ''),
+      `opened_until_before=${beforeSkip?.opened_until} opened_until_after=${afterSkip?.opened_until}`,
+    );
+
+    // Observable skip signal: the engine's slog success line carries the
+    // attempted/skipped counters, so a skipped candidate shows attempted=1
+    // skipped=1. The HTTP health payload itself has NO skip field and last_error
+    // is not updated on a skip, so this log line is the only skip signal.
+    if (!negativeControl) {
+      if (logOffset >= 0) {
+        let skipLine = '';
+        for (let attempt = 0; attempt < 10 && !skipLine; attempt += 1) {
+          const chunk = readLogChunk(logPath, logOffset);
+          skipLine =
+            chunk
+              .split('\n')
+              .find(
+                (line) =>
+                  line.includes('AI 上游故障转移成功') &&
+                  line.includes('skipped=1') &&
+                  line.includes(state.mimoId),
+              ) || '';
+          if (!skipLine) await sleep(300);
+        }
+        check(
+          'breaker OPEN: engine log records the skip (msg="AI 上游故障转移成功" attempted=1 skipped=1 for MiMo)',
+          Boolean(skipLine),
+          skipLine || `no matching log line in appended chunk from ${logPath}`,
+        );
+      } else {
+        console.log(
+          'NOTE  no HTTP-observable "skipped by circuit" signal exists (health has no skip field; last_error is not updated on skip). ' +
+            `Engine log file ${logPath} not found, so the log-level skip signal could not be asserted.`,
+        );
+      }
+    }
   } finally {
     // 11. Cleanup: restore previous state verbatim, remove throwaway fixtures.
     if (state.token) {
@@ -735,17 +917,17 @@ async function main() {
           log(`warn: failed to restore service policy: ${err.message}`);
         }
       }
-      if (state.conversationId) {
+      for (const conversationId of state.conversationIds) {
         try {
-          const closeRes = await request('POST', `/open/v1/conversations/${encodeURIComponent(state.conversationId)}/close`, {
+          const closeRes = await request('POST', `/open/v1/conversations/${encodeURIComponent(conversationId)}/close`, {
             apiKey: state.appKey,
           });
-          const delRes = await request('DELETE', `/api/conversations/${encodeURIComponent(state.conversationId)}`, {
+          const delRes = await request('DELETE', `/api/conversations/${encodeURIComponent(conversationId)}`, {
             token: state.token,
           });
-          log(`removed test conversation id=${state.conversationId} (close HTTP ${closeRes.status}, delete HTTP ${delRes.status})`);
+          log(`removed test conversation id=${conversationId} (close HTTP ${closeRes.status}, delete HTTP ${delRes.status})`);
         } catch (err) {
-          log(`warn: failed to remove test conversation: ${err.message}`);
+          log(`warn: failed to remove test conversation ${conversationId}: ${err.message}`);
         }
       }
       if (state.appId) {
