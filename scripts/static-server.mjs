@@ -96,6 +96,17 @@ http.createServer(async (req, res) => {
     }
     const file = await resolveFile(requestUrl.pathname);
     if (!file) {
+      // 本地也按生产行为返回真正的 404 页（Astro 产物里的 404.html），
+      // 这样后台配置的 404 文案在本地就能验证，而不是只回一句 "not found"。
+      const notFoundPage = await resolveFile('/404.html').catch(() => null);
+      if (notFoundPage) {
+        res.writeHead(404, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store'
+        });
+        createReadStream(notFoundPage).pipe(res);
+        return;
+      }
       res.writeHead(404, {
         'Content-Type': 'text/plain; charset=utf-8',
         'Cache-Control': 'no-store'

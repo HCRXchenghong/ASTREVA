@@ -4,11 +4,12 @@ type Props = {
   eyebrow?: string;
   title: string;
   description?: string;
+  subtitle?: string;
   backgroundImage?: string;
   backgroundVideo?: string;
 };
 
-const { id, eyebrow, title, description, backgroundImage, backgroundVideo } = Astro.props;
+const { id, eyebrow, title, description, subtitle, backgroundImage, backgroundVideo } = Astro.props;
 const titleLines = String(title || '').split('\n');
 const hasVideo = Boolean(backgroundVideo);
 ---
@@ -33,6 +34,7 @@ const hasVideo = Boolean(backgroundVideo);
         </>
       ))}
     </h1>
+    {subtitle && <p class="mx-auto mt-4 max-w-3xl text-lg font-light leading-relaxed text-gray-300">{subtitle}</p>}
     {description && <p class="mx-auto max-w-3xl text-xl font-light leading-relaxed text-gray-200">{description}</p>}
   </div>
 </section>

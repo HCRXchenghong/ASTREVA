@@ -287,16 +287,34 @@ const HOME_CTA_FIELDS: FieldDef[] = [
   { key: 'home.cta.secondaryLabel', label: '次按钮' },
   { key: 'home.cta.secondaryHref', label: '次按钮链接' },
   imageField('home.cta.backgroundImage', '背景图'),
+  {
+    key: 'home.partners',
+    label: '合作伙伴名单',
+    type: 'listText',
+    hint: '每行一家合作伙伴；显示在「关于我们」页面。',
+  },
 ];
 
 const PRODUCT_CENTER_FIELDS: FieldDef[] = [
   { key: 'productCenter.hero.title', label: '首屏标题' },
-  { key: 'productCenter.hero.description', label: '首屏描述', type: 'textarea' },
+  // 说明：产品中心页实际渲染的是 catalog.description，hero.description 历史字段已不再使用，
+  // 这里保留标签但注明，避免两边都改了却只有一处生效。
+  { key: 'productCenter.hero.description', label: '首屏描述（历史字段，产品页已改用下方「产品页描述」）', type: 'textarea' },
   imageField('productCenter.hero.backgroundImage', '首屏背景图'),
   videoField('productCenter.hero.backgroundVideo', '首屏背景视频'),
-  { key: 'productCenter.intro.title', label: '选择区标题' },
-  { key: 'productCenter.intro.description', label: '选择区描述', type: 'textarea' },
-  { key: 'productCenter.intro.categoryCtaLabel', label: '品类按钮文字' },
+  { key: 'productCenter.catalog.eyebrow', label: '产品页眉标' },
+  { key: 'productCenter.catalog.description', label: '产品页描述', type: 'textarea' },
+  { key: 'productCenter.catalog.categoriesEyebrow', label: '分类区眉标' },
+  { key: 'productCenter.catalog.categoriesTitle', label: '分类区标题' },
+  { key: 'productCenter.catalog.categoriesDescription', label: '分类区描述', type: 'textarea' },
+  { key: 'productCenter.catalog.categoriesAriaLabel', label: '分类区无障碍标签' },
+  { key: 'productCenter.catalog.viewAllLabel', label: '查看全部文字' },
+  { key: 'productCenter.catalog.emptyCategoryMessage', label: '分类为空时的提示' },
+  // 以下三个是历史字段：产品中心页已改用 catalog.*（见上方），当前前端没有任何位置渲染它们。
+  // 保留标签并注明，避免"填了却不生效"；确认不再需要后可整组删除。
+  { key: 'productCenter.intro.title', label: '选择区标题（历史字段，产品中心页已不再渲染）' },
+  { key: 'productCenter.intro.description', label: '选择区描述（历史字段，产品中心页已不再渲染）', type: 'textarea' },
+  { key: 'productCenter.intro.categoryCtaLabel', label: '品类按钮文字（历史字段，产品中心页已不再渲染）' },
   { key: 'productCenter.categoryPage.categoryCtaIcon', label: '品类按钮图标' },
   { key: 'productCenter.categoryPage.titleTemplate', label: '品类页标题模板' },
   { key: 'productCenter.categoryPage.backLabel', label: '返回按钮文字' },
@@ -372,12 +390,17 @@ export const SITE_FIELDS: FieldDef[] = [
   { key: 'site.copyright', label: '版权文案' },
   { key: 'site.serviceBridgeUrl', label: 'ServiceBridge 地址' },
   { key: 'site.localization.languageLabel', label: '语言选择标签' },
-  { key: 'site.localization.switchAriaLabel', label: '语言切换无障碍标签' },
+  { key: 'site.localization.switchAriaLabel', label: '语言切换无障碍标签（旧版切换器遗留，当前界面为独立语言页路由，不渲染）' },
   { key: 'site.localization.chineseLabel', label: '中文名称' },
   { key: 'site.localization.englishLabel', label: '英语名称' },
   { key: 'site.localization.arabicLabel', label: '阿拉伯语名称' },
-  { key: 'site.localization.switchingText', label: '切换中提示' },
-  { key: 'site.localization.unavailableText', label: '译文未就绪提示' },
+  { key: 'site.localization.switchingText', label: '切换中提示（旧版切换器遗留，当前不渲染）' },
+  { key: 'site.localization.unavailableText', label: '译文未就绪提示（旧版切换器遗留，当前不渲染）' },
+  { key: 'site.notFound.title', label: '404 页标题' },
+  { key: 'site.notFound.description', label: '404 页说明', type: 'textarea' },
+  { key: 'site.notFound.homeLabel', label: '404 页「返回首页」文字' },
+  { key: 'site.notFound.productsLabel', label: '404 页「浏览产品」文字' },
+  { key: 'site.notFound.supportLabel', label: '404 页「获取支持」文字' },
 ];
 
 const NAVIGATION_FIELDS: FieldDef[] = [
@@ -387,9 +410,27 @@ const NAVIGATION_FIELDS: FieldDef[] = [
   { key: 'site.navigation.supportLabel', label: '服务支持' },
   { key: 'site.navigation.aboutLabel', label: '关于我们' },
   { key: 'site.navigation.mobileMenuLabel', label: '移动端菜单无障碍标签' },
+  { key: 'site.navigation.productMenu.categoryLabel', label: '产品下拉：分类区标题' },
+  { key: 'site.navigation.productMenu.popularSeriesLabel', label: '产品下拉：热门系列眉标' },
+  { key: 'site.navigation.productMenu.popularSeriesTitleTemplate', label: '产品下拉：热门系列标题模板', hint: '用 {category} 代表当前分类名。' },
+  { key: 'site.navigation.productMenu.viewAllCategoryLabelTemplate', label: '产品下拉：查看全部模板', hint: '用 {category} 代表当前分类名。' },
+  { key: 'site.navigation.productMenu.mobileToggleLabel', label: '产品下拉：移动端展开标签' },
+  {
+    key: 'site.navigation.productMenu.utilityLinks',
+    label: '产品下拉：侧栏工具链接',
+    type: 'objectList',
+    full: true,
+    hint: '显示在产品下拉菜单右侧的快捷入口。',
+    schema: [
+      { key: 'label', label: '文字' },
+      { key: 'href', label: '链接' },
+      { key: 'icon', label: '图标名（file/book/sea 等）' },
+    ],
+  },
 ];
 
 const FOOTER_FIELDS: FieldDef[] = [
+  { key: 'site.footer.logoAlt', label: '页脚 Logo 替代文字' },
   { key: 'site.footer.description', label: '页脚描述', type: 'textarea' },
   { key: 'site.footer.quickLinksTitle', label: '快速链接标题' },
   {
@@ -443,6 +484,7 @@ const COOKIE_FIELDS: FieldDef[] = [
   { key: 'site.cookie.suffixText', label: '后缀文字' },
   { key: 'site.cookie.acceptAllLabel', label: '接受全部按钮' },
   { key: 'site.cookie.necessaryLabel', label: '仅必要按钮' },
+  { key: 'site.cookie.settingsLabel', label: '页脚「Cookie 设置」按钮文字' },
 ];
 
 const CHAT_FIELDS: FieldDef[] = [
@@ -466,6 +508,20 @@ const SEO_FIELDS: FieldDef[] = [
   { key: 'site.defaultSeo.description', label: '默认 SEO 描述', type: 'textarea' },
   imageField('site.defaultSeo.image', '默认分享图'),
   { key: 'site.defaultSeo.keywords', label: '默认关键词' },
+  { key: 'site.aiDiscovery.introduction', label: 'AI 发现：站点简介', type: 'textarea', hint: '供 llms.txt 等机器可读入口使用。' },
+  { key: 'site.aiDiscovery.corePagesTitle', label: 'AI 发现：核心页面标题' },
+  { key: 'site.aiDiscovery.categoriesTitle', label: 'AI 发现：产品分类标题' },
+  { key: 'site.aiDiscovery.productsTitle', label: 'AI 发现：产品标题' },
+  { key: 'site.aiDiscovery.contactTitle', label: 'AI 发现：联系方式标题' },
+  { key: 'site.aiDiscovery.homeLabel', label: 'AI 发现：首页标签' },
+  { key: 'site.aiDiscovery.productsLabel', label: 'AI 发现：产品标签' },
+  { key: 'site.aiDiscovery.solutionsLabel', label: 'AI 发现：解决方案标签' },
+  { key: 'site.aiDiscovery.supportLabel', label: 'AI 发现：支持标签' },
+  { key: 'site.aiDiscovery.aboutLabel', label: 'AI 发现：关于我们标签' },
+  { key: 'site.aiDiscovery.faqLabel', label: 'AI 发现：FAQ 标签' },
+  { key: 'site.aiDiscovery.websiteLabel', label: 'AI 发现：官网标签' },
+  { key: 'site.aiDiscovery.emailLabel', label: 'AI 发现：邮箱标签' },
+  { key: 'site.aiDiscovery.citationNotice', label: 'AI 发现：引用声明', type: 'textarea' },
   ...seoFields('home.seo'),
   ...seoFields('productCenter.seo'),
   ...seoFields('support.seo'),
@@ -493,6 +549,8 @@ const SOLUTION_EXTRA: FieldDef[] = [
   { key: 'sections.architectureTitle', label: '商业架构标题' },
   { key: 'sections.ctaLabel', label: '详情按钮文字' },
   { key: 'sections.ctaHref', label: '详情按钮链接' },
+  { key: 'sections.ctaIcon', label: '详情按钮图标' },
+  { key: 'sections.videoPlayIcon', label: '视频播放图标' },
   { key: 'sections.adviceTitle', label: '侧栏咨询标题' },
   { key: 'sections.advicePrimaryLabel', label: '侧栏主按钮' },
   { key: 'sections.advicePrimaryHref', label: '侧栏主按钮链接' },
