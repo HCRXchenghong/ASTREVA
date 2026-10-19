@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, ArrowUpRight, BookOpen, ChevronDown, ChevronRight, FileText, Menu, Search, X } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, BookOpen, Box, ChevronDown, ChevronRight, FileText, Menu, Search, X } from 'lucide-react';
 import type { Category, Product, SiteSettings } from '../lib/types';
 import { DEFAULT_LOCALE, isSiteLocale, localizeHref, type SiteLocale } from '../lib/i18n';
 
@@ -245,7 +245,7 @@ export default function Navbar({ site, categories, products, currentPath, locale
                           {product.coverImage ? (
                             <img src={product.coverImage} alt="" className="h-16 w-20 shrink-0 rounded-lg object-cover" />
                           ) : (
-                            <span aria-hidden="true" className="grid h-16 w-20 shrink-0 place-items-center rounded-lg bg-linear-to-br from-slate-100 to-slate-300 text-2xl font-black text-slate-400">◇</span>
+                            <span aria-hidden="true" className="grid h-16 w-20 shrink-0 place-items-center rounded-lg bg-linear-to-br from-slate-100 to-slate-300 text-slate-400"><Box size={22} strokeWidth={1.4} /></span>
                           )}
                           <span className="min-w-0 flex-1 text-[15px] font-black leading-6 text-ink-700 transition-colors group-hover:text-brand-600">{product.name}</span>
                           <ArrowRight size={16} className="shrink-0 text-ink-400 transition-all group-hover:translate-x-1 group-hover:text-brand-500" />

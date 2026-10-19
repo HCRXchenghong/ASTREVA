@@ -3,9 +3,11 @@ import VideoModal from '../components/VideoModal';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Button from '../components/ui/Button.astro';
 import Container from '../components/ui/Container.astro';
+import Icon from '../components/ui/Icon.astro';
 import SectionHeading from '../components/ui/SectionHeading.astro';
 import { featuredProducts } from '../lib/content';
 import { localePath, localizeHref, type SiteLocale } from '../lib/i18n';
+import { resolveIcon } from '../lib/icons';
 import type { SiteContent } from '../lib/types';
 
 type Props = { content: SiteContent; locale: SiteLocale };
@@ -87,9 +89,7 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
             <div class="grid grid-cols-2 gap-px overflow-hidden border-t border-white/15 md:grid-cols-4">
               {proofPoints.map((item) => (
                 <div class="flex items-baseline gap-3 py-5 pr-6">
-                  <span class="text-xl text-accent-500" aria-hidden="true">
-                    {item.icon}
-                  </span>
+                  <Icon name={resolveIcon(item.icon, 'advantage')} class="h-5 w-5 shrink-0 text-accent-500" />
                   <span class="text-sm font-semibold text-white/85">{item.title}</span>
                 </div>
               ))}
@@ -133,7 +133,7 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
                       aria-label={item.name}
                       class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-5xl font-black text-slate-400"
                     >
-                      <span aria-hidden="true">◇</span>
+                      <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
                     </div>
                   )}
                   <span class="absolute left-5 top-5 rounded-full bg-white/95 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-brand-800 backdrop-blur">
@@ -145,9 +145,10 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
                   <p class="mt-3 line-clamp-2 flex-1 text-sm leading-6 text-ink-500">{item.summary}</p>
                   <span class="mt-6 inline-flex items-center gap-2 text-sm font-black text-brand-500">
                     {home.featuredProducts.linkLabel}
-                    <span class="transition-transform duration-300 group-hover:translate-x-1" aria-hidden="true">
-                      {home.featuredProducts.linkIcon}
-                    </span>
+                    <Icon
+                      name={resolveIcon(home.featuredProducts.linkIcon)}
+                      class="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1"
+                    />
                   </span>
                 </div>
               </a>
@@ -169,8 +170,8 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
             {
               home.productIntro.bullets.map((text) => (
                 <li class="flex items-center gap-4 py-4 text-sm font-semibold text-ink-800">
-                  <span class="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-500/10 text-xs text-brand-500">
-                    {home.productIntro.bulletIcon}
+                  <span class="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-500/10 text-brand-500">
+                    <Icon name={resolveIcon(home.productIntro.bulletIcon)} class="h-4 w-4" strokeWidth={2} />
                   </span>
                   {text}
                 </li>
@@ -198,7 +199,7 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
                 aria-label={home.productIntro.title}
                 class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"
               >
-                <span aria-hidden="true">◇</span>
+                <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
               </div>
             )}
           </div>
@@ -229,9 +230,7 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
                 <div class="flex items-start justify-between gap-6">
                   <div class="max-w-md">
                     <div class="mb-5 flex items-center gap-3">
-                      <span class="text-2xl text-accent-500" aria-hidden="true">
-                        {item.icon}
-                      </span>
+                      <Icon name={resolveIcon(item.icon, 'advantage')} class="h-6 w-6 shrink-0 text-accent-500" />
                       <h3 class="text-xl font-bold text-white">{item.title}</h3>
                     </div>
                     <p class="text-sm leading-7 text-slate-400">{item.description}</p>

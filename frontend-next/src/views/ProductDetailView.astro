@@ -1,7 +1,9 @@
 ---
+import Icon from '../components/ui/Icon.astro';
 import InnerPageHero from '../components/InnerPageHero.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { localePath, localizeHref, type SiteLocale } from '../lib/i18n';
+import { resolveIcon } from '../lib/icons';
 import { breadcrumbJsonLd, productJsonLd } from '../lib/seo';
 import { resolveVideoSource } from '../lib/video';
 import type { Category, Product, SiteContent } from '../lib/types';
@@ -62,14 +64,14 @@ const jsonLd = [
             {product.coverImage ? (
               <img src={product.coverImage} alt={product.name} class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
             ) : (
-              <div role="img" aria-label={product.name} class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"><span aria-hidden="true">◇</span></div>
+              <div role="img" aria-label={product.name} class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"><Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} /></div>
             )}
             <div class="absolute inset-0 bg-linear-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
           </div>
         </div>
         <div class="lg:w-1/2">
           <div class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-50 text-brand-500 text-sm font-bold mb-6">
-            <span aria-hidden="true">{badgeIcon}</span> {detail.badgeLabel}
+            <Icon name={resolveIcon(badgeIcon)} class="h-4 w-4" /> {detail.badgeLabel}
           </div>
           <h1 class="text-4xl md:text-5xl font-extrabold text-gray-900 mb-6 leading-tight md:leading-none">{product.name}</h1>
           <p class="text-lg text-gray-600 leading-relaxed mb-8">{product.summary}</p>
@@ -77,7 +79,7 @@ const jsonLd = [
             {product.features.map((feature) => (
               <div class="flex items-center gap-3">
                 <div class="w-6 h-6 rounded-full bg-brand-500/10 flex items-center justify-center shrink-0">
-                  <span class="text-brand-500 text-sm leading-none" aria-hidden="true">{featureIcon}</span>
+                  <Icon name={resolveIcon(featureIcon)} class="h-3.5 w-3.5 text-brand-500" strokeWidth={2.2} />
                 </div>
                 <span class="text-gray-700 font-medium">{feature}</span>
               </div>
@@ -85,11 +87,11 @@ const jsonLd = [
           </div>
           <div class="flex flex-wrap gap-4">
             <a href={localHref('/support/')} class="bg-brand-500 hover:bg-brand-700 text-white px-8 py-4 rounded-xl font-bold transition-all shadow-lg hover:shadow-xl flex items-center gap-2">
-              <span aria-hidden="true">{quoteButtonIcon}</span> {detail.quoteButtonLabel}
+              <Icon name={resolveIcon(quoteButtonIcon)} class="h-4 w-4" /> {detail.quoteButtonLabel}
             </a>
             {downloads.map((download) => (
               <a href={download.url} class="bg-white border-2 border-gray-200 text-gray-700 hover:border-brand-500 hover:text-brand-500 px-8 py-4 rounded-xl font-bold transition-all flex items-center gap-2">
-                <span aria-hidden="true">{downloadButtonIcon}</span> {download.label}
+                <Icon name={resolveIcon(downloadButtonIcon)} class="h-4 w-4" /> {download.label}
               </a>
             ))}
           </div>
@@ -106,7 +108,7 @@ const jsonLd = [
           {specifications.length > 0 && (
             <div class="p-8 md:p-10">
               <div class="mb-6 flex items-center gap-5">
-                <span class="text-brand-500 shrink-0 text-4xl font-black" aria-hidden="true">{detail.specsPrimaryIcon}</span>
+                <Icon name={resolveIcon(detail.specsPrimaryIcon)} class="h-9 w-9 shrink-0 text-brand-500" />
                 <h4 class="text-xl font-bold text-gray-900">{detail.specsPrimaryTitle}</h4>
               </div>
               <table class="w-full border-collapse text-sm">
@@ -123,7 +125,7 @@ const jsonLd = [
           )}
           <div class={`p-8 md:p-10 ${specifications.length > 0 ? 'border-t border-gray-100 bg-gray-50/60' : ''}`}>
             <div class="mb-4 flex items-center gap-5">
-              <span class="text-brand-500 shrink-0 text-4xl font-black" aria-hidden="true">{detail.descriptionIcon}</span>
+              <Icon name={resolveIcon(detail.descriptionIcon, 'description')} class="h-9 w-9 shrink-0 text-brand-500" />
               <h4 class="text-xl font-bold text-gray-900">{detail.descriptionTitle}</h4>
             </div>
             <div class="text-gray-600 text-sm leading-relaxed" set:html={product.body}></div>

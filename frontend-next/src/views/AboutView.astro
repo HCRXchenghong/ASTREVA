@@ -1,8 +1,10 @@
 ---
 import InnerPageHero from '../components/InnerPageHero.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
+import Icon from '../components/ui/Icon.astro';
 import { staticPage } from '../lib/content';
 import { localePath, type SiteLocale } from '../lib/i18n';
+import { resolveIcon } from '../lib/icons';
 import type { SiteContent } from '../lib/types';
 
 type Props = { content: SiteContent; locale: SiteLocale };
@@ -24,7 +26,7 @@ const page = staticPage(content, 'about');
     />
     <section id="about-content" class="py-24 bg-white relative scroll-mt-24">
       <div class="max-w-4xl mx-auto px-6 text-center">
-        {page.sections.introIcon && <div class="text-brand-500 mx-auto mb-8 opacity-20 text-5xl font-black">{page.sections.introIcon}</div>}
+        {page.sections.introIcon && <div class="mx-auto mb-8 flex justify-center text-brand-500 opacity-20"><Icon name={resolveIcon(page.sections.introIcon)} class="h-16 w-16" /></div>}
         <h2 class="text-4xl font-extrabold text-gray-900 mb-10">{page.title}</h2>
         <div class="prose-content space-y-6 text-lg text-gray-600 leading-loose text-justify md:text-center font-medium" set:html={page.body}></div>
       </div>

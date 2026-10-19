@@ -1,8 +1,10 @@
 ---
 import ContactForm from '../components/ContactForm';
+import Icon from '../components/ui/Icon.astro';
 import InnerPageHero from '../components/InnerPageHero.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { localePath, localizeHref, type SiteLocale } from '../lib/i18n';
+import { resolveIcon } from '../lib/icons';
 import { contactPageJsonLd } from '../lib/seo';
 import type { SiteContent } from '../lib/types';
 
@@ -30,7 +32,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
         <div id="support-services" class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-24 scroll-mt-24">
           {support.services.map((service) => (
               <div class="bg-blue-50 p-10 rounded-3xl text-center hover:-translate-y-2 transition-transform shadow-sm">
-                <div class="text-brand-500 mx-auto mb-6 text-5xl font-black">{service.icon}</div>
+                <span class="mx-auto mb-6 grid h-16 w-16 place-items-center rounded-2xl bg-white text-brand-500 shadow-sm"><Icon name={resolveIcon(service.icon, 'service')} class="h-8 w-8" /></span>
                 <h3 class="text-2xl font-bold mb-4">{service.title}</h3>
                 <p class="text-gray-600 mb-6 text-sm">{service.description}</p>
                 <a href={localHref(service.href)} class="text-brand-500 font-bold hover:underline">{service.cta} &rarr;</a>
@@ -46,13 +48,13 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
                 <div class="space-y-6">
                   {phone && (
                     <div class="flex items-center gap-4">
-                      <span class="text-blue-300 text-2xl" aria-hidden="true">{support.contact.phoneIcon}</span>
+                      <Icon name={resolveIcon(support.contact.phoneIcon)} class="h-6 w-6 shrink-0 text-blue-300" />
                       <div><p class="text-sm text-blue-200">{support.contact.phoneLabel}</p><p class="font-bold text-lg">{phone}</p></div>
                     </div>
                   )}
                   {email && (
                     <div class="flex items-center gap-4">
-                      <span class="text-blue-300 text-2xl" aria-hidden="true">{support.contact.emailIcon}</span>
+                      <Icon name={resolveIcon(support.contact.emailIcon)} class="h-6 w-6 shrink-0 text-blue-300" />
                       <div><p class="text-sm text-blue-200">{support.contact.emailLabel}</p><p class="font-bold text-lg">{email}</p></div>
                     </div>
                   )}

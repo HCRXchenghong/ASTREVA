@@ -3,13 +3,16 @@
  * Button / link with the four styles the site actually uses.
  * `variant` maps to brand tokens; no caller should write hex values again.
  */
+import Icon from './Icon.astro';
+import type { IconName } from '../../lib/icons';
+
 type Props = {
   href?: string;
   type?: 'button' | 'submit';
   variant?: 'primary' | 'outline' | 'white' | 'ghost';
   size?: 'md' | 'lg';
   class?: string;
-  icon?: string;
+  icon?: IconName;
   ariaLabel?: string;
   target?: string;
 };
@@ -54,12 +57,12 @@ const classes = [
       {...(target ? { target, rel: 'noopener noreferrer' } : {})}
     >
       <slot />
-      {icon && <span aria-hidden="true">{icon}</span>}
+      {icon && <Icon name={icon} class="h-4 w-4" />}
     </a>
   ) : (
     <button type={type} class:list={classes} aria-label={ariaLabel}>
       <slot />
-      {icon && <span aria-hidden="true">{icon}</span>}
+      {icon && <Icon name={icon} class="h-4 w-4" />}
     </button>
   )
 }
