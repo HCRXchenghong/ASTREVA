@@ -34,6 +34,8 @@ type visitorProfileSettingsPatchRequest struct {
 	AISummaryEnabled       *bool   `json:"ai_summary_enabled"`
 	AISummaryEveryMessages *int    `json:"ai_summary_every_messages"`
 	ShowFullIP             *bool   `json:"show_full_ip"`
+	// RetentionDays：0=永久保留；30/90/180 是控制台给的可选项，服务端接受 7..3650。
+	RetentionDays *int `json:"retention_days"`
 }
 
 // registerVisitorProfileRoutes 注册画像相关的全部路由。
@@ -64,6 +66,14 @@ func registerVisitorProfileRoutes(mux *http.ServeMux, service *app.Service, trus
 			AISummaryEnabled:       req.AISummaryEnabled,
 			AISummaryEveryMessages: req.AISummaryEveryMessages,
 			ShowFullIP:             req.ShowFullIP,
+			RetentionDays:          req.RetentionDays,
+		}
+		if req.RetentionDays != nil {
+			if *req.RetentionDays != 0 && (*req.RetentionDays < domain.MinVisitorProfileRetentionDays || *req.RetentionDays > domain.MaxVisitorProfileRetentionDays) {
+				writeError(w, fmt.Errorf("%w: retention_days 只能是 0（永久保留）或 %d-%d 天",
+					store.ErrInvalidInput, domain.MinVisitorProfileRetentionDays, domain.MaxVisitorProfileRetentionDays))
+				return
+			}
 		}
 		// 两个键都接受；同时给出时以控制台契约键 geoip_db_path 为准。
 		switch {

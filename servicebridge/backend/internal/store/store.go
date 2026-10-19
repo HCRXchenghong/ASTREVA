@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"customer-service/backend/internal/domain"
 )
@@ -123,6 +124,9 @@ type Store interface {
 	// VisitorProfileSettings 读取画像单例配置；未写入时返回 DefaultVisitorProfileSettings()。
 	// 返回的 ThirdPartyKey 为解密后的明文，仅供服务端内部使用（json:"-"）。
 	VisitorProfileSettings() domain.VisitorProfileSettings
+	// PurgeVisitorProfilesBefore 删除"最后活动时间早于 cutoff"的访客画像，返回删除条数；
+	// 由客服策略巡检按保留天数调用（0 天=永久保留，不调用）。
+	PurgeVisitorProfilesBefore(cutoff time.Time) (int, error)
 	// UpdateVisitorProfileSettings 局部更新画像配置：nil=不改，ThirdPartyKey 传空串=清除。
 	// 数值越界会收敛到合法区间，密钥落库前加密。
 	UpdateVisitorProfileSettings(patch domain.VisitorProfileSettingsPatch) (domain.VisitorProfileSettings, error)

@@ -63,12 +63,12 @@ func (s *PostgresStore) visitorProfileSettingsTx(ctx context.Context, exec dbTx)
 	err := exec.QueryRow(ctx, `
 		SELECT enabled, geoip_dir, third_party_url, third_party_key_ciphertext,
 		       third_party_timeout_ms, cache_ttl_hours, ai_summary_enabled,
-		       ai_summary_every_messages, show_full_ip, updated_at
+		       ai_summary_every_messages, show_full_ip, retention_days, updated_at
 		FROM visitor_profile_settings WHERE id=1
 	`).Scan(
 		&out.Enabled, &out.GeoIPDir, &out.ThirdPartyURL, &storedKey,
 		&out.ThirdPartyTimeoutMS, &out.CacheTTLHours, &out.AISummaryEnabled,
-		&out.AISummaryEveryMessages, &out.ShowFullIP, &updatedAt,
+		&out.AISummaryEveryMessages, &out.ShowFullIP, &out.RetentionDays, &updatedAt,
 	)
 	if err != nil {
 		return domain.NormalizeVisitorProfileSettings(domain.DefaultVisitorProfileSettings()), nil
@@ -102,9 +102,9 @@ func (s *PostgresStore) UpdateVisitorProfileSettings(patch domain.VisitorProfile
 		INSERT INTO visitor_profile_settings (
 			id, enabled, geoip_dir, third_party_url, third_party_key_ciphertext,
 			third_party_timeout_ms, cache_ttl_hours, ai_summary_enabled,
-			ai_summary_every_messages, show_full_ip, updated_at
+			ai_summary_every_messages, show_full_ip, retention_days, updated_at
 		)
-		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (id) DO UPDATE SET
 			enabled=EXCLUDED.enabled,
 			geoip_dir=EXCLUDED.geoip_dir,
@@ -115,10 +115,11 @@ func (s *PostgresStore) UpdateVisitorProfileSettings(patch domain.VisitorProfile
 			ai_summary_enabled=EXCLUDED.ai_summary_enabled,
 			ai_summary_every_messages=EXCLUDED.ai_summary_every_messages,
 			show_full_ip=EXCLUDED.show_full_ip,
+			retention_days=EXCLUDED.retention_days,
 			updated_at=EXCLUDED.updated_at
 	`, next.Enabled, next.GeoIPDir, next.ThirdPartyURL, protectedKey,
 		next.ThirdPartyTimeoutMS, next.CacheTTLHours, next.AISummaryEnabled,
-		next.AISummaryEveryMessages, next.ShowFullIP, now); err != nil {
+		next.AISummaryEveryMessages, next.ShowFullIP, next.RetentionDays, now); err != nil {
 		return current, err
 	}
 	next.UpdatedAt = &now
@@ -361,4 +362,19 @@ func (s *PostgresStore) pruneVisitorProfileTx(ctx context.Context, tx pgx.Tx, vi
 		)
 	`, visitorKey)
 	return err
+}
+
+// PurgeVisitorProfilesBefore 删除最后活动时间早于 cutoff 的访客画像，返回删除条数。
+// last_seen_at 为 NULL（老数据/仅本地画像）时回落 updated_at，与内存实现保持一致。
+func (s *PostgresStore) PurgeVisitorProfilesBefore(cutoff time.Time) (int, error) {
+	ctx, cancel := dbContext()
+	defer cancel()
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM visitor_profiles
+		WHERE COALESCE(last_seen_at, updated_at) < $1
+	`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }

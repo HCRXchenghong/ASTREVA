@@ -131,6 +131,7 @@ func (s *Service) StopPolicyLoop() {
 // 遍历范围：未结束且已分配的会话（量小，直接用 AllConversations）。
 func (s *Service) RunPolicySweep(now time.Time) {
 	now = now.UTC()
+	s.purgeExpiredVisitorProfiles(now)
 	policy := s.store.ServicePolicy()
 	for _, conversation := range s.store.AllConversations() {
 		if conversation.Status == domain.ConversationClosed || strings.TrimSpace(conversation.AssignedAgentID) == "" {
@@ -144,6 +145,25 @@ func (s *Service) RunPolicySweep(now time.Time) {
 			current = updated
 		}
 		s.sweepAutoClose(policy, current, now)
+	}
+}
+
+// purgeExpiredVisitorProfiles 按「访客画像保留天数」清理超期画像（0=永久保留）。
+// 放在巡检里而不是单独定时器：保留天数本身就是一项后台配置，改完最迟一个巡检周期生效。
+// 清理失败只记日志，绝不影响 SLA 巡检本身。
+func (s *Service) purgeExpiredVisitorProfiles(now time.Time) {
+	settings := s.store.VisitorProfileSettings()
+	if settings.RetentionDays <= 0 {
+		return
+	}
+	cutoff := now.AddDate(0, 0, -settings.RetentionDays)
+	removed, err := s.store.PurgeVisitorProfilesBefore(cutoff)
+	if err != nil {
+		s.logger.Warn("访客画像过期清理失败", "retention_days", settings.RetentionDays, "error", err)
+		return
+	}
+	if removed > 0 {
+		s.logger.Info("访客画像过期清理完成", "removed", removed, "retention_days", settings.RetentionDays, "cutoff", cutoff.Format(time.RFC3339))
 	}
 }
 

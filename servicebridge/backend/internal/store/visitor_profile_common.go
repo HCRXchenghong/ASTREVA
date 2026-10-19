@@ -35,6 +35,11 @@ func normalizeVisitorProfileSettings(next domain.VisitorProfileSettings) (domain
 	if _, err := cleanOptionalText(out.ThirdPartyKey, maxThirdPartyKeyRunes); err != nil {
 		return domain.VisitorProfileSettings{}, err
 	}
+	// 保留天数：0=永久保留；其余必须在 7..3650 天之间（30/90/180 是后台给的可选项）。
+	if out.RetentionDays != 0 && (out.RetentionDays < domain.MinVisitorProfileRetentionDays || out.RetentionDays > domain.MaxVisitorProfileRetentionDays) {
+		return domain.VisitorProfileSettings{}, fmt.Errorf("%w: retention_days 只能是 0（永久）或 %d-%d 天",
+			ErrInvalidInput, domain.MinVisitorProfileRetentionDays, domain.MaxVisitorProfileRetentionDays)
+	}
 	if out.ThirdPartyURL != "" {
 		parsed, err := url.Parse(out.ThirdPartyURL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
@@ -77,6 +82,9 @@ func applyVisitorProfileSettingsPatch(current domain.VisitorProfileSettings, pat
 	}
 	if patch.ShowFullIP != nil {
 		next.ShowFullIP = *patch.ShowFullIP
+	}
+	if patch.RetentionDays != nil {
+		next.RetentionDays = *patch.RetentionDays
 	}
 	return next
 }

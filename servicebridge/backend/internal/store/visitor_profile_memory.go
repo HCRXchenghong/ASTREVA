@@ -161,3 +161,29 @@ func (s *MemoryStore) pruneVisitorProfileLocked(visitorKey string) {
 	}
 	delete(s.visitorProfiles, visitorKey)
 }
+
+// PurgeVisitorProfilesBefore 删除最后活动时间早于 cutoff 的访客画像（保留天数巡检调用）。
+// 内存实现与 Postgres 语义一致：last_seen_at 为空时回落 updated_at。
+func (s *MemoryStore) PurgeVisitorProfilesBefore(cutoff time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	for id, profile := range s.visitorProfiles {
+		if profile == nil {
+			continue
+		}
+		// LastSeenAt 是指针（可能为空），与 Postgres 的 COALESCE(last_seen_at, updated_at) 对应。
+		var last time.Time
+		if profile.LastSeenAt != nil {
+			last = *profile.LastSeenAt
+		} else {
+			last = profile.UpdatedAt
+		}
+		if last.IsZero() || !last.Before(cutoff) {
+			continue
+		}
+		delete(s.visitorProfiles, id)
+		removed++
+	}
+	return removed, nil
+}

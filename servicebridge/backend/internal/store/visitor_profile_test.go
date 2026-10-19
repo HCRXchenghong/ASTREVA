@@ -342,3 +342,116 @@ func TestMemoryVisitorProfileCleanup(t *testing.T) {
 		t.Fatal("该访客已无会话，画像应随数据保留策略清理")
 	}
 }
+
+// TestMemoryVisitorProfileRetentionSettings 覆盖「访客画像保留天数」的默认值、校验与区间。
+func TestMemoryVisitorProfileRetentionSettings(t *testing.T) {
+	st := NewMemoryStore(Options{})
+
+	// 默认 180 天（后台给的可选项之一）。
+	if got := st.VisitorProfileSettings().RetentionDays; got != domain.DefaultVisitorProfileRetentionDays {
+		t.Fatalf("默认保留天数 = %d，期望 %d", got, domain.DefaultVisitorProfileRetentionDays)
+	}
+
+	// 30/90/180 与 0（永久）都必须被接受。
+	for _, days := range []int{30, 90, 180, 0} {
+		value := days
+		updated, err := st.UpdateVisitorProfileSettings(domain.VisitorProfileSettingsPatch{RetentionDays: &value})
+		if err != nil {
+			t.Fatalf("retention_days=%d 应被接受，实际 %v", days, err)
+		}
+		if updated.RetentionDays != days {
+			t.Fatalf("retention_days 写入后 = %d，期望 %d", updated.RetentionDays, days)
+		}
+	}
+
+	// 1..6 天毫无意义，必须明确拒绝（ErrInvalidInput），而不是悄悄改成别的值。
+	for _, days := range []int{1, 6} {
+		value := days
+		if _, err := st.UpdateVisitorProfileSettings(domain.VisitorProfileSettingsPatch{RetentionDays: &value}); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("retention_days=%d 应返回 ErrInvalidInput，实际 %v", days, err)
+		}
+	}
+	// 存储层对越界值做防御性收敛（与 timeout/cache 字段一致），负数按"未设置"回落默认 180：
+	// 控制台走的是 HTTP 接口，那里对 3651 与 -5 都会直接 400（见 httpx 校验），不会静默改写用户意图。
+	over := 3651
+	clamped, err := st.UpdateVisitorProfileSettings(domain.VisitorProfileSettingsPatch{RetentionDays: &over})
+	if err != nil {
+		t.Fatalf("越界值存储层应收敛而不是报错，实际 %v", err)
+	}
+	if clamped.RetentionDays != domain.MaxVisitorProfileRetentionDays {
+		t.Fatalf("越界值应收敛到 %d，实际 %d", domain.MaxVisitorProfileRetentionDays, clamped.RetentionDays)
+	}
+	negative := -5
+	fallback, err := st.UpdateVisitorProfileSettings(domain.VisitorProfileSettingsPatch{RetentionDays: &negative})
+	if err != nil {
+		t.Fatalf("负值存储层应回落默认，实际 %v", err)
+	}
+	if fallback.RetentionDays != domain.DefaultVisitorProfileRetentionDays {
+		t.Fatalf("负值应回落到默认 %d，实际 %d", domain.DefaultVisitorProfileRetentionDays, fallback.RetentionDays)
+	}
+	// 复原为永久保留，供下面的断言使用。
+	zero := 0
+	if _, err := st.UpdateVisitorProfileSettings(domain.VisitorProfileSettingsPatch{RetentionDays: &zero}); err != nil {
+		t.Fatalf("复原为永久保留失败：%v", err)
+	}
+
+	// 非法值不应污染已保存的设置。
+	if got := st.VisitorProfileSettings().RetentionDays; got != 0 {
+		t.Fatalf("非法写入后保留天数应保持为上一次合法值 0，实际 %d", got)
+	}
+}
+
+// TestMemoryPurgeExpiredVisitorProfiles 验证按保留天数清理：只删超期的，未超期与空时间不动。
+func TestMemoryPurgeExpiredVisitorProfiles(t *testing.T) {
+	st := NewMemoryStore(Options{})
+	now := time.Now().UTC()
+
+	stale, err := st.CreateVisitorConversation("1.1.1.1", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建会话失败：%v", err)
+	}
+	fresh, err := st.CreateVisitorConversation("2.2.2.2", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建会话失败：%v", err)
+	}
+
+	old := now.AddDate(0, 0, -200)
+	if _, err := st.UpdateVisitorProfile(stale.Conversation.VisitorID, func(profile *domain.VisitorProfile) error {
+		profile.LastSeenAt = &old
+		profile.UpdatedAt = old
+		return nil
+	}); err != nil {
+		t.Fatalf("写入旧画像失败：%v", err)
+	}
+	if _, err := st.UpdateVisitorProfile(fresh.Conversation.VisitorID, func(profile *domain.VisitorProfile) error {
+		profile.LastSeenAt = &now
+		profile.UpdatedAt = now
+		return nil
+	}); err != nil {
+		t.Fatalf("写入新画像失败：%v", err)
+	}
+
+	// 180 天保留：200 天前的画像该被清掉，今天的必须留下。
+	removed, err := st.PurgeVisitorProfilesBefore(now.AddDate(0, 0, -180))
+	if err != nil {
+		t.Fatalf("清理失败：%v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("应清理 1 条超期画像，实际 %d", removed)
+	}
+	if _, ok := st.VisitorProfile(stale.Conversation.VisitorID); ok {
+		t.Fatal("200 天前的画像应被清理")
+	}
+	if _, ok := st.VisitorProfile(fresh.Conversation.VisitorID); !ok {
+		t.Fatal("未超期的画像不应被清理")
+	}
+
+	// 边界：cutoff 正好等于 last_seen_at 时不算超期（严格早于才删）。
+	removed, err = st.PurgeVisitorProfilesBefore(now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("边界清理失败：%v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("cutoff 之后应清理掉最后一条，实际 %d", removed)
+	}
+}

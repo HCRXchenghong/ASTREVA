@@ -569,3 +569,75 @@ func TestPolicyLoopTickIntervalAndGracefulStop(t *testing.T) {
 	}
 	service.StopPolicyLoop() // 重复停止应幂等
 }
+
+// TestPolicySweepPurgesExpiredVisitorProfiles 验证「访客画像保留天数」真的接在巡检上：
+// 设 30 天 → 巡检清掉 40 天前的画像、留下今天的；设 0（永久）→ 巡检不再删任何画像。
+func TestPolicySweepPurgesExpiredVisitorProfiles(t *testing.T) {
+	service, st, _ := newFlowService(t)
+	setServicePolicy(t, st, func(policy *domain.ServicePolicy) {
+		policy.SLAFirstResponseSeconds = 0
+		policy.SLAIdleMinutes = 0
+		policy.AutoCloseIdleMinutes = 0
+		policy.TakeoverPopupEnabled = false
+	})
+
+	oldVisitor, err := st.CreateVisitorConversation("198.51.100.11", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建旧访客会话失败：%v", err)
+	}
+	newVisitor, err := st.CreateVisitorConversation("198.51.100.12", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建新访客会话失败：%v", err)
+	}
+
+	now := time.Now().UTC()
+	stale := now.AddDate(0, 0, -40)
+	if _, err := st.UpdateVisitorProfile(oldVisitor.Conversation.VisitorID, func(profile *domain.VisitorProfile) error {
+		profile.LastSeenAt = &stale
+		profile.UpdatedAt = stale
+		return nil
+	}); err != nil {
+		t.Fatalf("写入超期画像失败：%v", err)
+	}
+	if _, err := st.UpdateVisitorProfile(newVisitor.Conversation.VisitorID, func(profile *domain.VisitorProfile) error {
+		profile.LastSeenAt = &now
+		profile.UpdatedAt = now
+		return nil
+	}); err != nil {
+		t.Fatalf("写入未超期画像失败：%v", err)
+	}
+
+	// 保留 30 天：巡检应清掉 40 天前那条。
+	thirty := 30
+	if _, err := st.UpdateVisitorProfileSettings(domain.VisitorProfileSettingsPatch{RetentionDays: &thirty}); err != nil {
+		t.Fatalf("设置保留天数失败：%v", err)
+	}
+	service.RunPolicySweep(now)
+	if _, ok := st.VisitorProfile(oldVisitor.Conversation.VisitorID); ok {
+		t.Fatal("巡检应清掉超过 30 天未活动的画像")
+	}
+	if _, ok := st.VisitorProfile(newVisitor.Conversation.VisitorID); !ok {
+		t.Fatal("巡检不应清掉未超期的画像")
+	}
+
+	// 改成永久保留（0）：再造一条超期画像，巡检不得再删。
+	permanent := 0
+	if _, err := st.UpdateVisitorProfileSettings(domain.VisitorProfileSettingsPatch{RetentionDays: &permanent}); err != nil {
+		t.Fatalf("设置永久保留失败：%v", err)
+	}
+	kept, err := st.CreateVisitorConversation("198.51.100.13", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建会话失败：%v", err)
+	}
+	if _, err := st.UpdateVisitorProfile(kept.Conversation.VisitorID, func(profile *domain.VisitorProfile) error {
+		profile.LastSeenAt = &stale
+		profile.UpdatedAt = stale
+		return nil
+	}); err != nil {
+		t.Fatalf("写入超期画像失败：%v", err)
+	}
+	service.RunPolicySweep(now)
+	if _, ok := st.VisitorProfile(kept.Conversation.VisitorID); !ok {
+		t.Fatal("保留天数=0（永久）时巡检不得删除任何画像")
+	}
+}

@@ -48,6 +48,12 @@ const (
 	MaxCacheTTLHours = 720
 	// MaxAISummaryEveryMessages 是摘要触发间隔上限，避免配置成几乎不触发。
 	MaxAISummaryEveryMessages = 200
+	// DefaultVisitorProfileRetentionDays 是访客画像默认保留天数（后台可选 30/90/180）。
+	DefaultVisitorProfileRetentionDays = 180
+	// MaxVisitorProfileRetentionDays 是保留天数上限（10 年），避免配置成天文数字。
+	MaxVisitorProfileRetentionDays = 3650
+	// MinVisitorProfileRetentionDays 是最短保留天数；0 表示永久保留，1..6 天无意义故拒绝。
+	MinVisitorProfileRetentionDays = 7
 )
 
 // GeoRecord 是一次 IP 地理解析的结果；Basis 标明来源层级。
@@ -146,17 +152,19 @@ type VisitorProfileView struct {
 // ThirdPartyKey 为明文（json:"-"），只允许服务端内部使用；对外只暴露末四位掩码。
 // GeoIPDir 落库列名为 geoip_dir，接口契约键名为 geoip_db_path。
 type VisitorProfileSettings struct {
-	Enabled                bool       `json:"enabled"`
-	GeoIPDir               string     `json:"geoip_db_path"`
-	ThirdPartyURL          string     `json:"third_party_url"`
-	ThirdPartyKey          string     `json:"-"`
-	ThirdPartyKeyMasked    string     `json:"third_party_key_masked"`
-	ThirdPartyTimeoutMS    int        `json:"third_party_timeout_ms"`
-	CacheTTLHours          int        `json:"cache_ttl_hours"`
-	AISummaryEnabled       bool       `json:"ai_summary_enabled"`
-	AISummaryEveryMessages int        `json:"ai_summary_every_messages"`
-	ShowFullIP             bool       `json:"show_full_ip"`
-	UpdatedAt              *time.Time `json:"updated_at,omitempty"`
+	Enabled                bool   `json:"enabled"`
+	GeoIPDir               string `json:"geoip_db_path"`
+	ThirdPartyURL          string `json:"third_party_url"`
+	ThirdPartyKey          string `json:"-"`
+	ThirdPartyKeyMasked    string `json:"third_party_key_masked"`
+	ThirdPartyTimeoutMS    int    `json:"third_party_timeout_ms"`
+	CacheTTLHours          int    `json:"cache_ttl_hours"`
+	AISummaryEnabled       bool   `json:"ai_summary_enabled"`
+	AISummaryEveryMessages int    `json:"ai_summary_every_messages"`
+	ShowFullIP             bool   `json:"show_full_ip"`
+	// RetentionDays 是访客画像保留天数：0 表示永久保留，默认 180；超期画像由巡检自动清理。
+	RetentionDays int        `json:"retention_days"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 }
 
 // VisitorProfileSettingsPatch 描述画像设置的局部更新；nil 表示不修改。
@@ -171,6 +179,7 @@ type VisitorProfileSettingsPatch struct {
 	AISummaryEnabled       *bool
 	AISummaryEveryMessages *int
 	ShowFullIP             *bool
+	RetentionDays          *int
 }
 
 // VisitorProfileQuery 是画像列表的筛选与分页条件。
@@ -191,6 +200,7 @@ func DefaultVisitorProfileSettings() VisitorProfileSettings {
 		AISummaryEnabled:       true,
 		AISummaryEveryMessages: DefaultAISummaryEveryMessages,
 		ShowFullIP:             true,
+		RetentionDays:          DefaultVisitorProfileRetentionDays,
 	}
 }
 
@@ -221,6 +231,13 @@ func NormalizeVisitorProfileSettings(next VisitorProfileSettings) VisitorProfile
 	}
 	if out.AISummaryEveryMessages > MaxAISummaryEveryMessages {
 		out.AISummaryEveryMessages = MaxAISummaryEveryMessages
+	}
+	// 保留天数：0 是合法值（永久保留），只有负数才视为未设置并回落默认值。
+	if out.RetentionDays < 0 {
+		out.RetentionDays = DefaultVisitorProfileRetentionDays
+	}
+	if out.RetentionDays > MaxVisitorProfileRetentionDays {
+		out.RetentionDays = MaxVisitorProfileRetentionDays
 	}
 	out.ThirdPartyKeyMasked = MaskSecret(out.ThirdPartyKey)
 	return out

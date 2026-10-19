@@ -1947,9 +1947,11 @@ func TestPostgresAIBindingTargets(t *testing.T) {
 
 // TestPostgresAIPersistenceAcrossReopen 验证"AI 供应商与绑定真正落库"这一核心承诺：
 // 进程重启等价于关掉连接池、用同一个 DSN 重新打开一个存储实例，届时
-//  ① 故障转移候选链仍然按 priority 读回（顺序与启停状态不变）；
-//  ② 能力默认绑定仍然读回；
-//  ③ API Key 在库里是密文（既不是明文，也不是空），且能用同一个 DATA_ENCRYPTION_KEY 解密回原文。
+//
+//	① 故障转移候选链仍然按 priority 读回（顺序与启停状态不变）；
+//	② 能力默认绑定仍然读回；
+//	③ API Key 在库里是密文（既不是明文，也不是空），且能用同一个 DATA_ENCRYPTION_KEY 解密回原文。
+//
 // 这几条是"内存驱动会丢、数据库驱动不会丢"的判别性证据；只测同一实例读写是测不出来的。
 func TestPostgresAIPersistenceAcrossReopen(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
@@ -2113,5 +2115,93 @@ func TestPostgresAIPersistenceAcrossReopen(t *testing.T) {
 		if item.ID == provider.ID && strings.Contains(item.APIKeyMasked, plaintextKey[len(plaintextKey)-6:]) {
 			t.Fatalf("换密钥后列表仍暴露真实 Key 掩码：%q", item.APIKeyMasked)
 		}
+	}
+}
+
+// TestPostgresVisitorProfileRetention 验证「访客画像保留天数」在真实库上的落库与自动清理：
+//
+//	① 默认 180 天；② 写入 30 天后重开连接仍然是 30（配置真落库，不是内存）；
+//	③ PurgeVisitorProfilesBefore 只删超期画像（last_seen_at 为空时回落 updated_at），未超期的保留。
+func TestPostgresVisitorProfileRetention(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	options := Options{DataEncryptionKey: "integration-test-encryption-key-32chars", BootstrapAdminPassword: "IntegrationTest-123"}
+	st, err := NewPostgresStore(ctx, databaseURL, options)
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer st.Close()
+
+	now := dbNow()
+	staleID := fmt.Sprintf("vp_retention_stale_%d", now.UnixNano())
+	freshID := fmt.Sprintf("vp_retention_fresh_%d", now.UnixNano())
+	cleanup := func() {
+		_, _ = st.pool.Exec(context.Background(), `DELETE FROM visitor_profiles WHERE visitor_id = ANY($1)`,
+			[]string{staleID, freshID})
+	}
+	cleanup()
+	defer cleanup()
+
+	old := now.AddDate(0, 0, -200)
+	if _, err := st.pool.Exec(ctx, `
+		INSERT INTO visitor_profiles (visitor_id, country, last_seen_at, updated_at, created_at)
+		VALUES ($1, '西班牙', $2, $2, $2)`, staleID, old); err != nil {
+		t.Fatalf("写入超期画像失败：%v", err)
+	}
+	if _, err := st.pool.Exec(ctx, `
+		INSERT INTO visitor_profiles (visitor_id, country, last_seen_at, updated_at, created_at)
+		VALUES ($1, '中国', $2, $2, $2)`, freshID, now); err != nil {
+		t.Fatalf("写入未超期画像失败：%v", err)
+	}
+	// last_seen_at 为空的老数据：应回落 updated_at 判断是否超期。
+	noSeenID := staleID + "_noseen"
+	if _, err := st.pool.Exec(ctx, `
+		INSERT INTO visitor_profiles (visitor_id, country, last_seen_at, updated_at, created_at)
+		VALUES ($1, '德国', NULL, $2, $2)`, noSeenID, old); err != nil {
+		t.Fatalf("写入 last_seen_at 为空的画像失败：%v", err)
+	}
+	defer func() {
+		_, _ = st.pool.Exec(context.Background(), `DELETE FROM visitor_profiles WHERE visitor_id = $1`, noSeenID)
+	}()
+
+	// 默认值来自默认配置；写入 30 天后重启（重开连接）读回仍是 30。
+	if got := st.VisitorProfileSettings().RetentionDays; got != domain.DefaultVisitorProfileRetentionDays {
+		t.Fatalf("未写入时保留天数应为默认 %d，实际 %d", domain.DefaultVisitorProfileRetentionDays, got)
+	}
+	thirty := 30
+	if _, err := st.UpdateVisitorProfileSettings(domain.VisitorProfileSettingsPatch{RetentionDays: &thirty}); err != nil {
+		t.Fatalf("写入 retention_days=30 失败：%v", err)
+	}
+
+	st.Close()
+	reopened, err := NewPostgresStore(ctx, databaseURL, options)
+	if err != nil {
+		t.Fatalf("重开 PostgreSQL 存储失败：%v", err)
+	}
+	defer reopened.Close()
+	if got := reopened.VisitorProfileSettings().RetentionDays; got != 30 {
+		t.Fatalf("重开后保留天数应仍为 30（配置未真正落库），实际 %d", got)
+	}
+
+	removed, err := reopened.PurgeVisitorProfilesBefore(now.AddDate(0, 0, -30))
+	if err != nil {
+		t.Fatalf("清理超期画像失败：%v", err)
+	}
+	if removed < 2 {
+		t.Fatalf("应至少清理 2 条超期画像（含 last_seen_at 为空回落 updated_at 的那条），实际 %d", removed)
+	}
+	if _, ok := reopened.VisitorProfile(staleID); ok {
+		t.Fatal("200 天前的画像应被清理")
+	}
+	if _, ok := reopened.VisitorProfile(noSeenID); ok {
+		t.Fatal("last_seen_at 为空且 updated_at 超期的画像应被清理")
+	}
+	if _, ok := reopened.VisitorProfile(freshID); !ok {
+		t.Fatal("未超期的画像不应被清理")
 	}
 }

@@ -2235,6 +2235,8 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 
 	// ===== 服务间接口（X-Internal-Token 鉴权；未配置令牌时 503）=====
 	registerInternalRoutes(mux, service, cfg)
+	// 数据看板：只读询盘聚合（口径见 analytics_dashboard.go）。
+	registerAnalyticsDashboardRoutes(mux, service, cfg)
 
 	handler := logRequests(logger, mux)
 	handler = rateLimit(cfg, trustedProxies, handler)

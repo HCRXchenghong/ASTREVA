@@ -325,6 +325,10 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 			CONSTRAINT visitor_profile_settings_every_check CHECK (ai_summary_every_messages BETWEEN 1 AND 200)
 		)`,
 		`ALTER TABLE visitor_profiles ADD COLUMN IF NOT EXISTS country_code TEXT NOT NULL DEFAULT ''`,
+		// 访客画像保留天数（0=永久）：超期画像由巡检自动清理，默认 180 天。
+		// 这里只加列不加 CHECK：ADD CONSTRAINT 没有 IF NOT EXISTS，重复启动会报错，
+		// 取值范围由应用层 normalizeVisitorProfileSettings 校验（0 或 7..3650）。
+		`ALTER TABLE visitor_profile_settings ADD COLUMN IF NOT EXISTS retention_days INTEGER NOT NULL DEFAULT 180`,
 		// 跨服务画像上报（admin-server）写入的最近活动时间；NULL 时接口回落 updated_at。
 		`ALTER TABLE visitor_profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ`,
 		`CREATE TABLE IF NOT EXISTS auth_sessions (
