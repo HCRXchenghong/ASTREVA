@@ -1944,3 +1944,174 @@ func TestPostgresAIBindingTargets(t *testing.T) {
 		t.Fatalf("清理备供应商失败：%v", err)
 	}
 }
+
+// TestPostgresAIPersistenceAcrossReopen 验证"AI 供应商与绑定真正落库"这一核心承诺：
+// 进程重启等价于关掉连接池、用同一个 DSN 重新打开一个存储实例，届时
+//  ① 故障转移候选链仍然按 priority 读回（顺序与启停状态不变）；
+//  ② 能力默认绑定仍然读回；
+//  ③ API Key 在库里是密文（既不是明文，也不是空），且能用同一个 DATA_ENCRYPTION_KEY 解密回原文。
+// 这几条是"内存驱动会丢、数据库驱动不会丢"的判别性证据；只测同一实例读写是测不出来的。
+func TestPostgresAIPersistenceAcrossReopen(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("未设置 TEST_DATABASE_URL，跳过真实 PostgreSQL 集成测试")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	const encryptionKey = "integration-test-encryption-key-32chars"
+	const plaintextKey = "sk-reopen-plaintext-secret-key"
+	options := Options{DataEncryptionKey: encryptionKey, BootstrapAdminPassword: "IntegrationTest-123"}
+
+	first, err := NewPostgresStore(ctx, databaseURL, options)
+	if err != nil {
+		t.Fatalf("打开 PostgreSQL 存储失败：%v", err)
+	}
+	defer first.Close()
+
+	provider, err := first.CreateAIProvider(domain.AIProvider{
+		Name:         "重开持久化用例",
+		Kind:         domain.AIProviderKindText,
+		APIType:      domain.AIAPITypeChatCompletions,
+		BaseURL:      "https://api.example.com/v1",
+		DefaultModel: "persist-model",
+		Enabled:      true,
+	}, plaintextKey)
+	if err != nil {
+		t.Fatalf("创建供应商失败：%v", err)
+	}
+	backup, err := first.CreateAIProvider(domain.AIProvider{
+		Name:         "重开持久化用例-备",
+		Kind:         domain.AIProviderKindText,
+		APIType:      domain.AIAPITypeChatCompletions,
+		BaseURL:      "https://api.example.com/v1",
+		DefaultModel: "persist-model-backup",
+		Enabled:      true,
+	}, "sk-reopen-backup-secret")
+	if err != nil {
+		t.Fatalf("创建备用供应商失败：%v", err)
+	}
+	if _, err := first.UpsertAIBindingTarget(domain.AIBindingTarget{
+		Capability: domain.AICapabilityReception, ProviderID: provider.ID,
+		Model: "persist-model", Priority: 0, Enabled: true,
+	}); err != nil {
+		t.Fatalf("写入接待候选失败：%v", err)
+	}
+	if _, err := first.UpsertAIBindingTarget(domain.AIBindingTarget{
+		Capability: domain.AICapabilityReception, ProviderID: backup.ID,
+		Model: "persist-model-backup", Priority: 1, Enabled: false,
+	}); err != nil {
+		t.Fatalf("写入接待候补失败：%v", err)
+	}
+	if _, err := first.UpsertAIBinding(domain.AIBinding{
+		Capability: domain.AICapabilityTranslation, ProviderID: provider.ID, Model: "persist-model",
+	}); err != nil {
+		t.Fatalf("写入翻译默认绑定失败：%v", err)
+	}
+
+	// 库内必须是密文：直接读原始列，不能等于明文，也不能是空串。
+	var stored string
+	if err := first.pool.QueryRow(ctx,
+		`SELECT api_key_ciphertext FROM ai_providers WHERE id=$1`, provider.ID).Scan(&stored); err != nil {
+		t.Fatalf("读取密文列失败：%v", err)
+	}
+	if stored == "" {
+		t.Fatal("api_key_ciphertext 为空，API Key 未入库")
+	}
+	if stored == plaintextKey || strings.Contains(stored, plaintextKey) {
+		t.Fatalf("API Key 以明文入库（%q），必须加密存储", stored)
+	}
+	if revealed, err := revealSecret(encryptionKey, stored); err != nil || revealed != plaintextKey {
+		t.Fatalf("密文应能用同一 DATA_ENCRYPTION_KEY 解密回原文，得到 %q err=%v", revealed, err)
+	}
+
+	// 关键一步：关闭连接池，模拟进程重启后用同一 DSN 重新打开。
+	first.Close()
+	second, err := NewPostgresStore(ctx, databaseURL, options)
+	if err != nil {
+		t.Fatalf("重开 PostgreSQL 存储失败：%v", err)
+	}
+	defer second.Close()
+	defer func() {
+		// 清理本次用例数据，避免污染同库其它集成测试。
+		_, _ = second.pool.Exec(context.Background(), `DELETE FROM ai_binding_targets WHERE provider_id = ANY($1)`,
+			[]string{provider.ID, backup.ID})
+		_, _ = second.pool.Exec(context.Background(), `DELETE FROM ai_bindings WHERE provider_id = ANY($1)`,
+			[]string{provider.ID, backup.ID})
+		_ = second.DeleteAIProvider(provider.ID)
+		_ = second.DeleteAIProvider(backup.ID)
+	}()
+
+	restored, ok := second.AIProvider(provider.ID)
+	if !ok {
+		t.Fatal("重启后供应商丢失：AI 供应商没有真正落库")
+	}
+	if restored.Name != "重开持久化用例" || restored.DefaultModel != "persist-model" || !restored.Enabled {
+		t.Fatalf("重启后供应商字段不一致：%+v", restored)
+	}
+	if restored.APIKey != plaintextKey {
+		t.Fatalf("重启后 API Key 无法解密回原文：%q（加密密钥可能变了）", restored.APIKey)
+	}
+	if _, ok := second.AIProvider(backup.ID); !ok {
+		t.Fatal("重启后备用供应商丢失")
+	}
+
+	targets := second.AIBindingTargets()
+	var reception []domain.AIBindingTarget
+	for _, item := range targets {
+		if item.Capability == domain.AICapabilityReception {
+			reception = append(reception, item)
+		}
+	}
+	if len(reception) != 2 {
+		t.Fatalf("重启后接待候选链丢失，实际 %d 条：%#v", len(reception), reception)
+	}
+	if reception[0].ProviderID != provider.ID || reception[0].Priority != 0 || !reception[0].Enabled {
+		t.Fatalf("重启后候选链首选项不一致：%+v", reception[0])
+	}
+	if reception[1].ProviderID != backup.ID || reception[1].Priority != 1 || reception[1].Enabled {
+		t.Fatalf("重启后候选链次序/启停状态不一致：%+v", reception[1])
+	}
+	if reception[0].Model != "persist-model" {
+		t.Fatalf("重启后候选模型不一致：%+v", reception[0])
+	}
+
+	bindings := second.AIBindings()
+	if bindings[domain.AICapabilityTranslation].ProviderID != provider.ID {
+		t.Fatalf("重启后翻译默认绑定丢失：%#v", bindings[domain.AICapabilityTranslation])
+	}
+
+	// 重启后的密钥仍可复用：走一遍更新路径（apiKey=nil 表示不改 Key，沿用库内密文），
+	// 能成功说明重开后读到的供应商是完整可用的，而不是只剩个壳。
+	renamed := restored
+	renamed.Name = "重开持久化用例-已改名"
+	if _, err := second.UpdateAIProvider(provider.ID, renamed, nil); err != nil {
+		t.Fatalf("重启后更新供应商（复用已解密 Key）失败：%v", err)
+	}
+	again, ok := second.AIProvider(provider.ID)
+	if !ok || again.Name != "重开持久化用例-已改名" {
+		t.Fatalf("重启后更新供应商未生效：%+v ok=%v", again, ok)
+	}
+	if again.APIKey != plaintextKey {
+		t.Fatalf("更新后 API Key 应保持可解密：%q", again.APIKey)
+	}
+
+	// 判别力自检：换一个 DATA_ENCRYPTION_KEY 重开，必须读不出原文（供应商不可用/Key 不是明文）。
+	// 这一步保证上面的"能解密"不是恒真断言：密文确实受密钥保护，密钥换了就解不开。
+	wrongKey, err := NewPostgresStore(ctx, databaseURL, Options{
+		DataEncryptionKey:      "another-different-encryption-key-32ch",
+		BootstrapAdminPassword: "IntegrationTest-123",
+	})
+	if err != nil {
+		t.Fatalf("用错误密钥重开存储失败：%v", err)
+	}
+	defer wrongKey.Close()
+	if stolen, ok := wrongKey.AIProvider(provider.ID); ok && stolen.APIKey == plaintextKey {
+		t.Fatalf("换密钥后仍能读出明文 Key，说明密文未真正受密钥保护：%q", stolen.APIKey)
+	}
+	for _, item := range wrongKey.ListAIProviders() {
+		if item.ID == provider.ID && strings.Contains(item.APIKeyMasked, plaintextKey[len(plaintextKey)-6:]) {
+			t.Fatalf("换密钥后列表仍暴露真实 Key 掩码：%q", item.APIKeyMasked)
+		}
+	}
+}

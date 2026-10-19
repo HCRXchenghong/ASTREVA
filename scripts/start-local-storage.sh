@@ -71,6 +71,14 @@ for _ in $(seq 1 30); do
 done
 docker exec astreva-cms-postgres pg_isready -U astreva_cms -d astreva_cms >/dev/null
 
+# Go 客服引擎用自己的库：它的 ensureCoreTables 会建 conversations/messages/sessions 等表，
+# 与后台 CMS 的表混在同一个库里容易重名冲突，因此单独建 astreva_engine（幂等）。
+if ! docker exec astreva-cms-postgres psql -U astreva_cms -d postgres -tAc \
+  "SELECT 1 FROM pg_database WHERE datname='astreva_engine'" | grep -q 1; then
+  echo "创建客服引擎数据库 astreva_engine（AI 供应商/绑定等数据持久化到这里）..."
+  docker exec astreva-cms-postgres psql -U astreva_cms -d postgres -c "CREATE DATABASE astreva_engine" >/dev/null
+fi
+
 for _ in $(seq 1 30); do
   curl -fsS "$S3_ENDPOINT/minio/health/live" >/dev/null && break
   sleep 1

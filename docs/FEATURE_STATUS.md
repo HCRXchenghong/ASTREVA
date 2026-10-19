@@ -72,7 +72,8 @@
 | 真实内容 | 控制台 → 内容管理 | 产品图/视频/参数/下载资料、法务文本、真实联系方式（当前为空占位） |
 | 域名与 TLS | `deployments/ubuntu/.env.ubuntu` | `PUBLIC_SITE_URL` 必须是真实域名，否则 canonical/hreflang/sitemap 全错、SEO 失效 |
 | 强随机密钥 | 同上 | `ADMIN_2FA_SESSION_SECRET`、`CMS_DATA_ENCRYPTION_KEY`（生产弱值会拒绝启动） |
-| AI 供应商 | AI 管理 → 模型供应商 + 能力绑定 | 建多组 URL/Key、一键取模型，给接待/翻译/SEO/生图绑定；未绑定时用系统设置里的旧上游 |
+| AI 供应商 | AI 管理 → 模型供应商 + 能力绑定 | 建多组 URL/Key、一键取模型，给接待/翻译/SEO/生图配候选链（可多个按优先级故障转移）；未绑定时用系统设置里的旧上游 |
+| 引擎数据库与加密密钥 | `deployments/ubuntu/.env.ubuntu` | `STORE_DRIVER=postgres` + `DATABASE_URL`（AI 供应商/绑定/候选链/知识库/会话都存这里；写 `memory` 一重启就丢）；`DATA_ENCRYPTION_KEY` 加密 AI 的 Key，**上线后切勿更换**（换了已存 Key 全部解不开） |
 | 推送凭证 | 系统 → 推送设置 | Firebase 服务账号、APNs `.p8`/Key ID/Team ID/Topic，然后真机验证锁屏与后台推送 |
 | 提醒渠道 | 系统 → 提醒设置 + 客服 App | SMTP 参数（邮箱提醒依赖它）；Telegram Bot Token/chat_id；Bark key |
 | 本地地理库 | 系统 → 访客画像（`geoip_db_path`） | 把 **GeoLite2 City CSV 目录**（Blocks-IPv4/IPv6 + Locations）挂进容器并填路径；也可改用第三方 IP 库 |
@@ -116,11 +117,12 @@
 |---|---|
 | `bash scripts/verify-all.sh`（11 步） | PASS 10 / FAIL 0 / SKIP 1（唯一 SKIP 是 `frontend/dist` 已存在时按设计跳过的桩构建） |
 | Go 后端 | `go test ./...` 全绿、`go vet`、`gofmt` 干净、关键包 `-race` 干净 |
-| **真实 PostgreSQL 集成测试** | **10 个用例通过**（偏好/知识库/供应商与绑定/限额/策略/队列与渠道/开放 API scopes/接管与无人值守/SLA 与转派/**访客画像**） |
+| **真实 PostgreSQL 集成测试** | **13 个用例通过**（偏好/知识库/供应商与绑定/限额/策略/队列与渠道/接管与无人值守/SLA 与转派/开放 API scopes/访客画像/会话画像外键/**候选供应商链**/**供应商与候选链重启持久化**） |
 | 控制台 | `npm run test:admin` 72 用例 / 68 通过 / 0 失败 / 4 跳过（需 Chrome 路径）；`tsc --noEmit -p admin-web/tsconfig.json` 无错误 |
 | App | `dart analyze`（含 tool/）No issues found；契约断言 76 + 画像断言 89 全通过 |
 | 前端契约 | `npm run cms:contract` 通过 |
 | 引擎端到端 | 真实 Go 引擎 + 真实 admin-server 解析客户端：供应商创建/掩码/一键取模型/绑定/禁用回退 5/5；知识库建库/导入/检索/设置/推荐发送 11 项 |
+| **AI 数据持久化（PostgreSQL）** | ① 真实 PG 集成测试 `TestPostgresAIPersistenceAcrossReopen`：建供应商+候选链后**关闭连接池、用同一 DSN 重开**，供应商/候选链顺序与启停/默认绑定全部读回，Key 从 `enc:v1:` 密文解密回原文；含判别性自检——**换一个 `DATA_ENCRYPTION_KEY` 重开必须读不出明文**（否则该断言恒真）。② 真实进程重启验证 `node scripts/verify-ai-persistence.mjs before\|after`：before 建供应商+候选链并连真实 MiMo（取到 9 个模型，141ms），**真杀进程重启引擎**后 after 5/5 PASS（供应商/字段/Key 掩码/候选链/真实上游连通）；`psql` 直查 `astreva_engine.ai_providers` 为 `enc:v1:...` 密文（113 字节），全表不含明文 Key。③ 切到数据库后故障转移回归 `verify-ai-failover.mjs` 仍 19/19 PASS |
 | **真实 AI 故障转移端到端** | `node scripts/verify-ai-failover.mjs` 19/19 PASS：真实 MiMo 供应商连通（一键取模型 9 个）；用控制台同一个 `PUT /api/admin/ai-binding-targets` 配 `reception=[坏供应商@0, MiMo@1]`；走公开 Open API 真实访客会话触发 AI 接待；断言①回复已产生 ②回复不等于 28 条本地兜底文案之一（证明真供应商作答，非兜底）③坏供应商健康显示失败信号与 `last_error`（证明 priority 0 先被真实尝试）④MiMo 保持健康；`finally` 逐项还原配置、删测试会话/应用/坏供应商。另有 10 项覆盖熔断：连发至 `state=open`（`consecutive_failures=3`、`opened_until` 剩余 ~25s）期间再发一条，仍由 MiMo 真作答，且坏供应商**失败数不增长、`opened_until` 不被重置**（证明是被跳过而非重拨），引擎日志同时记录 `attempted=1 skipped=1`；正向对照（熔断未打开时同样检查显示失败数 +1，证明该断言不是恒真）+ 负向对照（① 模型名改成不存在的名字 ② `ASTREVA_E2E_PHASE2_NEGATIVE_CONTROL=1` 跳过开熔断循环）两种情况下均正确 FAIL，证明断言非空转。诚实标注：HTTP 健康接口**没有**"已跳过"字段、`last_error` 在跳过时不更新，唯一显式信号是引擎日志那行；日志文件不可用时脚本会打印 NOTE 说明，不伪造信号 |
 
 ---

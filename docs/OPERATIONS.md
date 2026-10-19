@@ -233,11 +233,19 @@ docker rm -f astreva-pg-test
 
 ## AI 上游与自动翻译链路（运维视角）
 
+### 数据存哪里（供应商 / 绑定 / 候选链的持久化）
+- AI 供应商、能力绑定、**故障转移候选链**、知识库、会话与消息都由 Go 客服引擎写入 **PostgreSQL**（`ai_providers` / `ai_bindings` / `ai_binding_targets` 等表，随引擎启动的 `ensureCoreTables` 幂等建表）。
+- 引擎环境变量：`STORE_DRIVER=postgres` + `DATABASE_URL`（必填）；三套 Compose（`servicebridge/deployments/docker-compose.prod.example.yml`、`docker-compose.dev.yml`、`deployments/ubuntu/docker-compose.ubuntu.yml`）都已固定为 postgres。
+- **`STORE_DRIVER=memory` 只用于临时试验**：一重启，供应商、Key、绑定、会话全部丢失。本地调试栈 `scripts/run-local-stack.sh` 默认已是 postgres，并会自动建独立库 `astreva_engine`（与后台 CMS 分库，避免表名冲突）。
+- **`DATA_ENCRYPTION_KEY` 是 AI Key 的解密密钥，不能更换**：库内是 `enc:v1:` 密文，换掉密钥后已存的 Key 一律解不开（表现为控制台供应商不可用、测试连接失败）。本地栈首次启动会自动生成并写回 gitignored 的 `.env`；生产请在部署前固定写进 `.env.ubuntu`，并纳入密钥管理/备份。
+- 升级前建议跑一次真实库集成测试（见上文「真实 PostgreSQL 集成测试」），其中 `TestPostgresAIPersistenceAcrossReopen` 专门验证「关闭连接池后用同一 DSN 重开，供应商、候选链仍在，且 Key 能用同一密钥解密回原文；换密钥则读不出明文」。
+
 ### 配置
 - 控制台 **AI 管理 → 模型供应商**：可建多个上游（每组 URL + Key），保存后点「一键获取模型」把该上游可用模型拉下来，模型框变成下拉可任选；「测试连接」显示延迟与模型数。
-- **AI 管理 → 能力绑定**：接待 AI / 翻译 / 语言检测 / AI SEO / AI 生图 各自选一个供应商 + 模型。
+- **AI 管理 → 能力绑定**：接待 AI / 翻译 / 语言检测 / AI SEO / AI 生图 各自可挂**多个候选供应商**并按优先级排序（故障转移链）；候选全部失败才回退到「默认绑定（兜底）」。
 - 未绑定或供应商被禁用时，自动**回退到「系统设置」里的原有上游**，因此升级不会中断线上服务。
 - 语言检测默认在本地完成（脚本 + 词表，21 语种 + 方言标记），不消耗上游额度；`detection` 绑定只落库备用。
+- 供应商连续失败会触发熔断（默认 3 次失败打开 30s、401/403 打开 5 分钟、冷却后半开单次探测），控制台「能力绑定」页显示正常 / 熔断中（剩余冷却倒计时）/ 半开探测与连续失败数。
 
 ### 密钥与安全
 - API Key 一律 AES-256-GCM 加密入库，控制台只显示末四位掩码；日志中不落明文。
