@@ -70,6 +70,9 @@ const PORT = Number(process.env.PORT || 1337);
 const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_ORIGIN = process.env.PUBLIC_ADMIN_ORIGIN || `http://${HOST}:${PORT}`;
 const SITE_ORIGIN = process.env.PUBLIC_SITE_URL || process.env.FRONTEND_SITE_ORIGIN || 'http://127.0.0.1:4321';
+// 控制台的公网地址（反向代理后 Host 可能与后端不同），用于同源判定。
+const PUBLIC_ADMIN_URL = process.env.PUBLIC_ADMIN_URL || process.env.PUBLIC_ADMIN_ORIGIN || '';
+
 const REBUILD_URL = process.env.FRONTEND_REBUILD_WEBHOOK_URL || 'http://127.0.0.1:8787/rebuild';
 const SERVICEBRIDGE_API_URL = normalizeServiceBridgeUrl(process.env.SERVICEBRIDGE_API_URL || 'http://127.0.0.1:8080');
 const SERVICEBRIDGE_ADMIN_ACCOUNT = process.env.SERVICEBRIDGE_ADMIN_ACCOUNT || 'superadmin';
@@ -2418,7 +2421,34 @@ function adminOriginAllowed(req, pathname) {
   if (pathname === '/site-admin-api/leads' || pathname === '/site-admin-api/analytics/visit') return true;
   const origin = String(req.headers.origin || '').replace(/\/$/, '');
   if (!origin) return true; // 命令行/自动化工具不带 Origin
-  return ADMIN_CORS_ALLOWED_ORIGINS.has(origin);
+  if (ADMIN_CORS_ALLOWED_ORIGINS.has(origin)) return true;
+  // 控制台自身的来源必须放行：admin-server 就是控制台的宿主，「同源」请求不可能是 CSRF。
+  // 之前只比对 ADMIN_CORS_ALLOWED_ORIGINS（那是给官网跨域用的），一旦没把控制台地址写进去，
+  // 浏览器里所有写操作（保存内容、上传素材、AI 设置、营业时间、推送、提醒…）都会 403。
+  return isSameOriginRequest(req, origin);
+}
+
+/** 判断 Origin 是否与控制台自身同源（含反向代理的 X-Forwarded-Host 与配置的公网控制台地址）。 */
+function isSameOriginRequest(req, origin) {
+  let originHost = '';
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return false;
+  }
+  if (!originHost) return false;
+  const candidates = new Set();
+  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const host = String(req.headers.host || '').trim();
+  if (host) candidates.add(host);
+  if (forwardedHost) candidates.add(forwardedHost);
+  try {
+    candidates.add(new URL(PUBLIC_ADMIN_URL).host);
+  } catch {}
+  for (const candidate of candidates) {
+    if (candidate && candidate === originHost) return true;
+  }
+  return false;
 }
 
 /** 托管 Arco 控制台；首页 index.html 由 SPA 自己决定跳登录还是工作台。 */

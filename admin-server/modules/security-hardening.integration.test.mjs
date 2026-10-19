@@ -113,6 +113,20 @@ test('安全加固：登录锁定、2FA 重放、会话撤销、响应头、来�
     });
     assert.equal(blockedOrigin.status, 403);
 
+    // 4b) 控制台自身来源（同源）必须放行：否则浏览器里所有写操作都会 403。
+    //     这是真实发生过的故障——本地 ADMIN_CORS_ALLOWED_ORIGINS 指向官网地址，
+    //     控制台自己的 Origin 不在白名单里，保存营业时间/推送/提醒/素材/AI 设置全部被拦。
+    //     这里故意用不存在的 section：请求会通过来源校验、随后因参数非法被拒，
+    //     既能证明"同源不被 403 拦"，又不会真的改动内容（否则会 bump revision，
+    //     让后面用同一 revision 的保存步骤变成 409 版本冲突）。
+    const sameOriginWrite = await fetch(`${base}/site-admin-api/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: session.cookieHeader, Origin: base },
+      body: JSON.stringify({ section: '__origin_probe__', data: {}, revision: bootstrap.data.contentRevision })
+    });
+    assert.notEqual(sameOriginWrite.status, 403, '控制台同源写请求不应被来源校验拒绝');
+    assert.equal(sameOriginWrite.status, 400, '非法 section 应通过来源校验后被参数校验拒绝');
+
     // 5) 富文本消毒：脚本与事件处理器写入前被清除
     const content = await (await fetch(`${base}/site-admin-api/public-content`)).json();
     const payload = structuredClone(content.data);
