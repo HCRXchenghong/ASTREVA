@@ -360,11 +360,19 @@ else
         run_with_timeout 300 go test ./internal/store/ -run TestPostgres -count=1); then
         pg_ok=1
       fi
+      # 后台控制台的 Postgres 分支也要在真实库上过一遍：数据看板的「访问趋势」是手写 SQL，
+      # 只用 JSON 分支跑测试的话，参数编号写错（$1 未被引用）这种问题会漏到线上变成 500。
+      if [[ "$pg_ok" == "1" ]]; then
+        if ! TEST_DATABASE_URL="postgres://postgres:verify@127.0.0.1:${PG_PORT}/astreva_verify?sslmode=disable" \
+          run_with_timeout 300 node --test admin-server/modules/analytics-postgres.integration.test.mjs; then
+          pg_ok=0
+        fi
+      fi
       docker rm -f astreva-verify-pg >/dev/null 2>&1 || true
       if [[ "$pg_ok" == "1" ]]; then
         mark_pass
       else
-        fatal "PostgreSQL 集成测试失败（真实库建表/升级/读写或分页查询有问题）"
+        fatal "PostgreSQL 集成测试失败（真实库建表/升级/读写、分页查询或控制台看板 SQL 有问题）"
       fi
     fi
   fi

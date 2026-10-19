@@ -292,6 +292,18 @@ export function createSystemRouter({
           json(res, 200, { data: { ...found, source: 'visit', category: 'visit', level: 'info' } });
           return true;
         }
+        // 客服引擎的审计日志只存在于引擎库里（列表里 id 形如 sbaudit_xxx），
+        // 早先这里直接落到本地事件表查询，所以点开引擎行永远 404「日志不存在或已过期」。
+        // 现在按同一份列表精确回查该条目，找不到才是真的过期。
+        if (id.startsWith('sbaudit_')) {
+          const entry = (await bridgeAuditEntries(200)).find((item) => item.id === id);
+          if (!entry) {
+            json(res, 404, { error: { message: '该审计日志已超出可读取范围（引擎侧只保留最近 200 条）。' } });
+            return true;
+          }
+          json(res, 200, { data: entry });
+          return true;
+        }
         const event = await platformStore.systemEventById(id);
         if (!event) {
           json(res, 404, { error: { message: '日志不存在或已过期。' } });

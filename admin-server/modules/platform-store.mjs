@@ -918,13 +918,17 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
       [todayStart, monthStart, monthEnd]
     );
     const seriesResult = await query(
-      `SELECT to_char(date_trunc('day', occurred_at AT TIME ZONE $4), 'YYYY-MM-DD') AS day,
+      // 真正的坑：参数必须从 $1 连续编号。这条查询只用到月份区间和时区，若照抄上面汇总查询的
+      // $2/$3/$4，$1 就成了"从未被引用的参数"，PostgreSQL 无法推断其类型并直接报
+      // "could not determine data type of parameter $1"，导致整个看板 500。
+      // （`AT TIME ZONE` 右侧本有 text/interval 两个重载，这里显式 ::text 作为消歧保险。）
+      `SELECT to_char(date_trunc('day', occurred_at AT TIME ZONE $3::text), 'YYYY-MM-DD') AS day,
               count(*)::int AS pv,
               count(DISTINCT visitor_id)::int AS uv
        FROM site_analytics_visits
-       WHERE is_bot = false AND occurred_at >= $2 AND occurred_at < $3
+       WHERE is_bot = false AND occurred_at >= $1 AND occurred_at < $2
        GROUP BY 1 ORDER BY 1`,
-      [todayStart, monthStart, monthEnd, tz]
+      [monthStart, monthEnd, tz]
     );
     const row = summary.rows[0] || {};
     const leadRow = leadSummary.rows[0] || {};
