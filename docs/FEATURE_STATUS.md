@@ -117,7 +117,7 @@
 | `bash scripts/verify-all.sh`（11 步） | PASS 10 / FAIL 0 / SKIP 1（唯一 SKIP 是 `frontend/dist` 已存在时按设计跳过的桩构建） |
 | Go 后端 | `go test ./...` 全绿、`go vet`、`gofmt` 干净、关键包 `-race` 干净 |
 | **真实 PostgreSQL 集成测试** | **10 个用例通过**（偏好/知识库/供应商与绑定/限额/策略/队列与渠道/开放 API scopes/接管与无人值守/SLA 与转派/**访客画像**） |
-| 控制台 | `npm run test:admin` 66 用例 / 62 通过 / 0 失败 / 4 跳过（需 Chrome 路径） |
+| 控制台 | `npm run test:admin` 72 用例 / 68 通过 / 0 失败 / 4 跳过（需 Chrome 路径）；`tsc --noEmit -p admin-web/tsconfig.json` 无错误 |
 | App | `dart analyze`（含 tool/）No issues found；契约断言 76 + 画像断言 89 全通过 |
 | 前端契约 | `npm run cms:contract` 通过 |
 | 引擎端到端 | 真实 Go 引擎 + 真实 admin-server 解析客户端：供应商创建/掩码/一键取模型/绑定/禁用回退 5/5；知识库建库/导入/检索/设置/推荐发送 11 项 |
