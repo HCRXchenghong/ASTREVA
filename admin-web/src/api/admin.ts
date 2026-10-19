@@ -395,6 +395,12 @@ export const testAlertChannel = (payload: {
   client
     .post(bridge('/api/admin/alert-channels/test'), payload)
     .then((r) => r.data);
+// 已保存渠道的测试发送：用 {id} 让服务端读取已存配置（尤其是密钥），
+// 前端不需要、也无法回传掩码后的密钥。后端发送失败返回 200 + {ok:false,message}。
+export const testSavedAlertChannel = (id: string) =>
+  client
+    .post(bridge('/api/admin/alert-channels/test'), { id })
+    .then((r) => r.data);
 
 // ---------- 站点后台：bootstrap（含咨询单）/ 发布状态 ----------
 export const fetchBootstrap = () =>
@@ -453,8 +459,10 @@ export const purgeSystemEvents = (payload: Record<string, unknown> = {}) =>
     .then((r) => r.data);
 
 // ---------- 访客画像（P5） ----------
-// 契约冻结：GET/PATCH /api/admin/visitor-profile/settings -> {settings:{...}}；
-// PATCH 为局部更新，third_party_key 不传=不改、传 ""=清除。
+// 契约冻结：GET/PATCH /api/admin/visitor-profile/settings -> {settings:{...}}（注意画像设置是**单数**；
+// 列表与详情才是复数 /api/admin/visitor-profiles）。
+// PATCH 为局部更新：third_party_key 不传=不改、传 ""=清除；
+// retention_days 省略=不改，0=永久保留，其余必须是 7–3650（控制台给 30/90/180），非法值返回 400。
 export const fetchVisitorProfileSettings = () =>
   client
     .get(bridge('/api/admin/visitor-profile/settings'))

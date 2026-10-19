@@ -128,6 +128,51 @@
           </div>
         </a-form-item>
 
+        <a-divider orientation="left">数据保留</a-divider>
+
+        <!-- 保留天数走同一个画像设置接口（单数 visitor-profile/settings），
+             但独立保存：后端未提供 retention_days 时明确提示并禁用，而不是白屏或反复报错。 -->
+        <a-alert
+          v-if="retentionSupported === false"
+          class="tips"
+          type="warning"
+          show-icon
+          data-testid="vps-retention-unsupported"
+        >
+          后端未提供访客画像保留天数设置（接口未部署，或响应里没有 retention_days），该项暂不可用，其他画像设置不受影响。
+        </a-alert>
+        <a-form-item v-else label="访客画像保留天数">
+          <div class="retention-row" data-testid="vps-retention-days">
+            <a-select
+              v-model="retentionDays"
+              :options="retentionOptions"
+              :disabled="retentionSaving || retentionSupported !== true"
+              style="width: 240px"
+              data-testid="vps-retention-select"
+            />
+            <a-button
+              type="primary"
+              :loading="retentionSaving"
+              :disabled="retentionSupported !== true"
+              data-testid="vps-retention-save"
+              @click="saveRetention"
+            >
+              保存保留天数
+            </a-button>
+          </div>
+          <a-typography-text type="secondary" class="hint">
+            超期画像由后台巡检自动清理；0 表示永久保留。此处只提交 retention_days，不会覆盖其他画像设置。
+          </a-typography-text>
+          <a-typography-text
+            v-if="retentionError"
+            type="error"
+            class="hint"
+            data-testid="vps-retention-error"
+          >
+            {{ retentionError }}
+          </a-typography-text>
+        </a-form-item>
+
         <a-divider orientation="left">隐私</a-divider>
 
         <a-form-item label="显示完整 IP">
@@ -180,6 +225,32 @@
   const thirdPartyKey = ref('');
   const clearThirdPartyKey = ref(false);
 
+  // 保留天数：契约只允许 0（永久）或 7–3650 天；控制台常规给 30/90/180。
+  const RETENTION_DAYS_DEFAULT = 180;
+  const RETENTION_PRESETS = [30, 90, 180];
+  // null = 尚未探测；false = 后端未提供（接口 404 / 响应缺字段）；true = 可用。
+  const retentionSupported = ref<boolean | null>(null);
+  const retentionDays = ref<number>(RETENTION_DAYS_DEFAULT);
+  const retentionSaving = ref(false);
+  const retentionError = ref('');
+
+  const retentionOptions = computed(() => {
+    const values = [...RETENTION_PRESETS];
+    const current = Number(retentionDays.value);
+    // 服务端若返回非预设值（如 60），原样保留，避免悄悄改回预设值。
+    if (Number.isFinite(current) && current !== 0 && !values.includes(current)) {
+      values.push(current);
+      values.sort((a, b) => a - b);
+    }
+    return [
+      ...values.map((value) => ({
+        label: value === RETENTION_DAYS_DEFAULT ? `${value} 天（默认）` : `${value} 天`,
+        value,
+      })),
+      { label: '永久保留（不自动清理）', value: 0 },
+    ];
+  });
+
   const form = reactive({
     enabled: true,
     geoip_db_path: '',
@@ -229,6 +300,21 @@
       ai_summary_every_messages: intOr(next.ai_summary_every_messages, 10),
       show_full_ip: boolOr(next.show_full_ip, true),
     });
+    // retention_days 是新契约字段：响应里没有就视为后端未提供，禁用该项而不是猜一个值。
+    if (
+      Object.prototype.hasOwnProperty.call(next, 'retention_days') &&
+      next.retention_days !== null &&
+      next.retention_days !== undefined
+    ) {
+      const parsed = Number(next.retention_days);
+      retentionSupported.value = true;
+      retentionDays.value = Number.isFinite(parsed)
+        ? parsed
+        : RETENTION_DAYS_DEFAULT;
+      retentionError.value = '';
+    } else if (retentionSupported.value === null) {
+      retentionSupported.value = false;
+    }
     thirdPartyKey.value = '';
     clearThirdPartyKey.value = false;
   }
@@ -241,8 +327,39 @@
       applySettings(payload?.settings ?? payload ?? {});
     } catch (reason: any) {
       loadError.value = backendMessage(reason, '画像设置加载失败，请稍后重试。');
+      // 接口整体不可用时，保留天数同样视为不可用，避免小白屏或误报可保存。
+      if (retentionSupported.value === null) retentionSupported.value = false;
     } finally {
       loading.value = false;
+    }
+  }
+
+  // 保留天数单独保存：只提交 retention_days，不碰其他画像设置字段。
+  async function saveRetention() {
+    if (retentionSupported.value !== true) {
+      Message.warning('后端未提供该设置');
+      return;
+    }
+    retentionSaving.value = true;
+    retentionError.value = '';
+    try {
+      const payload = await updateVisitorProfileSettings({
+        retention_days: Number(retentionDays.value),
+      });
+      const next = payload?.settings ?? payload;
+      if (next && typeof next === 'object' && Object.keys(next).length) {
+        applySettings(next);
+      }
+      Message.success('访客画像保留天数已保存');
+      emit('saved', settings.value);
+    } catch (reason: any) {
+      const status = Number(reason?.response?.status || 0);
+      retentionError.value =
+        status === 404
+          ? '后端未提供该设置（接口返回 404），保留天数暂不可用。'
+          : backendMessage(reason, '保留天数保存失败，请稍后重试。');
+    } finally {
+      retentionSaving.value = false;
     }
   }
 
@@ -319,6 +436,12 @@
       align-items: center;
       gap: 10px;
       margin-top: 4px;
+    }
+    .retention-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
     }
   }
 </style>

@@ -1,6 +1,5 @@
 <template>
   <a-card :bordered="false" class="limits-page">
-    <template #title>限额</template>
     <template #extra>
       <a-space>
         <a-button :loading="loading" @click="load">刷新</a-button>

@@ -6,7 +6,7 @@
     </template>
     <a-alert class="tips" type="info">
       统一维护文本 / 生图模型的上游供应商，密钥加密入库、只回显末四位。
-      每项能力用哪个供应商由「AI 管理 → 能力绑定」决定。
+      每项能力用哪个供应商由「AI 管理 → 能力绑定」页签决定。
     </a-alert>
     <a-table :data="providers" :loading="loading" :pagination="false" row-key="id">
       <template #columns>

@@ -1,65 +1,86 @@
 <template>
   <a-card :bordered="false">
     <template #title>App 版本</template>
-    <a-row :gutter="16">
-      <a-col :span="10">
-        <a-card :bordered="false" class="inner" title="上传新版本">
-          <a-form :model="form" layout="vertical">
-            <a-form-item label="平台">
-              <a-select v-model="form.platform" :options="platformOptions" />
-            </a-form-item>
-            <a-form-item label="版本号（如 1.2.0）" required>
-              <a-input v-model="form.version_name" />
-            </a-form-item>
-            <a-form-item label="版本代码（整数，递增）" required>
-              <a-input-number v-model="form.version_code" :min="1" />
-            </a-form-item>
-            <a-form-item label="安装包文件" required>
-              <a-upload :auto-upload="false" :limit="1" accept=".apk,.ipa" @change="onFileChange" />
-            </a-form-item>
-            <a-form-item label="更新说明">
-              <a-textarea v-model="form.release_notes" :auto-size="{ minRows: 3 }" />
-            </a-form-item>
-            <a-form-item>
-              <a-checkbox v-model="form.force_update">强制更新（低于此版本必须升级）</a-checkbox>
-            </a-form-item>
-            <a-button type="primary" long :loading="uploading" @click="submit">上传并发布</a-button>
-          </a-form>
-        </a-card>
-      </a-col>
-      <a-col :span="14">
-        <a-card :bordered="false" class="inner" title="版本列表">
-          <a-table :data="releases" :loading="loading" :pagination="false" row-key="id">
-            <template #columns>
-              <a-table-column title="版本" data-index="version_name" />
-              <a-table-column title="平台" data-index="platform" />
-              <a-table-column title="大小">
-                <template #cell="{ record }">{{ bytes(record.file_size) }}</template>
-              </a-table-column>
-              <a-table-column title="更新类型">
-                <template #cell="{ record }">
-                  <a-tag :color="record.force_update ? 'red' : 'arcoblue'">{{ record.force_update ? '强制更新' : '可选更新' }}</a-tag>
-                </template>
-              </a-table-column>
-              <a-table-column title="状态">
-                <template #cell="{ record }">
-                  <a-tag :color="record.enabled ? 'green' : 'gray'">{{ record.enabled ? '启用' : '停用' }}</a-tag>
-                </template>
-              </a-table-column>
-              <a-table-column title="操作" :width="220">
-                <template #cell="{ record }">
-                  <a-space wrap>
-                    <a-link @click="toggleEnabled(record)">{{ record.enabled ? '停用' : '启用' }}</a-link>
-                    <a-link @click="toggleForce(record)">{{ record.force_update ? '改为可选' : '设为强制' }}</a-link>
-                    <a-link status="danger" @click="remove(record)">删除</a-link>
-                  </a-space>
-                </template>
-              </a-table-column>
-            </template>
-          </a-table>
-        </a-card>
-      </a-col>
-    </a-row>
+    <template #extra>
+      <a-space>
+        <a-button :loading="loading" @click="load">刷新</a-button>
+        <a-button type="primary" @click="openUpload">上传新版本</a-button>
+      </a-space>
+    </template>
+
+    <a-table :data="releases" :loading="loading" :pagination="false" row-key="id">
+      <template #columns>
+        <a-table-column title="版本" data-index="version_name" />
+        <a-table-column title="平台" data-index="platform" />
+        <a-table-column title="大小">
+          <template #cell="{ record }">{{ bytes(record.file_size) }}</template>
+        </a-table-column>
+        <a-table-column title="更新类型">
+          <template #cell="{ record }">
+            <a-tag :color="record.force_update ? 'red' : 'arcoblue'">{{ record.force_update ? '强制更新' : '可选更新' }}</a-tag>
+          </template>
+        </a-table-column>
+        <a-table-column title="状态">
+          <template #cell="{ record }">
+            <a-tag :color="record.enabled ? 'green' : 'gray'">{{ record.enabled ? '启用' : '停用' }}</a-tag>
+          </template>
+        </a-table-column>
+        <a-table-column title="操作" :width="220">
+          <template #cell="{ record }">
+            <a-space wrap>
+              <a-link @click="toggleEnabled(record)">{{ record.enabled ? '停用' : '启用' }}</a-link>
+              <a-link @click="toggleForce(record)">{{ record.force_update ? '改为可选' : '设为强制' }}</a-link>
+              <a-link status="danger" @click="remove(record)">删除</a-link>
+            </a-space>
+          </template>
+        </a-table-column>
+      </template>
+      <template #empty>
+        <a-empty description="暂无已上传的版本" />
+      </template>
+    </a-table>
+
+    <a-modal
+      v-model:visible="uploadVisible"
+      title="上传新版本"
+      :width="640"
+      ok-text="上传并发布"
+      cancel-text="取消"
+      :ok-loading="uploading"
+      :on-before-ok="submit"
+      unmount-on-close
+      @cancel="resetForm"
+    >
+      <a-alert class="tips" type="info">
+        安装包为 .apk / .ipa；版本代码必须是递增的整数，App 端按它判断升级。
+      </a-alert>
+      <a-form :model="form" layout="vertical">
+        <a-form-item label="平台">
+          <a-select v-model="form.platform" :options="platformOptions" />
+        </a-form-item>
+        <a-form-item label="版本号（如 1.2.0）" required>
+          <a-input v-model="form.version_name" placeholder="1.2.0" />
+        </a-form-item>
+        <a-form-item label="版本代码（整数，递增）" required>
+          <a-input-number v-model="form.version_code" :min="1" style="width: 200px" />
+        </a-form-item>
+        <a-form-item label="安装包文件" required>
+          <a-upload
+            v-model:file-list="fileList"
+            :auto-upload="false"
+            :limit="1"
+            accept=".apk,.ipa"
+            @change="onFileChange"
+          />
+        </a-form-item>
+        <a-form-item label="更新说明">
+          <a-textarea v-model="form.release_notes" :auto-size="{ minRows: 3 }" />
+        </a-form-item>
+        <a-form-item>
+          <a-checkbox v-model="form.force_update">强制更新（低于此版本必须升级）</a-checkbox>
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </a-card>
 </template>
 
@@ -71,7 +92,9 @@
   const releases = ref<any[]>([]);
   const loading = ref(false);
   const uploading = ref(false);
+  const uploadVisible = ref(false);
   const file = ref<File | null>(null);
+  const fileList = ref<any[]>([]);
   const form = reactive({
     platform: 'android',
     version_name: '',
@@ -96,6 +119,21 @@
     file.value = currentFile?.file?.originFile || currentFile?.file || null;
   }
 
+  function resetForm() {
+    form.version_name = '';
+    form.release_notes = '';
+    form.force_update = false;
+    form.version_code = 1;
+    form.platform = 'android';
+    file.value = null;
+    fileList.value = [];
+  }
+
+  function openUpload() {
+    resetForm();
+    uploadVisible.value = true;
+  }
+
   async function load() {
     loading.value = true;
     try {
@@ -105,14 +143,15 @@
     }
   }
 
-  async function submit() {
+  // 通过 a-modal 的 on-before-ok 提交：校验失败返回 false，弹窗不关闭。
+  async function submit(): Promise<boolean> {
     if (!form.version_name.trim() || !form.version_code) {
       Message.warning('请填写版本号与版本代码');
-      return;
+      return false;
     }
     if (!file.value) {
       Message.warning('请选择安装包文件');
-      return;
+      return false;
     }
     const data = new FormData();
     data.append('platform', form.platform);
@@ -125,11 +164,15 @@
     try {
       await uploadRelease(data);
       Message.success('新版本已上传');
-      form.version_name = '';
-      form.release_notes = '';
-      form.force_update = false;
-      file.value = null;
       await load();
+      return true;
+    } catch (reason: any) {
+      Message.error(
+        reason?.response?.data?.error?.message ||
+          reason?.message ||
+          '上传失败，请稍后重试。'
+      );
+      return false;
     } finally {
       uploading.value = false;
     }
@@ -159,7 +202,7 @@
 </script>
 
 <style scoped>
-  .inner {
-    height: 100%;
+  .tips {
+    margin-bottom: 14px;
   }
 </style>

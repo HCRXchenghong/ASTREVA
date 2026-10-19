@@ -1,7 +1,6 @@
 <template>
-  <a-card :bordered="false" class="queue-page">
-    <template #title>排队队列</template>
-    <template #extra>
+  <div class="queue-panel" data-testid="queue-panel">
+    <div class="panel-head">
       <a-space>
         <a-typography-text type="secondary" data-testid="queue-total">
           排队中 {{ items.length }} 个会话
@@ -9,14 +8,14 @@
         <a-typography-text type="secondary" data-testid="queue-max-wait">
           最长等待 {{ formatDuration(maxWaitingSeconds) }}
         </a-typography-text>
-        <a-button :loading="loading" data-testid="queue-refresh" @click="load">
-          刷新
-        </a-button>
       </a-space>
-    </template>
+      <a-button :loading="loading" size="small" data-testid="queue-refresh" @click="load">
+        刷新
+      </a-button>
+    </div>
 
     <a-alert class="tips" type="info">
-      列表每 10 秒自动刷新（页面切到后台时暂停）；等待时长按进入队列时间实时计算。
+      列表每 10 秒自动刷新（弹窗关闭或页面切到后台时暂停）；等待时长按进入队列时间实时计算。
     </a-alert>
 
     <a-alert v-if="loadError" class="banner" type="error" show-icon>
@@ -31,10 +30,11 @@
       :loading="loading"
       :pagination="false"
       row-key="conversation_id"
+      size="small"
       data-testid="queue-table"
     >
       <template #columns>
-        <a-table-column title="会话 ID" :width="220">
+        <a-table-column title="会话 ID" :width="200">
           <template #cell="{ record }">
             <a-typography-text :title="record.conversation_id">
               {{ shortId(record.conversation_id) }}
@@ -42,22 +42,16 @@
           </template>
         </a-table-column>
         <a-table-column title="访客名">
-          <template #cell="{ record }">
-            {{ visitorName(record) }}
-          </template>
+          <template #cell="{ record }">{{ visitorName(record) }}</template>
         </a-table-column>
         <a-table-column title="分组">
-          <template #cell="{ record }">
-            {{ record.group_name || '未分组' }}
-          </template>
+          <template #cell="{ record }">{{ record.group_name || '未分组' }}</template>
         </a-table-column>
-        <a-table-column title="优先级" data-index="priority" :width="100" />
-        <a-table-column title="进入队列时间" :width="180">
-          <template #cell="{ record }">
-            {{ localTime(record.enqueued_at) }}
-          </template>
+        <a-table-column title="优先级" data-index="priority" :width="90" />
+        <a-table-column title="进入队列时间" :width="170">
+          <template #cell="{ record }">{{ localTime(record.enqueued_at) }}</template>
         </a-table-column>
-        <a-table-column title="已等待时长" :width="140">
+        <a-table-column title="已等待时长" :width="130">
           <template #cell="{ record }">
             <!-- 显式依赖 now，保证每秒重新渲染等待时长 -->
             <span :data-testid="`queue-waiting-${record.conversation_id}`">
@@ -65,7 +59,7 @@
             </span>
           </template>
         </a-table-column>
-        <a-table-column title="操作" :width="170">
+        <a-table-column title="操作" :width="160">
           <template #cell="{ record }">
             <a-space>
               <a-link @click="openConversation(record)">查看会话</a-link>
@@ -82,16 +76,15 @@
     <a-typography-text type="secondary" class="footnote">
       提示：点「查看会话」会跳到「运营中心 → 询盘管理」并自动选中该会话；若会话已结束则无法打开。
     </a-typography-text>
-  </a-card>
+  </div>
 </template>
 
 <script lang="ts" setup>
   import { computed, onMounted, onUnmounted, ref } from 'vue';
-  import { useRouter } from 'vue-router';
   import { Message } from '@arco-design/web-vue';
   import { fetchServiceQueue } from '@/api/admin';
 
-  const router = useRouter();
+  const emit = defineEmits<{ (e: 'navigate', conversationId: string): void }>();
 
   // 自动刷新间隔；页面隐藏（document.hidden）时跳过本轮，回到前台后自然恢复。
   const REFRESH_MS = 10_000;
@@ -161,6 +154,15 @@
     return `${minutes} 分 ${total % 60} 秒`;
   }
 
+  function openConversation(record: any) {
+    const id = String(record?.conversation_id ?? '');
+    if (!id) {
+      Message.warning('该会话没有 ID');
+      return;
+    }
+    emit('navigate', id);
+  }
+
   async function copyId(record: any) {
     const id = String(record?.conversation_id ?? '');
     if (!id) {
@@ -210,6 +212,12 @@
 </script>
 
 <style scoped lang="less">
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
   .tips {
     margin-bottom: 14px;
   }

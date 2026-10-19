@@ -4,7 +4,7 @@ export default {
   path: '/ai',
   name: 'AiRoot',
   component: DEFAULT_LAYOUT,
-  redirect: '/ai/reception',
+  redirect: '/ai/manage',
   meta: {
     title: 'AI 管理',
     locale: 'AI 管理',
@@ -15,30 +15,22 @@ export default {
   },
   children: [
     {
-      path: 'reception',
-      name: 'AiReception',
-      component: () => import('@/views/ai/reception.vue'),
-      meta: { title: '接待 AI', locale: '接待 AI', requiresAuth: true },
+      // AI 管理：接待 AI / 翻译 AI / AI SEO / AI 生图 的能力参数 + 能力绑定（故障转移链）+ 限额。
+      // alias 保留全部旧入口（含 system.ts 里 /system/ai 的跳转、素材库里的「前往 AI 生图」），
+      // 旧路径会落到对应的页签（manage.vue 按路径末段选页签）。
+      path: 'manage',
+      alias: [
+        '/ai/reception',
+        '/ai/image',
+        '/ai/seo',
+        '/ai/translation',
+        '/ai/bindings',
+        '/ai/limits',
+      ],
+      name: 'AiManage',
+      component: () => import('@/views/ai/manage.vue'),
+      meta: { title: 'AI 管理', locale: 'AI 管理', requiresAuth: true },
     },
-    {
-      path: 'image',
-      name: 'AiImage',
-      component: () => import('@/views/ai/image.vue'),
-      meta: { title: 'AI 生图', locale: 'AI 生图', requiresAuth: true },
-    },
-    {
-      path: 'seo',
-      name: 'AiSeo',
-      component: () => import('@/views/ai/seo.vue'),
-      meta: { title: 'AI SEO', locale: 'AI SEO', requiresAuth: true },
-    },
-    {
-      path: 'translation',
-      name: 'AiTranslation',
-      component: () => import('@/views/ai/translation.vue'),
-      meta: { title: '翻译 AI', locale: '翻译 AI', requiresAuth: true },
-    },
-    // 多供应商与能力绑定是静态子路径，放在其它子路由之后，避免与既有 path 冲突。
     {
       path: 'providers',
       name: 'AiProviders',
@@ -46,22 +38,10 @@ export default {
       meta: { title: '模型供应商', locale: '模型供应商', requiresAuth: true },
     },
     {
-      path: 'bindings',
-      name: 'AiBindings',
-      component: () => import('@/views/ai/bindings.vue'),
-      meta: { title: '能力绑定', locale: '能力绑定', requiresAuth: true },
-    },
-    {
       path: 'knowledge',
       name: 'AiKnowledge',
       component: () => import('@/views/ai/knowledge.vue'),
       meta: { title: '知识库', locale: '知识库', requiresAuth: true },
-    },
-    {
-      path: 'limits',
-      name: 'AiLimits',
-      component: () => import('@/views/ai/limits.vue'),
-      meta: { title: '限额', locale: '限额', requiresAuth: true },
     },
   ],
 };

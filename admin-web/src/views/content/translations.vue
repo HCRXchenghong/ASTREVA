@@ -102,88 +102,24 @@
           </a-col>
         </a-row>
 
-        <a-card class="panel" title="自动翻译上游">
+        <a-card class="panel" title="翻译执行参数">
           <template #extra>
-            <a-tag :color="form.apiKeyConfigured ? 'green' : 'gray'">
-              {{ form.apiKeyConfigured ? 'Key 已配置（加密存储）' : 'Key 未配置' }}
-            </a-tag>
+            <a-space wrap>
+              <a-tag :color="upstreamReady ? 'green' : 'gray'">
+                {{ upstreamReady ? '上游已配置' : '上游未配置' }}
+              </a-tag>
+              <a-button size="small" @click="goAiManage">配置翻译上游</a-button>
+            </a-space>
           </template>
 
           <a-form :model="form" layout="vertical" @submit="saveSettings">
             <a-row :gutter="16">
-              <a-col :span="24">
-                <a-form-item>
-                  <a-space>
-                    <a-switch v-model="form.enabled" />
-                    <span>中文保存后自动翻译</span>
-                  </a-space>
-                </a-form-item>
-              </a-col>
-
-              <a-col :xs="24" :md="12">
-                <a-form-item label="API 类型">
-                  <a-select v-model="form.apiType" :options="apiTypeOptions" />
-                </a-form-item>
-              </a-col>
-              <a-col :xs="24" :md="12">
-                <a-form-item label="上游地址">
-                  <a-input
-                    v-model="form.baseUrl"
-                    placeholder="https://api.openai.com/v1"
-                    allow-clear
-                  />
-                </a-form-item>
-              </a-col>
-
-              <a-col :xs="24" :md="12">
-                <a-form-item label="API Key">
-                  <a-input-password
-                    v-model="form.apiKey"
-                    autocomplete="new-password"
-                    allow-clear
-                    :placeholder="form.apiKeyConfigured ? '留空表示保留现有 Key' : '请输入上游 API Key'"
-                  />
-                  <template #extra>
-                    {{
-                      form.apiKeyConfigured
-                        ? `已配置（${form.apiKeyMasked}），页面与接口都不会回显明文`
-                        : '尚未配置，填写并保存后即可启用自动翻译'
-                    }}
-                  </template>
-                </a-form-item>
-              </a-col>
-
-              <a-col :xs="24" :md="12">
-                <a-form-item label="翻译模型">
-                  <div class="model-row">
-                    <a-select
-                      v-model="form.model"
-                      class="model-select"
-                      :options="modelOptions"
-                      allow-create
-                      allow-search
-                      placeholder="请选择或输入模型"
-                    />
-                    <a-button
-                      :loading="fetchingModels"
-                      :disabled="busy && !fetchingModels"
-                      @click="loadModels"
-                    >
-                      从上游获取模型
-                    </a-button>
-                  </div>
-                  <template #extra>
-                    共 {{ modelOptions.length }} 个可选模型，可直接输入自定义模型名。
-                  </template>
-                </a-form-item>
-              </a-col>
-
-              <a-col :xs="12" :md="6">
+              <a-col :xs="24" :md="8">
                 <a-form-item label="每批文案数">
                   <a-input-number v-model="form.batchSize" :min="5" :max="100" style="width: 100%" />
                 </a-form-item>
               </a-col>
-              <a-col :xs="12" :md="6">
+              <a-col :xs="24" :md="8">
                 <a-form-item label="超时（秒）">
                   <a-input-number
                     v-model="form.timeoutSeconds"
@@ -193,29 +129,24 @@
                   />
                 </a-form-item>
               </a-col>
-
-              <a-col :span="24">
-                <a-space wrap>
+              <a-col :xs="24" :md="8">
+                <a-form-item label=" ">
                   <a-button
                     type="primary"
                     :loading="saving"
                     :disabled="busy && !saving"
                     @click="saveSettings"
                   >
-                    保存翻译配置
+                    保存翻译执行参数
                   </a-button>
-                  <a-button
-                    status="danger"
-                    :loading="clearingKey"
-                    :disabled="(busy && !clearingKey) || !form.apiKeyConfigured"
-                    @click="confirmClearKey"
-                  >
-                    清除 Key
-                  </a-button>
-                </a-space>
+                </a-form-item>
               </a-col>
             </a-row>
           </a-form>
+
+          <a-typography-text type="secondary" class="upstream-hint">
+            上游地址、API Key、协议与翻译模型统一在「AI 管理 → 翻译 AI」维护；本页只维护每批文案数与超时。
+          </a-typography-text>
         </a-card>
 
         <a-card class="panel" title="翻译任务">
@@ -261,9 +192,9 @@
 
 <script lang="ts" setup>
   import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
-  import { Message, Modal } from '@arco-design/web-vue';
+  import { Message } from '@arco-design/web-vue';
+  import { useRouter } from 'vue-router';
   import {
-    fetchTranslationModels,
     fetchTranslations,
     requestRetranslation,
     saveTranslationSettings,
@@ -300,12 +231,7 @@
     unconfigured: { label: '未配置', color: 'gray' },
   };
 
-  const apiTypeOptions = [
-    { label: 'Chat Completions', value: 'chat_completions' },
-    { label: 'Responses API', value: 'responses' },
-    { label: 'Anthropic Messages', value: 'anthropic_messages' },
-  ];
-
+  const router = useRouter();
   const overview = ref<any>(null);
   const loadError = ref('');
   const initialLoading = ref(true);
@@ -313,22 +239,13 @@
   const polling = ref(false);
 
   const saving = ref(false);
-  const fetchingModels = ref(false);
-  const clearingKey = ref(false);
   const retranslating = ref<'all' | TranslationLocale | null>(null);
-  const busy = computed(
-    () =>
-      saving.value ||
-      fetchingModels.value ||
-      clearingKey.value ||
-      retranslating.value !== null
-  );
+  const busy = computed(() => saving.value || retranslating.value !== null);
 
   const form = reactive({
     enabled: true,
     apiType: 'chat_completions',
     baseUrl: 'https://api.openai.com/v1',
-    apiKey: '',
     model: '',
     batchSize: 40,
     timeoutSeconds: 120,
@@ -338,11 +255,6 @@
   });
 
   let pollTimer: number | null = null;
-
-  const modelOptions = computed(() => {
-    const values = [...new Set([...form.configuredModels, form.model].filter(Boolean))];
-    return values.map((value) => ({ label: value, value }));
-  });
 
   // 上游配置完整（Key + 模型）时才可能真正产生翻译任务。
   const upstreamReady = computed(() => Boolean(form.apiKeyConfigured && form.model));
@@ -457,21 +369,18 @@
     form.apiKeyMasked = settings.apiKeyMasked || '';
   }
 
-  function settingsPayload(
-    overrides: { apiKey?: string; clearApiKey?: boolean } = {}
-  ): TranslationSettingsPayload {
-    const payload: TranslationSettingsPayload = {
+  function settingsPayload(): TranslationSettingsPayload {
+    // 上游地址 / Key / 模型不在这里编辑，也不再提交 apiKey：
+    // 后端在 apiKey 缺省时保留已加密入库的 Key，避免本页把上游改坏。
+    return {
       enabled: form.enabled,
       apiType: form.apiType,
       baseUrl: form.baseUrl.trim(),
-      apiKey: overrides.apiKey !== undefined ? overrides.apiKey : form.apiKey.trim(),
       model: form.model,
       batchSize: Number(form.batchSize),
       timeoutMs: Math.round(Number(form.timeoutSeconds) * 1000),
       configuredModels: [...new Set([...form.configuredModels, form.model].filter(Boolean))],
     };
-    if (overrides.clearApiKey) payload.clearApiKey = true;
-    return payload;
   }
 
   function stopPolling() {
@@ -520,15 +429,7 @@
 
   async function saveSettings() {
     if (saving.value) return;
-    if (fetchingModels.value || clearingKey.value || retranslating.value !== null) return;
-    if (!form.baseUrl.trim()) {
-      Message.warning('请填写上游地址');
-      return;
-    }
-    if (!form.model) {
-      Message.warning('请选择或输入翻译模型');
-      return;
-    }
+    if (retranslating.value !== null) return;
     const batchSize = Number(form.batchSize);
     if (!Number.isFinite(batchSize) || batchSize < 5 || batchSize > 100) {
       Message.warning('每批文案数需在 5 - 100 之间');
@@ -542,11 +443,15 @@
 
     saving.value = true;
     try {
+      // 上游（地址 / Key / 模型）已移到「AI 管理 → 翻译 AI」维护：
+      // 保存前先取回最新设置，只用本页编辑的批次与超时覆盖，避免把刚改过的上游回退成旧值。
+      await refreshStatus({ syncForm: true });
+      form.batchSize = batchSize;
+      form.timeoutSeconds = seconds;
       const settings = await saveTranslationSettings(settingsPayload());
       if (overview.value) overview.value.settings = settings;
       applySettings(settings);
-      form.apiKey = '';
-      Message.success('翻译配置已加密保存');
+      Message.success('翻译执行参数已保存');
       await refreshStatus();
     } catch {
       /* 错误提示由全局响应拦截器统一给出 */
@@ -555,55 +460,8 @@
     }
   }
 
-  async function loadModels() {
-    if (fetchingModels.value) return;
-    if (saving.value || clearingKey.value || retranslating.value !== null) return;
-    fetchingModels.value = true;
-    try {
-      const result = await fetchTranslationModels(settingsPayload());
-      const models = Array.isArray(result?.models) ? result.models : [];
-      form.configuredModels = [...new Set([...models, form.model].filter(Boolean))];
-      if (!form.model && models.length) form.model = models[0];
-      Message.success(`已获取 ${models.length} 个上游模型`);
-    } catch {
-      /* 错误提示由全局响应拦截器统一给出 */
-    } finally {
-      fetchingModels.value = false;
-    }
-  }
-
-  async function clearKey() {
-    clearingKey.value = true;
-    try {
-      const settings = await saveTranslationSettings(
-        settingsPayload({ apiKey: '', clearApiKey: true })
-      );
-      if (overview.value) overview.value.settings = settings;
-      applySettings(settings);
-      form.apiKey = '';
-      Message.success('API Key 已清除');
-    } finally {
-      clearingKey.value = false;
-    }
-  }
-
-  function confirmClearKey() {
-    Modal.warning({
-      title: '清除翻译 API Key',
-      content: '确认清除已加密保存的翻译 API Key？清除后需要重新配置才能继续自动翻译。',
-      hideCancel: false,
-      okText: '确认清除',
-      cancelText: '取消',
-      okButtonProps: { status: 'danger' },
-      onBeforeOk: async () => {
-        try {
-          await clearKey();
-          return true;
-        } catch {
-          return false;
-        }
-      },
-    });
+  function goAiManage() {
+    router.push({ name: 'AiManage', query: { tab: 'translation' } });
   }
 
   async function retranslate(target: 'all' | TranslationLocale) {
@@ -663,6 +521,12 @@
     .card-hint {
       display: block;
       margin-top: 8px;
+      font-size: 12px;
+    }
+
+    .upstream-hint {
+      display: block;
+      margin-top: 4px;
       font-size: 12px;
     }
 

@@ -1,142 +1,148 @@
 <template>
-  <div class="logs-page">
-    <a-card :bordered="false">
-      <template #title>系统日志</template>
-      <template #extra>
-        <a-space>
-          <a-button :loading="loading" @click="load">刷新</a-button>
-          <a-button :disabled="!rows.length" @click="exportCsv">导出 CSV</a-button>
-        </a-space>
-      </template>
+  <a-card :bordered="false" class="logs-page">
+    <template #title>系统日志</template>
+    <template #extra>
+      <a-space v-if="activeTab === 'system'">
+        <a-button :loading="loading" @click="load">刷新</a-button>
+        <a-button :disabled="!rows.length" @click="exportCsv">导出 CSV</a-button>
+      </a-space>
+    </template>
 
-      <div class="retention-panel">
-        <a-form :model="retention" layout="inline" class="retention-form">
-          <a-form-item label="事件保留天数">
-            <a-input-number
-              v-model="retention.eventDays"
-              :min="30"
-              :max="3650"
-              :precision="0"
-              :disabled="retentionLoading"
-              :input-attrs="{ id: 'retention-event-days' }"
-              placeholder="180"
-              style="width: 130px"
+    <a-tabs v-model:active-key="activeTab" lazy-load>
+      <a-tab-pane key="system" title="系统日志">
+        <div class="retention-panel">
+          <a-form :model="retention" layout="inline" class="retention-form">
+            <a-form-item label="事件保留天数">
+              <a-input-number
+                v-model="retention.eventDays"
+                :min="30"
+                :max="3650"
+                :precision="0"
+                :disabled="retentionLoading"
+                :input-attrs="{ id: 'retention-event-days' }"
+                placeholder="180"
+                style="width: 130px"
+              />
+            </a-form-item>
+            <a-form-item label="访问明细保留天数">
+              <a-input-number
+                v-model="retention.visitDays"
+                :min="1"
+                :max="365"
+                :precision="0"
+                :disabled="retentionLoading"
+                :input-attrs="{ id: 'retention-visit-days' }"
+                placeholder="30"
+                style="width: 130px"
+              />
+            </a-form-item>
+            <a-form-item>
+              <a-button
+                status="danger"
+                :loading="purging"
+                :disabled="retentionLoading"
+                @click="confirmPurge"
+              >
+                立即清理
+              </a-button>
+            </a-form-item>
+          </a-form>
+          <a-typography-text type="secondary" class="retention-hint">
+            默认 180 天 / 30 天，满足等保 ≥6 个月。事件保留天数范围 30–3650，访问明细 1–365；点击「立即清理」会按当前填写的天数删除过期数据，删除后不可恢复。
+          </a-typography-text>
+          <a-alert v-if="retentionError" class="banner" type="error" show-icon>
+            {{ retentionError }}
+            <template #action>
+              <a-button size="mini" @click="loadRetention">重试</a-button>
+            </template>
+          </a-alert>
+        </div>
+
+        <a-form class="filters" :model="filters" layout="inline">
+          <a-form-item label="等级">
+            <a-select v-model="filters.level" :options="levelOptions" style="width: 120px" />
+          </a-form-item>
+          <a-form-item label="分类">
+            <a-select v-model="filters.category" :options="categoryOptions" style="width: 140px" />
+          </a-form-item>
+          <a-form-item label="IP">
+            <a-input v-model="filters.ip" placeholder="精确匹配 IP" allow-clear style="width: 160px" />
+          </a-form-item>
+          <a-form-item label="关键词">
+            <a-input-search
+              v-model="filters.q"
+              placeholder="动作 / 消息 / 路径"
+              allow-clear
+              style="width: 220px"
+              @search="load"
             />
           </a-form-item>
-          <a-form-item label="访问明细保留天数">
-            <a-input-number
-              v-model="retention.visitDays"
-              :min="1"
-              :max="365"
-              :precision="0"
-              :disabled="retentionLoading"
-              :input-attrs="{ id: 'retention-visit-days' }"
-              placeholder="30"
-              style="width: 130px"
-            />
+          <a-form-item label="时间范围">
+            <a-select v-model="filters.range" :options="rangeOptions" style="width: 130px" />
+          </a-form-item>
+          <a-form-item v-if="filters.range === 'custom'" label="自定义">
+            <a-range-picker v-model="customRange" value-format="YYYY-MM-DD" style="width: 240px" />
+          </a-form-item>
+          <a-form-item label="包含访客访问">
+            <a-switch v-model="filters.includeVisits" />
+          </a-form-item>
+          <a-form-item label="包含爬虫">
+            <a-switch v-model="filters.includeBots" />
           </a-form-item>
           <a-form-item>
-            <a-button
-              status="danger"
-              :loading="purging"
-              :disabled="retentionLoading"
-              @click="confirmPurge"
-            >
-              立即清理
-            </a-button>
+            <a-button type="primary" @click="load">查询</a-button>
           </a-form-item>
         </a-form>
-        <a-typography-text type="secondary" class="retention-hint">
-          默认 180 天 / 30 天，满足等保 ≥6 个月。事件保留天数范围 30–3650，访问明细 1–365；点击「立即清理」会按当前填写的天数删除过期数据，删除后不可恢复。
-        </a-typography-text>
-        <a-alert v-if="retentionError" class="banner" type="error" show-icon>
-          {{ retentionError }}
-          <template #action>
-            <a-button size="mini" @click="loadRetention">重试</a-button>
+
+        <a-alert v-if="error" type="error" class="banner" show-icon>{{ error }}</a-alert>
+
+        <a-table
+          :data="rows"
+          :loading="loading"
+          :pagination="{ pageSize: 20, showTotal: true }"
+          :row-class="rowClass"
+          :scroll="{ x: 1280 }"
+          row-key="id"
+          @row-click="openDetail"
+        >
+          <template #columns>
+            <a-table-column title="时间" :width="180">
+              <template #cell="{ record }">{{ localTime(record.occurredAt) }}</template>
+            </a-table-column>
+            <a-table-column title="来源" :width="110">
+              <template #cell="{ record }">
+                <a-tag :color="record.source === 'visit' ? 'arcoblue' : 'purple'" size="small">
+                  {{ sourceLabel(record.source) }}
+                </a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="等级" :width="90">
+              <template #cell="{ record }">
+                <a-tag :color="levelColor(record.level)" size="small">{{ levelLabel(record.level) }}</a-tag>
+              </template>
+            </a-table-column>
+            <a-table-column title="分类" :width="110">
+              <template #cell="{ record }">{{ categoryLabel(record.category) }}</template>
+            </a-table-column>
+            <a-table-column title="动作" :width="130" data-index="action" />
+            <a-table-column title="消息" :width="260" ellipsis tooltip>
+              <template #cell="{ record }">{{ record.message || '-' }}</template>
+            </a-table-column>
+            <a-table-column title="IP" :width="140" data-index="ip" />
+            <a-table-column title="浏览器 / 系统" :width="200" ellipsis tooltip>
+              <template #cell="{ record }">{{ browserText(record) }}</template>
+            </a-table-column>
           </template>
-        </a-alert>
-      </div>
+          <template #empty>
+            <a-empty description="没有匹配的日志" />
+          </template>
+        </a-table>
+      </a-tab-pane>
 
-      <a-form class="filters" :model="filters" layout="inline">
-        <a-form-item label="等级">
-          <a-select v-model="filters.level" :options="levelOptions" style="width: 120px" />
-        </a-form-item>
-        <a-form-item label="分类">
-          <a-select v-model="filters.category" :options="categoryOptions" style="width: 140px" />
-        </a-form-item>
-        <a-form-item label="IP">
-          <a-input v-model="filters.ip" placeholder="精确匹配 IP" allow-clear style="width: 160px" />
-        </a-form-item>
-        <a-form-item label="关键词">
-          <a-input-search
-            v-model="filters.q"
-            placeholder="动作 / 消息 / 路径"
-            allow-clear
-            style="width: 220px"
-            @search="load"
-          />
-        </a-form-item>
-        <a-form-item label="时间范围">
-          <a-select v-model="filters.range" :options="rangeOptions" style="width: 130px" />
-        </a-form-item>
-        <a-form-item v-if="filters.range === 'custom'" label="自定义">
-          <a-range-picker v-model="customRange" value-format="YYYY-MM-DD" style="width: 240px" />
-        </a-form-item>
-        <a-form-item label="包含访客访问">
-          <a-switch v-model="filters.includeVisits" />
-        </a-form-item>
-        <a-form-item label="包含爬虫">
-          <a-switch v-model="filters.includeBots" />
-        </a-form-item>
-        <a-form-item>
-          <a-button type="primary" @click="load">查询</a-button>
-        </a-form-item>
-      </a-form>
-
-      <a-alert v-if="error" type="error" class="banner" show-icon>{{ error }}</a-alert>
-
-      <a-table
-        :data="rows"
-        :loading="loading"
-        :pagination="{ pageSize: 20, showTotal: true }"
-        :row-class="rowClass"
-        :scroll="{ x: 1280 }"
-        row-key="id"
-        @row-click="openDetail"
-      >
-        <template #columns>
-          <a-table-column title="时间" :width="180">
-            <template #cell="{ record }">{{ localTime(record.occurredAt) }}</template>
-          </a-table-column>
-          <a-table-column title="来源" :width="110">
-            <template #cell="{ record }">
-              <a-tag :color="record.source === 'visit' ? 'arcoblue' : 'purple'" size="small">
-                {{ sourceLabel(record.source) }}
-              </a-tag>
-            </template>
-          </a-table-column>
-          <a-table-column title="等级" :width="90">
-            <template #cell="{ record }">
-              <a-tag :color="levelColor(record.level)" size="small">{{ levelLabel(record.level) }}</a-tag>
-            </template>
-          </a-table-column>
-          <a-table-column title="分类" :width="110">
-            <template #cell="{ record }">{{ categoryLabel(record.category) }}</template>
-          </a-table-column>
-          <a-table-column title="动作" :width="130" data-index="action" />
-          <a-table-column title="消息" :width="260" ellipsis tooltip>
-            <template #cell="{ record }">{{ record.message || '-' }}</template>
-          </a-table-column>
-          <a-table-column title="IP" :width="140" data-index="ip" />
-          <a-table-column title="浏览器 / 系统" :width="200" ellipsis tooltip>
-            <template #cell="{ record }">{{ browserText(record) }}</template>
-          </a-table-column>
-        </template>
-        <template #empty>
-          <a-empty description="没有匹配的日志" />
-        </template>
-      </a-table>
-    </a-card>
+      <a-tab-pane key="audit" title="审计日志">
+        <AuditLogPanel />
+      </a-tab-pane>
+    </a-tabs>
 
     <a-modal v-model:visible="detailVisible" title="日志详情" :footer="false" width="760px">
       <a-spin :loading="detailLoading" style="width: 100%">
@@ -157,11 +163,12 @@
         <a-empty v-else-if="!detailLoading" description="详情不可用" />
       </a-spin>
     </a-modal>
-  </div>
+  </a-card>
 </template>
 
 <script lang="ts" setup>
   import { computed, onMounted, reactive, ref, watch } from 'vue';
+  import { useRoute, useRouter } from 'vue-router';
   import { Message, Modal } from '@arco-design/web-vue';
   import dayjs from 'dayjs';
   import { debounce } from 'lodash';
@@ -171,6 +178,11 @@
     fetchSystemEvents,
     purgeSystemEvents,
   } from '@/api/admin';
+  // 审计日志与系统日志是两种数据，合并在同一页的两个视图里。
+  import AuditLogPanel from '@/views/operations/audit.vue';
+
+  const route = useRoute();
+  const router = useRouter();
 
   const rows = ref<any[]>([]);
   const loading = ref(false);
@@ -179,6 +191,33 @@
   const detailLoading = ref(false);
   const detail = ref<any>(null);
   const customRange = ref<string[]>([]);
+
+  // Tab 与 ?tab= 查询参数同步，旧地址 /system/audit 重定向后直接落在审计视图。
+  const TAB_KEYS = ['system', 'audit'];
+  function normalizeTab(value: unknown) {
+    const key = String(value || '');
+    return TAB_KEYS.includes(key) ? key : 'system';
+  }
+  const activeTab = ref(normalizeTab(route.query.tab));
+
+  watch(activeTab, (key) => {
+    if (normalizeTab(route.query.tab) === key) return;
+    const query = { ...route.query };
+    if (key === 'system') {
+      delete query.tab;
+    } else {
+      query.tab = key;
+    }
+    router.replace({ query });
+  });
+
+  watch(
+    () => route.query.tab,
+    (value) => {
+      const key = normalizeTab(value);
+      if (key !== activeTab.value) activeTab.value = key;
+    }
+  );
 
   // 保留策略：默认事件 180 天 / 访问明细 30 天，由 /system/retention 回填。
   const retention = reactive<{ eventDays: number | undefined; visitDays: number | undefined }>({

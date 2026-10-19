@@ -33,7 +33,7 @@
           在「内容管理 → 官网内容」里编辑时会带修订号生成，能避免覆盖他人刚保存的内容；本页会先读取最新修订号再生成，冲突时会提示刷新。
         </a-typography-paragraph>
         <a-typography-paragraph type="secondary">
-          上游模型使用「AI 管理 → 翻译 AI」里配置的文本模型与密钥（与网站翻译共用同一上游）。
+          上游模型使用本页「翻译 AI」页签里配置的文本模型与密钥（与网站翻译共用同一上游）。
         </a-typography-paragraph>
       </a-card>
     </a-col>

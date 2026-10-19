@@ -1,5 +1,16 @@
 <template>
   <div class="workspace">
+    <!-- 两个来源，两个视图：会话询盘（引擎 conversations）/ 表单线索（官网 site_leads）。 -->
+    <a-tabs
+      v-model:active-key="activeTab"
+      class="workspace-tabs"
+      data-testid="inquiries-tabs"
+    >
+      <a-tab-pane key="conversations" title="会话询盘" />
+      <a-tab-pane key="leads" title="表单线索" />
+    </a-tabs>
+
+    <template v-if="activeTab === 'conversations'">
     <a-grid :cols="4" :col-gap="12" :row-gap="12" class="cards">
       <a-grid-item v-for="card in cards" :key="card.label">
         <a-card :bordered="false">
@@ -30,12 +41,17 @@
       <a-row :gutter="12">
         <a-col :span="8">
           <a-input-search v-model="keyword" placeholder="搜索访客、来源或客服" allow-clear class="search" />
+          <a-typography-text type="secondary" class="profile-hint">
+            右键或双击会话，可查看该访客画像。
+          </a-typography-text>
           <a-list :bordered="false" class="conversations">
             <a-list-item
               v-for="item in filteredConversations"
               :key="item.id"
               :class="{ active: item.id === currentId }"
               @click="selectConversation(item.id)"
+              @dblclick="openVisitorProfile(item)"
+              @contextmenu.prevent="openVisitorProfile(item)"
             >
               <a-list-item-meta :description="item.last_message || statusLabel(item.status)">
                 <template #avatar>
@@ -144,10 +160,20 @@
         </a-col>
       </a-row>
     </a-card>
+    </template>
+
+    <!-- 表单线索：保留原有功能与数据，只是并入询盘管理，不再单独占菜单项。 -->
+    <LeadsPanel v-if="activeTab === 'leads'" />
 
     <a-modal v-model:visible="transferVisible" title="转接会话" @ok="confirmTransfer">
       <a-select v-model="transferAgentId" :options="transferOptions" placeholder="选择要转接的客服" />
     </a-modal>
+
+    <!-- 右键 / 双击会话 → 小窗查看该访客画像。 -->
+    <VisitorProfilePopup
+      v-model:visible="profileVisible"
+      :conversation="profileConversation"
+    />
   </div>
 </template>
 
@@ -164,6 +190,13 @@
     fetchPolicyAlerts,
     transferConversation,
   } from '@/api/admin';
+  import LeadsPanel from './components/LeadsPanel.vue';
+  import VisitorProfilePopup from './components/VisitorProfilePopup.vue';
+
+  // 两个视图共用一条路由：会话询盘（引擎会话）/ 表单线索（官网表单）。
+  const activeTab = ref<'conversations' | 'leads'>('conversations');
+  const profileVisible = ref(false);
+  const profileConversation = ref<any>(null);
 
   const dashboard = ref<any>({});
   const conversations = ref<any[]>([]);
@@ -340,9 +373,10 @@
     }
   }
 
-  // 页面隐藏时整体暂停轮询（会话 + 消息 + 告警共用一个 10s 定时器）。
+  // 页面隐藏时整体暂停轮询（会话 + 消息 + 告警共用一个 10s 定时器）；
+  // 切到「表单线索」视图时也不轮询会话数据。
   function refreshTick() {
-    if (pageHidden()) return;
+    if (pageHidden() || activeTab.value !== 'conversations') return;
     load().catch(() => {});
     loadMessages().catch(() => {});
     loadAlerts();
@@ -439,6 +473,13 @@
     await loadMessages();
   }
 
+  // 右键 / 双击一行 → 打开该访客画像小窗；画像关联键由弹窗内部按后端 ProfileKey 规则取。
+  function openVisitorProfile(item: any) {
+    if (!item) return;
+    profileConversation.value = item;
+    profileVisible.value = true;
+  }
+
   async function onClose() {
     if (!currentId.value) return;
     Modal.confirm({
@@ -478,11 +519,15 @@
   const route = useRoute();
 
   onMounted(async () => {
+    // 深链：/operations/inquiries?tab=leads 直接落到表单线索；默认会话询盘。
+    const tab = typeof route.query.tab === 'string' ? route.query.tab.trim() : '';
+    if (tab === 'leads') activeTab.value = 'leads';
     await load();
     await loadAlerts();
     // 支持从「排队队列」等页面深链：/operations/inquiries?conversation=<id>
     const deepLinkId = typeof route.query.conversation === 'string' ? route.query.conversation.trim() : '';
     if (deepLinkId) {
+      activeTab.value = 'conversations';
       await selectConversation(deepLinkId).catch(() => {
         Message.warning('未能加载指定会话，可能已结束或无权访问');
       });
@@ -500,6 +545,14 @@
 <style scoped lang="less">
   .cards {
     margin-bottom: 12px;
+  }
+  .workspace-tabs {
+    margin-bottom: 4px;
+  }
+  .profile-hint {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
   }
   .stat {
     display: flex;

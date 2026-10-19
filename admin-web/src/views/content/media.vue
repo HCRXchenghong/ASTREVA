@@ -7,17 +7,22 @@
       </a-space>
     </template>
     <template #extra>
-      <a-space wrap>
-        <a-checkbox v-if="activeTab === 'dashboard'" v-model="autoRefresh">
-          实时刷新
-        </a-checkbox>
-        <a-button v-if="activeTab === 'gallery'" @click="categoryVisible = true">
+      <a-space wrap :size="8">
+        <a-tooltip v-if="activeTab === 'dashboard'" content="仪表盘自动刷新服务器资源与素材统计">
+          <a-space :size="6" class="auto-refresh">
+            <a-switch v-model="autoRefresh" size="small" />
+            <span>实时刷新</span>
+          </a-space>
+        </a-tooltip>
+        <a-button v-if="activeTab === 'gallery'" size="small" @click="categoryVisible = true">
           分类管理
         </a-button>
-        <a-button v-if="activeTab === 'gallery'" type="primary" @click="uploadVisible = true">
-          ＋ 上传素材
+        <a-button v-if="activeTab === 'gallery'" size="small" type="primary" @click="uploadVisible = true">
+          上传素材
         </a-button>
-        <a-button :loading="refreshing" @click="refreshCurrent">刷新</a-button>
+        <a-button size="small" @click="openDrawer('settings')">系统设置</a-button>
+        <a-button size="small" @click="openDrawer('guide')">接入指南</a-button>
+        <a-button size="small" :loading="refreshing" @click="refreshCurrent">刷新</a-button>
       </a-space>
     </template>
 
@@ -29,7 +34,6 @@
 
     <a-tabs v-model:active-key="activeTab" lazy-load>
       <a-tab-pane key="dashboard" title="仪表盘">
-        <p class="refresh-note">服务器资源每 2 秒实时刷新（可关闭右上角“实时刷新”）。</p>
         <MediaDashboard
           :stats="stats"
           :runtime="runtime"
@@ -55,21 +59,6 @@
           @changed="onAiChanged"
         />
       </a-tab-pane>
-
-      <a-tab-pane key="settings" title="系统设置">
-        <MediaSettingsPanel
-          :settings="settings"
-          :runtime="runtime"
-          :stats="stats"
-          :loading="loadingSettings"
-          :error="settingsError"
-          @saved="loadSettings"
-        />
-      </a-tab-pane>
-
-      <a-tab-pane key="guide" title="R2 接入指南">
-        <MediaGuide />
-      </a-tab-pane>
     </a-tabs>
 
     <MediaUploadModal
@@ -84,6 +73,26 @@
       :categories="categories"
       @changed="onCategoriesChanged"
     />
+
+    <!-- 设置与接入指南不再各占一个标签页，收进按钮 + 抽屉，页面只留三块主要工作区。 -->
+    <a-drawer
+      v-model:visible="drawerVisible"
+      :width="720"
+      :title="drawerTitle"
+      :footer="false"
+      unmount-on-close
+    >
+      <MediaSettingsPanel
+        v-if="drawerKind === 'settings'"
+        :settings="settings"
+        :runtime="runtime"
+        :stats="stats"
+        :loading="loadingSettings"
+        :error="settingsError"
+        @saved="loadSettings"
+      />
+      <MediaGuide v-else />
+    </a-drawer>
   </a-card>
 </template>
 
@@ -113,6 +122,11 @@
   const uploadVisible = ref(false);
   const categoryVisible = ref(false);
   const galleryRef = ref<InstanceType<typeof MediaGallery> | null>(null);
+
+  // 系统设置 / 接入指南共用一个抽屉。
+  const drawerVisible = ref(false);
+  const drawerKind = ref<'settings' | 'guide'>('settings');
+  const drawerTitle = computed(() => (drawerKind.value === 'settings' ? '系统设置' : 'R2 接入指南'));
 
   const storage = computed(() => stats.value.storage || runtime.value.storage || {});
   const storageTagText = computed(() => {
@@ -172,15 +186,27 @@
     loadingSettings.value = false;
   }
 
+  function openDrawer(kind: 'settings' | 'guide') {
+    drawerKind.value = kind;
+    drawerVisible.value = true;
+    if (kind === 'settings') {
+      loadingSettings.value = true;
+      Promise.allSettled([loadSettings(), loadRuntime()]).finally(() => {
+        loadingSettings.value = false;
+      });
+    }
+  }
+
   async function refreshCurrent() {
     refreshing.value = true;
     try {
       if (activeTab.value === 'gallery') {
         await Promise.allSettled([loadStats(), loadCategories(), galleryRef.value?.reload()]);
-      } else if (activeTab.value === 'settings') {
-        await Promise.allSettled([loadSettings(), loadRuntime()]);
       } else {
         await Promise.allSettled([loadStats(), loadRuntime(), loadCategories()]);
+      }
+      if (drawerVisible.value && drawerKind.value === 'settings') {
+        await Promise.allSettled([loadSettings(), loadRuntime()]);
       }
     } finally {
       refreshing.value = false;
@@ -263,10 +289,10 @@
     margin-bottom: 12px;
   }
 
-  .refresh-note {
-    margin: 0 0 12px;
-    color: var(--color-text-3);
-    font-size: 12px;
+  .auto-refresh {
+    color: var(--color-text-2);
+    font-size: 13px;
+    cursor: pointer;
   }
 
   .retry-link {

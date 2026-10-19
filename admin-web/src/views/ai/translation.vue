@@ -5,6 +5,7 @@
         <a-alert type="info" class="tip">
           官网以中文为唯一源内容；英语、阿拉伯语由这里的模型自动翻译。
           与「AI SEO」「内容翻译」共用同一套上游配置，密钥加密入库、只回显末四位。
+          每批文案数与超时属于翻译执行参数，在「内容管理 → 网站翻译」里设置。
         </a-alert>
         <a-form :model="form" layout="vertical">
           <a-form-item>
@@ -32,18 +33,6 @@
               placeholder="从上游获取或手动填写"
             />
           </a-form-item>
-          <a-grid :cols="{ xs: 1, md: 2 }" :col-gap="12">
-            <a-grid-item>
-              <a-form-item label="每批文案数">
-                <a-input-number v-model="form.batchSize" :min="5" :max="100" />
-              </a-form-item>
-            </a-grid-item>
-            <a-grid-item>
-              <a-form-item label="超时（秒）">
-                <a-input-number v-model="form.timeoutMs" :min="10" :max="600" />
-              </a-form-item>
-            </a-grid-item>
-          </a-grid>
           <a-form-item>
             <a-checkbox v-model="form.clearApiKey">清除已保存的 API Key</a-checkbox>
           </a-form-item>
@@ -177,6 +166,18 @@
     }
     saving.value = true;
     try {
+      // 每批文案数与超时由「网站翻译」页维护：保存前先取回最新设置，
+      // 再还原本页编辑中的上游字段，避免用本页旧值覆盖翻译页刚改过的执行参数。
+      const edited = {
+        enabled: form.enabled,
+        apiType: form.apiType,
+        baseUrl: form.baseUrl,
+        model: form.model,
+        apiKey: form.apiKey,
+        clearApiKey: form.clearApiKey,
+      };
+      await load();
+      Object.assign(form, edited);
       await saveTranslationSettings(payload());
       form.apiKey = '';
       form.clearApiKey = false;

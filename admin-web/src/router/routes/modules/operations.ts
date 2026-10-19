@@ -14,6 +14,7 @@ export default {
     hideInMenu: false,
   },
   children: [
+    // 询盘管理同时承载两个来源：会话询盘（引擎 conversations）与表单线索（官网 site_leads）。
     {
       path: 'inquiries',
       name: 'Inquiries',
@@ -26,11 +27,13 @@ export default {
       component: () => import('@/views/operations/profiles.vue'),
       meta: { title: '访客画像', locale: '访客画像', requiresAuth: true },
     },
+    // 客服策略是运营配置的统一入口：排队与技能组 / SLA / 超时自动关闭 / AI 与关键词优先级 /
+    // 无人值守 / 接管 / 关键词规则 / 黑名单（仅 IP）/ 排队队列 全部收进本页弹窗。
     {
-      path: 'leads',
-      name: 'Leads',
-      component: () => import('@/views/operations/leads.vue'),
-      meta: { title: '咨询单', locale: '咨询单', requiresAuth: true },
+      path: 'policy',
+      name: 'ServicePolicy',
+      component: () => import('@/views/operations/policy.vue'),
+      meta: { title: '客服策略', locale: '客服策略', requiresAuth: true },
     },
     {
       path: 'agents',
@@ -44,29 +47,31 @@ export default {
       component: () => import('@/views/customers/evaluations.vue'),
       meta: { title: '服务评价', locale: '服务评价', requiresAuth: true },
     },
+    // 已并入「客服策略」的旧入口：保留 redirect，避免旧书签/深链直接 404。
     {
       path: 'keywords',
-      name: 'Keywords',
-      component: () => import('@/views/operations/keywords.vue'),
-      meta: { title: '关键词规则', locale: '关键词规则', requiresAuth: true },
-    },
-    {
-      path: 'policy',
-      name: 'ServicePolicy',
-      component: () => import('@/views/operations/policy.vue'),
-      meta: { title: '客服策略', locale: '客服策略', requiresAuth: true },
-    },
-    {
-      path: 'queue',
-      name: 'ServiceQueue',
-      component: () => import('@/views/operations/queue.vue'),
-      meta: { title: '排队队列', locale: '排队队列', requiresAuth: true },
+      name: 'KeywordsLegacy',
+      redirect: '/operations/policy',
+      meta: { title: '关键词规则', locale: '关键词规则', requiresAuth: true, hideInMenu: true },
     },
     {
       path: 'blacklist',
-      name: 'Blacklist',
-      component: () => import('@/views/operations/blacklist.vue'),
-      meta: { title: '黑名单', locale: '黑名单', requiresAuth: true },
+      name: 'BlacklistLegacy',
+      redirect: '/operations/policy',
+      meta: { title: '黑名单', locale: '黑名单', requiresAuth: true, hideInMenu: true },
+    },
+    {
+      path: 'queue',
+      name: 'ServiceQueueLegacy',
+      redirect: '/operations/policy',
+      meta: { title: '排队队列', locale: '排队队列', requiresAuth: true, hideInMenu: true },
+    },
+    // 已并入「询盘管理 → 表单线索」的旧入口。
+    {
+      path: 'leads',
+      name: 'LeadsLegacy',
+      redirect: '/operations/inquiries?tab=leads',
+      meta: { title: '咨询单', locale: '咨询单', requiresAuth: true, hideInMenu: true },
     },
   ],
 };

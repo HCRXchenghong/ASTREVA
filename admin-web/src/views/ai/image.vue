@@ -1,18 +1,17 @@
 <template>
-  <a-card :bordered="false">
-    <a-tabs v-model:active-key="activeTab">
-      <a-tab-pane key="workbench" title="生成图片">
-        <MediaAiWorkbench
-          :categories="categories"
-          :settings="settings"
-          @changed="onGenerated"
-        />
-      </a-tab-pane>
-      <a-tab-pane key="settings" title="生图配置">
-        <AiImageSettings :settings="settings" @saved="loadSettings" />
-      </a-tab-pane>
-    </a-tabs>
-  </a-card>
+  <!-- 作为「AI 管理 → AI 生图」页签内容嵌入，不再单独占一级路由。 -->
+  <a-tabs v-model:active-key="activeTab" lazy-load>
+    <a-tab-pane key="workbench" title="生成图片">
+      <MediaAiWorkbench
+        :categories="categories"
+        :settings="settings"
+        @changed="onGenerated"
+      />
+    </a-tab-pane>
+    <a-tab-pane key="settings" title="生图配置">
+      <AiImageSettings :settings="settings" @saved="loadSettings" />
+    </a-tab-pane>
+  </a-tabs>
 </template>
 
 <script lang="ts" setup>
