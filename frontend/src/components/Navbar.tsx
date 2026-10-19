@@ -112,6 +112,9 @@ function LanguageSwitcher({ site }: { site: SiteSettings }) {
 
 export default function Navbar({ site, categories, products, currentPath, locale: localeProp }: Props) {
   const locale: SiteLocale = isSiteLocale(localeProp) ? localeProp : DEFAULT_LOCALE;
+  // An empty site.phone must not render a tel: CTA: it would show a blank blue
+  // button in the header (and another one in the mobile menu).
+  const phone = (site.phone || '').trim();
   const localHref = (path: string) => localizeHref(locale, path) as string;
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
@@ -272,9 +275,11 @@ export default function Navbar({ site, categories, products, currentPath, locale
         <div className="flex items-center gap-3 md:gap-5">
           <LanguageSwitcher site={site} />
 
-        <a href={`tel:${site.phone}`} className="hidden items-center gap-2.5 rounded-lg bg-[#0a66c2] px-7 py-3 text-[17px] font-medium text-white shadow-lg shadow-blue-500/30 transition-colors hover:bg-[#084b8c] md:flex">
-          {site.phone} <ArrowUpRight size={19} />
-        </a>
+        {phone && (
+          <a href={`tel:${phone}`} className="hidden items-center gap-2.5 rounded-lg bg-[#0a66c2] px-7 py-3 text-[17px] font-medium text-white shadow-lg shadow-blue-500/30 transition-colors hover:bg-[#084b8c] md:flex">
+            {phone} <ArrowUpRight size={19} />
+          </a>
+        )}
 
         <button className="text-gray-800 md:hidden" onClick={() => setMobileOpen((value) => !value)} aria-label={site.navigation.mobileMenuLabel} aria-expanded={mobileOpen}>
           {mobileOpen ? <X size={34} /> : <Menu size={34} />}
@@ -318,9 +323,11 @@ export default function Navbar({ site, categories, products, currentPath, locale
                 </a>
               )
             )}
-            <a href={`tel:${site.phone}`} className="mt-4 rounded-lg bg-[#0a66c2] px-6 py-3.5 text-center text-lg font-bold text-white">
-              {site.phone}
-            </a>
+            {phone && (
+              <a href={`tel:${phone}`} className="mt-4 rounded-lg bg-[#0a66c2] px-6 py-3.5 text-center text-lg font-bold text-white">
+                {phone}
+              </a>
+            )}
           </div>
         </div>
       )}

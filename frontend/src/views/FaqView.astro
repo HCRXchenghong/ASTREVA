@@ -10,9 +10,12 @@ type Props = { content: SiteContent; locale: SiteLocale };
 
 const { content, locale } = Astro.props;
 const page = staticPage(content, 'faq');
+// 后台 FAQ 列表有“启用”开关（faqs[].enabled）：这里和 JSON-LD 都必须只看启用的条目，
+// 否则取消勾选等于没生效，而且会把停用的问答结构化数据一起喂给搜索引擎。
+const faqs = content.faqs.filter((faq) => faq.enabled !== false);
 ---
 
-<BaseLayout content={content} seo={page.seo} path={localePath(locale, '/support/faq/')} locale={locale} jsonLd={[faqJsonLd(content.faqs)]}>
+<BaseLayout content={content} seo={page.seo} path={localePath(locale, '/support/faq/')} locale={locale} jsonLd={[faqJsonLd(faqs)]}>
   <div class="w-full pt-24">
     <InnerPageHero
       id="faq-hero"
@@ -26,7 +29,7 @@ const page = staticPage(content, 'faq');
       <div class="max-w-3xl mx-auto px-6">
         {page.body && <div class="prose-content mb-12 rounded-3xl bg-white p-8 text-gray-600 shadow-sm border border-gray-100" set:html={page.body}></div>}
         <div class="space-y-4">
-          {content.faqs.map((faq, index) => (
+          {faqs.map((faq, index) => (
             <details class="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm group" open={index === 0}>
               <summary class="list-none px-8 py-6 flex justify-between items-center bg-white hover:bg-gray-50 transition-colors gap-4 cursor-pointer">
                 <span class="font-bold text-lg text-gray-800">{faq.question}</span>

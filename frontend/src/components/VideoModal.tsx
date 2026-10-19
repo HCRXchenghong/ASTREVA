@@ -36,7 +36,18 @@ export default function VideoModal({ primaryLabel, primaryHref, secondaryLabel, 
             embed.isShorts ? 'max-w-[420px] max-h-[85vh] aspect-[9/16]' : 'max-w-5xl aspect-video'
           }`}
         >
-          {embed.url ? (
+          {embed.isFile ? (
+            // Uploaded mp4/webm files (or a direct file URL in the CMS) must play through a
+            // native <video>; putting them in an iframe only yields a shrunken default player.
+            <video
+              src={embed.url}
+              title={videoTitle}
+              controls
+              playsInline
+              preload="metadata"
+              className="h-full w-full bg-black object-contain"
+            />
+          ) : embed.url ? (
             <iframe
               src={embed.url}
               title={videoTitle}
@@ -52,7 +63,9 @@ export default function VideoModal({ primaryLabel, primaryHref, secondaryLabel, 
             </p>
           )}
         </div>
-        {embed.originalUrl && (
+        {embed.originalUrl && !embed.isFile && (
+          // Only external embeds (YouTube etc.) need an "open elsewhere" fallback; a
+          // playable media file is already the source of truth in the native player.
           <a
             href={embed.originalUrl}
             target="_blank"
