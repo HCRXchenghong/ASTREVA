@@ -86,9 +86,18 @@ export async function resolveBuildSnapshot(source = 'current') {
   }
 }
 
-async function withSnapshotContentApi(snapshot, callback) {
+export async function withSnapshotContentApi(snapshot, callback) {
   const server = createServer((req, res) => {
-    if (req.method !== 'GET' || req.url !== '/site-admin-api/public-content') {
+    // 只比对 pathname，不要比对整个 req.url：前端请求带 `?locale=zh-CN`（commit 097c4be 加的），
+    // 早先这里用 `req.url !== '/site-admin-api/public-content'` 精确比较，于是快照服务回 404、
+    // 构建失败、dist 被清空 → 控制台「保存并发布」100% 失败且官网直接 404。
+    let pathname = '';
+    try {
+      pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+    } catch {
+      pathname = '';
+    }
+    if (req.method !== 'GET' || pathname !== '/site-admin-api/public-content') {
       res.writeHead(404);
       res.end('not found');
       return;

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { resolveBuildSnapshot } from '../../scripts/build-frontend.mjs';
+import { resolveBuildSnapshot, withSnapshotContentApi } from '../../scripts/build-frontend.mjs';
 
 test('官网构建可明确选择当前内容或已启用的降级版本', async () => {
   const seed = JSON.parse(await readFile(new URL('../seed/site-content.json', import.meta.url), 'utf8'));
@@ -33,4 +33,24 @@ test('官网构建可明确选择当前内容或已启用的降级版本', async
     if (previousFallback == null) delete process.env.FALLBACK_CONTENT_URL; else process.env.FALLBACK_CONTENT_URL = previousFallback;
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+// 回归：快照内容服务必须接受带查询串的请求。
+// 前端请求的是 `/site-admin-api/public-content?locale=zh-CN`；早先这里用整个 req.url 精确比较，
+// 于是回 404 → 构建失败 → dist 被清空，控制台「保存并发布」必然失败且官网变成 404。
+test('构建快照内容接口接受带 locale 查询串的请求', async () => {
+  const snapshot = { content: { home: { hero: { title: '快照标题' } } }, version: { id: 'fallback_test', name: '测试' } };
+  await withSnapshotContentApi(snapshot, async (base) => {
+    const withLocale = await fetch(`${base}/site-admin-api/public-content?locale=zh-CN`);
+    assert.equal(withLocale.status, 200, '带 ?locale= 的快照请求必须 200');
+    const payload = await withLocale.json();
+    assert.equal(payload.data.home.hero.title, '快照标题');
+    assert.equal(payload.meta.source, 'active-fallback-version');
+
+    const noQuery = await fetch(`${base}/site-admin-api/public-content`);
+    assert.equal(noQuery.status, 200, '不带查询串也必须 200');
+
+    const wrongPath = await fetch(`${base}/site-admin-api/other?locale=zh-CN`);
+    assert.equal(wrongPath.status, 404, '非内容接口路径仍应 404');
+  });
 });
