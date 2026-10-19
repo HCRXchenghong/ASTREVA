@@ -1,0 +1,8 @@
+---
+import InstallView from '../../views/InstallView.astro';
+import { getContent } from '../../lib/content';
+
+const content = await getContent('zh-CN');
+---
+
+<InstallView content={content} locale="zh-CN" />

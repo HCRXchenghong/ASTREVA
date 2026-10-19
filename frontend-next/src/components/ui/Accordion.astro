@@ -1,0 +1,71 @@
+---
+/**
+ * Accessible disclosure list built on Preline's accordion plugin.
+ *
+ * Why not native <details>: the plugin ships the full ARIA set (aria-expanded /
+ * aria-controls / role=region), height animation, and keeps "one open at a time"
+ * consistent with the other components on the site.
+ */
+type Item = {
+  id: string;
+  question: string;
+  answer: string;
+};
+
+type Props = {
+  items: Item[];
+  idPrefix?: string;
+  /** Index opened on first paint; -1 closes everything. */
+  defaultOpen?: number;
+  /** Keep previously opened items open (matches the old <details> behaviour). */
+  alwaysOpen?: boolean;
+};
+
+const { items, idPrefix = 'accordion', defaultOpen = 0, alwaysOpen = true } = Astro.props;
+---
+
+<div
+  class="hs-accordion-group divide-y divide-line-100 overflow-hidden rounded-2xl border border-line-100 bg-white shadow-sm"
+  data-hs-accordion-always-open={alwaysOpen ? '' : undefined}
+>
+  {
+    items.map((item, index) => {
+      const open = index === defaultOpen;
+      const headingId = `${idPrefix}-heading-${item.id}`;
+      const contentId = `${idPrefix}-collapse-${item.id}`;
+      return (
+        <div class:list={['hs-accordion', open && 'active']} id={headingId}>
+          <h3 class="m-0">
+            <button
+              type="button"
+              class="hs-accordion-toggle flex w-full items-center justify-between gap-4 px-8 py-6 text-left transition-colors hover:bg-surface-100"
+              aria-expanded={open}
+              aria-controls={contentId}
+            >
+              <span class="text-lg font-bold text-ink-800">{item.question}</span>
+              <span
+                class="hs-accordion-active:rotate-45 shrink-0 text-2xl leading-none text-ink-400 transition-transform"
+                aria-hidden="true"
+              >
+                +
+              </span>
+            </button>
+          </h3>
+          <div
+            id={contentId}
+            class:list={[
+              'hs-accordion-content overflow-hidden transition-[height] duration-300',
+              !open && 'hidden'
+            ]}
+            role="region"
+            aria-labelledby={headingId}
+          >
+            <p class="border-t border-line-100 bg-surface-100 px-8 pb-6 pt-4 leading-relaxed text-ink-600">
+              {item.answer}
+            </p>
+          </div>
+        </div>
+      );
+    })
+  }
+</div>

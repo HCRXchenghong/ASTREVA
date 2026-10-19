@@ -1,0 +1,8 @@
+---
+import AboutView from '../views/AboutView.astro';
+import { getContent } from '../lib/content';
+
+const content = await getContent('zh-CN');
+---
+
+<AboutView content={content} locale="zh-CN" />

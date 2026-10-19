@@ -1,0 +1,83 @@
+/*
+ * ASTREVA 品牌令牌 —— 全站唯一的色值与圆角来源。
+ *
+ * 约定（所有页面都必须遵守）：
+ *   1. 页面/组件里不写死色值，只用 bg-brand-500、text-ink-800 这类语义类；
+ *   2. 新增颜色先进这个文件，再在别处使用；
+ *   3. 圆角沿用现有生产前端的做法：整站统一 10px（新旧前端视觉保持一致）。
+ *
+ * 色阶与旧前端一一对应，方便逐页比对：
+ *   brand-500 #0a66c2  主色 / 链接 / 按钮
+ *   brand-600 #0a5ca8  hover
+ *   brand-700 #084b8c  active / 深 hover
+ *   brand-800 #0a4d8c  标题
+ *   brand-900 #0a4070  深色区块
+ *   brand-950 #03203c  Hero / 页脚
+ */
+
+@theme {
+  --color-brand-50: #f2f8ff;
+  --color-brand-100: #e3f0fd;
+  --color-brand-200: #bfdcfa;
+  --color-brand-300: #8dc0f5;
+  --color-brand-400: #4a97ee;
+  --color-brand-500: #0a66c2;
+  --color-brand-600: #0a5ca8;
+  --color-brand-700: #084b8c;
+  --color-brand-750: #0c59a3;
+  --color-brand-800: #0a4d8c;
+  --color-brand-900: #0a4070;
+  --color-brand-950: #03203c;
+
+  /* 深海军蓝（Hero / 页脚底色） */
+  --color-navy-900: #071a31;
+  --color-navy-950: #061e38;
+
+  /* 中性色：与现有前端 #111827 / #172033 / #303a4b / #536173 / #667085 / #9aa5b4 对齐 */
+  --color-ink-900: #111827;
+  --color-ink-800: #172033;
+  --color-ink-700: #303a4b;
+  --color-ink-600: #536173;
+  --color-ink-500: #667085;
+  --color-ink-400: #9aa5b4;
+
+  /* 分隔线 / 浅底 */
+  --color-line-100: #e1e6ed;
+  --color-line-200: #d8dee7;
+  --color-surface-50: #f6f8fa;
+  --color-surface-100: #f7f9fb;
+
+  /* 辅助金（合规/认证类强调色） */
+  --color-accent-500: #d7a83d;
+  --color-accent-600: #b88923;
+
+  /* 整站统一 10px 圆角，和旧前端 tailwind.config.mjs 的 borderRadius 映射等价 */
+  --radius-xs: 10px;
+  --radius-sm: 10px;
+  --radius-md: 10px;
+  --radius-lg: 10px;
+  --radius-xl: 10px;
+  --radius-2xl: 10px;
+  --radius-3xl: 10px;
+  --radius-4xl: 10px;
+}
+
+/*
+ * 把 Preline 的语义 primary 指向品牌蓝阶。
+ * Preline 的 theme.css 里是 `--primary-600: var(--color-blue-600)`，
+ * 这里在同一个 :root 上覆盖，链式引用（--primary → --color-primary-600 → --primary-600）
+ * 会全部落到品牌色，组件代码一行都不用改。
+ */
+:root {
+  --primary-50: var(--color-brand-50);
+  --primary-100: var(--color-brand-100);
+  --primary-200: var(--color-brand-200);
+  --primary-300: var(--color-brand-300);
+  --primary-400: var(--color-brand-400);
+  --primary-500: var(--color-brand-500);
+  --primary-600: var(--color-brand-500);
+  --primary-700: var(--color-brand-700);
+  --primary-800: var(--color-brand-800);
+  --primary-900: var(--color-brand-900);
+  --primary-950: var(--color-brand-950);
+}

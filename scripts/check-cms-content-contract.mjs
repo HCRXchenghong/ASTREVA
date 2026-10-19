@@ -2,14 +2,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { resolveFrontend } from './frontend-target.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const TYPES_FILE = path.join(ROOT, 'frontend', 'src', 'lib', 'types.ts');
+// 校验目标跟随 ACTIVE_FRONTEND / FRONTEND_DIR，新旧前端并行时各查各的，互不干扰。
+const TARGET = resolveFrontend();
+const TYPES_FILE = path.join(TARGET.src, 'lib', 'types.ts');
 const SEED_FILE = path.join(ROOT, 'admin-server', 'seed', 'site-content.json');
 const CONTENT_SOURCE_DIRS = [
-  path.join(ROOT, 'frontend', 'src', 'pages'),
-  path.join(ROOT, 'frontend', 'src', 'components'),
-  path.join(ROOT, 'frontend', 'src', 'layouts')
+  path.join(TARGET.src, 'pages'),
+  path.join(TARGET.src, 'components'),
+  path.join(TARGET.src, 'layouts')
 ];
 
 function propertyType(checker, symbol) {
@@ -131,7 +134,7 @@ export async function checkCmsContentContract() {
   const checker = program.getTypeChecker();
   const source = program.getSourceFile(TYPES_FILE);
   const declaration = source?.statements.find((statement) => ts.isTypeAliasDeclaration(statement) && statement.name.text === 'SiteContent');
-  if (!declaration) throw new Error('未找到 frontend/src/lib/types.ts 中的 SiteContent 类型。');
+  if (!declaration) throw new Error(`未找到 ${path.relative(ROOT, TYPES_FILE)} 中的 SiteContent 类型。`);
   const missing = [];
   const invalid = [];
   requiredProperties(checker, checker.getTypeFromTypeNode(declaration.type), seed, '', missing, invalid);

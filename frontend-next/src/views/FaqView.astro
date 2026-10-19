@@ -1,0 +1,43 @@
+---
+import Accordion from '../components/ui/Accordion.astro';
+import InnerPageHero from '../components/InnerPageHero.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { staticPage } from '../lib/content';
+import { localePath, type SiteLocale } from '../lib/i18n';
+import { faqJsonLd } from '../lib/seo';
+import type { SiteContent } from '../lib/types';
+
+type Props = { content: SiteContent; locale: SiteLocale };
+
+const { content, locale } = Astro.props;
+const page = staticPage(content, 'faq');
+// 后台 FAQ 列表有“启用”开关（faqs[].enabled）：这里和 JSON-LD 都必须只看启用的条目，
+// 否则取消勾选等于没生效，而且会把停用的问答结构化数据一起喂给搜索引擎。
+const faqs = content.faqs.filter((faq) => faq.enabled !== false);
+---
+
+<BaseLayout content={content} seo={page.seo} path={localePath(locale, '/support/faq/')} locale={locale} jsonLd={[faqJsonLd(faqs)]}>
+  <div class="w-full pt-24">
+    <InnerPageHero
+      id="faq-hero"
+      eyebrow={page.hero.eyebrow}
+      title={page.hero.title}
+      description={page.hero.description}
+      subtitle={page.hero.subtitle}
+      backgroundImage={page.hero.backgroundImage}
+      backgroundVideo={page.hero.backgroundVideo}
+    />
+    <div id="faq-list" class="py-24 bg-slate-50 min-h-[60vh] scroll-mt-24">
+      <div class="max-w-3xl mx-auto px-6">
+        {page.sections?.intro && (
+          <p class="mb-10 text-center text-lg leading-relaxed text-gray-600">{page.sections.intro}</p>
+        )}
+        {page.body && <div class="prose-content mb-12 rounded-3xl bg-white p-8 text-gray-600 shadow-sm border border-gray-100" set:html={page.body}></div>}
+        <Accordion
+          idPrefix="faq"
+          items={faqs.map((faq) => ({ id: faq.id, question: faq.question, answer: faq.answer }))}
+        />
+      </div>
+    </div>
+  </div>
+</BaseLayout>

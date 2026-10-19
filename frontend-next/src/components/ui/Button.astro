@@ -1,0 +1,65 @@
+---
+/**
+ * Button / link with the four styles the site actually uses.
+ * `variant` maps to brand tokens; no caller should write hex values again.
+ */
+type Props = {
+  href?: string;
+  type?: 'button' | 'submit';
+  variant?: 'primary' | 'outline' | 'white' | 'ghost';
+  size?: 'md' | 'lg';
+  class?: string;
+  icon?: string;
+  ariaLabel?: string;
+  target?: string;
+};
+
+const {
+  href,
+  type = 'button',
+  variant = 'primary',
+  size = 'md',
+  class: className = '',
+  icon,
+  ariaLabel,
+  target
+} = Astro.props;
+
+const variants = {
+  primary: 'bg-brand-500 text-white shadow-lg shadow-brand-500/30 hover:bg-brand-700',
+  outline: 'border-2 border-brand-500 text-brand-500 hover:bg-brand-500 hover:text-white',
+  white: 'bg-white text-brand-800 shadow-lg hover:bg-brand-50',
+  ghost: 'border border-white/40 text-white hover:bg-white/10'
+};
+
+const sizes = {
+  md: 'px-7 py-3 text-sm',
+  lg: 'px-8 py-4 text-base'
+};
+
+const classes = [
+  'inline-flex items-center justify-center gap-2 rounded-lg font-bold transition-colors',
+  variants[variant],
+  sizes[size],
+  className
+];
+---
+
+{
+  href ? (
+    <a
+      href={href}
+      class:list={classes}
+      aria-label={ariaLabel}
+      {...(target ? { target, rel: 'noopener noreferrer' } : {})}
+    >
+      <slot />
+      {icon && <span aria-hidden="true">{icon}</span>}
+    </a>
+  ) : (
+    <button type={type} class:list={classes} aria-label={ariaLabel}>
+      <slot />
+      {icon && <span aria-hidden="true">{icon}</span>}
+    </button>
+  )
+}

@@ -1,0 +1,39 @@
+---
+/**
+ * Eyebrow + heading + description block used by every marketing section.
+ * The old frontend re-declared this pattern (eyebrow / h2 / muted paragraph)
+ * in a dozen places with slightly different classes; this is the single source.
+ */
+type Props = {
+  eyebrow?: string;
+  title: string;
+  description?: string;
+  align?: 'center' | 'left';
+  tone?: 'light' | 'dark';
+  class?: string;
+  titleClass?: string;
+};
+
+const {
+  eyebrow,
+  title,
+  description,
+  align = 'center',
+  tone = 'light',
+  class: className = '',
+  titleClass = ''
+} = Astro.props;
+
+const isCenter = align === 'center';
+const titleTone = tone === 'dark' ? 'text-white' : 'text-brand-800';
+const bodyTone = tone === 'dark' ? 'text-blue-100' : 'text-ink-500';
+const eyebrowTone = tone === 'dark' ? 'text-brand-200' : 'text-accent-600';
+---
+
+<div class:list={[isCenter ? 'text-center' : 'text-left', className]}>
+  {eyebrow && <p class:list={['mb-3 text-xs font-black uppercase tracking-[0.2em]', eyebrowTone]}>{eyebrow}</p>}
+  <h2 class:list={['text-4xl font-extrabold tracking-tight', isCenter ? 'mb-4' : 'mb-3', titleTone, titleClass]}>{title}</h2>
+  {description && (
+    <p class:list={['text-base leading-relaxed', bodyTone, isCenter ? 'mx-auto max-w-2xl' : 'max-w-2xl']}>{description}</p>
+  )}
+</div>

@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveFrontend } from './frontend-target.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_FALLBACK_URL = 'http://127.0.0.1:1337/site-admin-api/public-fallback-content';
@@ -148,16 +149,21 @@ async function publishPreview(distDir, publishDir) {
 export async function buildFrontend(options = {}) {
   const source = options.source || process.env.BUILD_CONTENT_SOURCE || 'current';
   const isPreview = options.target === 'preview';
+  const frontend = resolveFrontend(options.frontend);
   const snapshot = options.snapshotContent
     ? { content: options.snapshotContent, version: { id: 'draft-preview', name: '草稿预览' } }
     : await resolveBuildSnapshot(source);
-  await withSnapshotContentApi(snapshot, (contentApiUrl) => run('npm', ['run', 'build:frontend'], {
-    env: { ...process.env, CONTENT_API_URL: contentApiUrl }
-  }));
+  await withSnapshotContentApi(snapshot, async (contentApiUrl) => {
+    // 契约校验与构建都跟着 frontend.name 走，新旧前端各查各的。
+    // 复用 build-site.mjs，避免"哪些步骤算构建"在两处各写一遍。
+    await run('node', ['scripts/build-site.mjs'], {
+      env: { ...process.env, FRONTEND_DIR: frontend.name, CONTENT_API_URL: contentApiUrl }
+    });
+  });
   const publishDir = process.env.PUBLISH_DIR || '';
   if (!publishDir) return;
   const resolvedPublishDir = path.resolve(publishDir);
-  const distDir = path.join(ROOT, 'frontend', 'dist');
+  const distDir = frontend.dist;
   if (isPreview) await publishPreview(distDir, resolvedPublishDir);
   else await publishBuild(distDir, resolvedPublishDir);
 }

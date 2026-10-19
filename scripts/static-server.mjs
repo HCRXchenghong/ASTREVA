@@ -3,10 +3,12 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveFrontend } from './frontend-target.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const distDir = path.resolve(process.env.STATIC_DIR || path.join(ROOT, 'frontend', 'dist'));
+// 目标目录跟随 ACTIVE_FRONTEND / FRONTEND_DIR，切前端不用改这里，也不用改部署。
+const distDir = path.resolve(process.env.STATIC_DIR || resolveFrontend().dist);
 const host = process.env.FRONTEND_HOST || '127.0.0.1';
 const port = Number(process.env.FRONTEND_PORT || 4321);
 const adminOrigin = (process.env.STATIC_ADMIN_ORIGIN || process.env.PUBLIC_ADMIN_URL || 'http://127.0.0.1:1337').replace(/\/$/, '');

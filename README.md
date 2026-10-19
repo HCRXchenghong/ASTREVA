@@ -19,6 +19,7 @@
 ## 目录
 
 - `frontend/`：Astro + React + Tailwind 官网，构建产物位于 `frontend/dist/`；中文在根路径，英语/阿拉伯语在 `/en/`、`/ar/`。
+- `frontend-next/`：官网新前端（Astro 7 + Tailwind v4 + Preline UI），与 `frontend/` 并行存在、互不影响。用 `ACTIVE_FRONTEND=frontend-next` 切换构建目标，去掉该变量即回滚。详见 [frontend-next/README.md](frontend-next/README.md)。
 - `admin-web/`：基于 Arco Design Pro Vue（MIT）的统一控制台 SPA，构建产物 `admin-web/dist/`，由 `admin-server` 同源托管在 `/site-admin/`。
 - `admin-server/`：控制台 API、官网内容、媒体、咨询单、2FA、推送配置与发布管理。
 - `servicebridge/backend/`：Go API、WebSocket、PostgreSQL/Redis、AI、推送（FCM/APNs）和上传服务。

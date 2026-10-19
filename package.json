@@ -4,6 +4,7 @@
   "private": true,
   "workspaces": [
     "frontend",
+    "frontend-next",
     "admin-web"
   ],
   "dependencies": {
@@ -19,8 +20,12 @@
   "scripts": {
     "dev:frontend": "npm --workspace frontend run dev",
     "cms:contract": "node scripts/check-cms-content-contract.mjs",
-    "build:frontend": "npm run cms:contract && npm --workspace frontend run build",
+    "cms:contract:next": "FRONTEND_DIR=frontend-next node scripts/check-cms-content-contract.mjs",
+    "build:frontend": "node scripts/build-site.mjs",
     "preview:frontend": "npm --workspace frontend run preview",
+    "dev:frontend-next": "npm --workspace frontend-next run dev",
+    "build:frontend-next": "ACTIVE_FRONTEND=frontend-next node scripts/build-site.mjs",
+    "preview:frontend-next": "npm --workspace frontend-next run preview",
     "dev:admin-web": "npm --workspace admin-web run dev",
     "build:admin-web": "npm --workspace admin-web run build",
     "dev:admin": "node admin-server/server.mjs",
