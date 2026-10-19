@@ -165,16 +165,16 @@ export default function Navbar({ site, categories, products, currentPath, locale
 
   return (
     <div className={`fixed left-0 top-0 z-50 w-full transition-all duration-300 ${isScrolled ? 'bg-white shadow-md' : 'bg-white/95 shadow-sm backdrop-blur-sm'}`}>
-      <div className="mx-auto flex h-24 max-w-7xl items-center justify-between px-7">
-        <a className="flex items-center gap-3" href={localHref('/')}>
+      <div className="mx-auto flex h-24 max-w-7xl items-center justify-between px-4 md:px-7">
+        <a className="flex min-w-0 items-center gap-2.5 md:gap-3" href={localHref('/')}>
           {site.logoUrl ? (
-            <img src={site.logoUrl} alt={site.brandName} className="h-[58px] w-[58px] object-contain" />
+            <img src={site.logoUrl} alt={site.brandName} className="h-11 w-11 shrink-0 object-contain md:h-[58px] md:w-[58px]" />
           ) : (
-            <span role="img" aria-label={site.brandName} className="grid h-[58px] w-[58px] place-items-center rounded-xl bg-brand-800 text-xl font-black text-white">{site.brandName.slice(0, 1)}</span>
+            <span role="img" aria-label={site.brandName} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-800 text-base font-black text-white md:h-[58px] md:w-[58px] md:text-xl">{site.brandName.slice(0, 1)}</span>
           )}
-          <div className="flex flex-col">
-            <span className="text-2xl font-extrabold leading-tight tracking-wide text-brand-800">{site.brandName}</span>
-            <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">{site.brandTagline}</span>
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate text-lg font-extrabold leading-tight tracking-wide text-brand-800 md:text-2xl">{site.brandName}</span>
+            <span className="hidden truncate text-xs font-semibold uppercase tracking-widest text-gray-500 sm:block">{site.brandTagline}</span>
           </div>
         </a>
 

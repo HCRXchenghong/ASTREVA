@@ -25,15 +25,23 @@ const {
 } = Astro.props;
 
 const isCenter = align === 'center';
-const titleTone = tone === 'dark' ? 'text-white' : 'text-brand-800';
-const bodyTone = tone === 'dark' ? 'text-blue-100' : 'text-ink-500';
-const eyebrowTone = tone === 'dark' ? 'text-brand-200' : 'text-accent-600';
+const titleTone = tone === 'dark' ? 'text-white' : 'text-brand-950';
+const bodyTone = tone === 'dark' ? 'text-slate-300' : 'text-ink-500';
+const eyebrowTone = tone === 'dark' ? 'text-accent-500' : 'text-accent-600';
+const ruleTone = tone === 'dark' ? 'bg-accent-500' : 'bg-accent-500';
 ---
 
 <div class:list={[isCenter ? 'text-center' : 'text-left', className]}>
-  {eyebrow && <p class:list={['mb-3 text-xs font-black uppercase tracking-[0.2em]', eyebrowTone]}>{eyebrow}</p>}
-  <h2 class:list={['text-4xl font-extrabold tracking-tight', isCenter ? 'mb-4' : 'mb-3', titleTone, titleClass]}>{title}</h2>
+  {eyebrow && (
+    <div class:list={['mb-5 flex items-center gap-3', isCenter && 'justify-center']}>
+      <span class:list={['h-px w-8', ruleTone]} aria-hidden="true"></span>
+      <p class:list={['text-xs font-black uppercase tracking-[0.22em]', eyebrowTone]}>{eyebrow}</p>
+    </div>
+  )}
+  <h2 class:list={['display-tight text-4xl font-black md:text-5xl', isCenter ? 'mb-5' : 'mb-4', titleTone, titleClass]}>
+    {title}
+  </h2>
   {description && (
-    <p class:list={['text-base leading-relaxed', bodyTone, isCenter ? 'mx-auto max-w-2xl' : 'max-w-2xl']}>{description}</p>
+    <p class:list={['text-base leading-8', bodyTone, isCenter ? 'mx-auto max-w-2xl' : 'max-w-2xl']}>{description}</p>
   )}
 </div>

@@ -21,21 +21,25 @@ const localHref = (path: string) => localizeHref(locale, path) as string;
 
 <BaseLayout content={content} seo={productCenter.seo} path={localePath(locale, '/products/')} locale={locale}>
   <div class="min-h-screen w-full bg-surface-50 pt-24">
-    <section class="relative min-h-[280px] overflow-hidden border-b border-white/10 bg-navy-900 text-white md:min-h-[320px]">
+    <section class="relative flex min-h-[360px] items-end overflow-hidden bg-navy-950 text-white md:min-h-[440px]">
       {productCenter.hero.backgroundImage && (
         <div
-          class="absolute inset-y-0 right-0 w-full bg-cover bg-center opacity-65 md:w-[62%]"
+          class="absolute inset-y-0 right-0 w-full bg-cover bg-center opacity-55 md:w-[62%]"
           style={`background-image:url('${productCenter.hero.backgroundImage}')`}
         ></div>
       )}
-      <div class="absolute inset-0 bg-[linear-gradient(90deg,var(--color-navy-900)_0%,var(--color-navy-900)_38%,color-mix(in_srgb,var(--color-navy-900)_78%,transparent)_62%,color-mix(in_srgb,var(--color-navy-900)_28%,transparent)_100%)]"></div>
-      <div class="relative z-10 mx-auto flex min-h-[280px] max-w-7xl items-center px-6 py-14 md:min-h-[320px]">
-        <div class="max-w-2xl">
-          <p class="text-xs font-black uppercase tracking-[0.22em] text-accent-500">{catalogCopy.eyebrow}</p>
-          <h1 class="mt-4 text-4xl font-black tracking-tight md:text-6xl">{productCenter.hero.title}</h1>
-          <p class="mt-5 max-w-xl text-base leading-8 text-slate-200 md:text-lg md:leading-7">
-            {catalogCopy.description}
-          </p>
+      <div class="absolute inset-0 bg-linear-to-r from-brand-950 via-brand-950/85 to-navy-950/40"></div>
+      <div class="absolute inset-0 bg-navy-950/30"></div>
+      <div class="blueprint-grid absolute inset-0" aria-hidden="true"></div>
+      <div class="absolute inset-x-0 bottom-0 h-px bg-white/15"></div>
+      <div class="relative z-10 mx-auto w-full max-w-7xl px-6 pb-14 pt-12 md:pb-16 md:pt-16">
+        <div class="max-w-3xl">
+          <div class="mb-5 flex items-center gap-4">
+            <span class="h-px w-10 bg-accent-500" aria-hidden="true"></span>
+            <p class="text-xs font-black uppercase tracking-[0.24em] text-accent-500">{catalogCopy.eyebrow}</p>
+          </div>
+          <h1 class="display-tight text-5xl font-black leading-[1.02] md:text-6xl">{productCenter.hero.title}</h1>
+          <p class="mt-5 max-w-xl text-base leading-8 text-slate-300 md:text-lg md:leading-7">{catalogCopy.description}</p>
         </div>
       </div>
     </section>

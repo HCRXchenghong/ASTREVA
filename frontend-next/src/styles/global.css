@@ -52,6 +52,72 @@ body,
 }
 
 /*
+ * 视觉语言：精密工程感。
+ * 蓝图网格只做背景纹理，不承载信息；金色只用于索引与分隔线，不用于大面积。
+ */
+
+/* 深色区块上的蓝图网格（1px 线，低透明度） */
+.blueprint-grid {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.055) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 20%, #000 35%, transparent 100%);
+}
+
+/* 浅色区块上的网格（更淡） */
+.blueprint-grid-light {
+  background-image:
+    linear-gradient(to right, rgb(10 64 112 / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(10 64 112 / 0.05) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 20%, transparent 100%);
+}
+
+/* 滚动揭示：默认位移+透明，进入视口后归位。尊重 reduced-motion。 */
+/* .js is added by an inline script in <head>. Without JS the content stays
+   visible instead of being stuck at opacity 0. */
+.js .reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1), transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+.js .reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .js .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* 大号描边序号（01 / 02 …），用于优势区与流程 */
+.index-numeral {
+  -webkit-text-stroke: 1px rgb(255 255 255 / 0.35);
+  color: transparent;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+/* 标题排版：中文大标题收紧字距更稳 */
+.display-tight {
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+/* 关键数字/规格使用等宽数字，避免跳动 */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
  * 富文本正文样式。Tailwind v4 的 Preflight 会把标题/列表重置掉，
  * 后台富文本编辑器产出的内容需要这组兜底样式（与旧前端 global.css 等价）。
  */
