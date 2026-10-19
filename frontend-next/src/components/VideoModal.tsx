@@ -70,7 +70,7 @@ export default function VideoModal({ primaryLabel, primaryHref, secondaryLabel, 
             href={embed.originalUrl}
             target="_blank"
             rel="noreferrer"
-            className="mt-5 inline-flex items-center gap-2 rounded-lg bg-white px-6 py-3 text-sm font-bold text-brand-800 shadow-lg shadow-black/20 transition-colors hover:bg-blue-50"
+            className="mt-5 inline-flex items-center gap-2 rounded-lg bg-white px-6 py-3 text-sm font-bold text-brand-800 shadow-lg shadow-black/20 transition-colors hover:bg-brand-50"
           >
             {openExternalLabel}
             <ArrowUpRight size={16} />

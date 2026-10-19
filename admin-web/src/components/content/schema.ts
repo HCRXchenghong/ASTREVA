@@ -291,7 +291,24 @@ const HOME_CTA_FIELDS: FieldDef[] = [
     key: 'home.partners',
     label: '合作伙伴名单',
     type: 'listText',
-    hint: '每行一家合作伙伴；显示在「关于我们」页面。',
+    hint: '每行一家合作伙伴；显示在「关于我们」页面。没有上传 Logo 时按名称文字展示。',
+  },
+  {
+    key: 'home.partnersHidden',
+    label: '隐藏合作伙伴区块',
+    type: 'checkbox',
+    hint: '勾选后，「关于我们」页面不再显示合作伙伴区块（默认不勾选即显示）。',
+  },
+  {
+    key: 'home.partnerLogos',
+    label: '合作伙伴 Logo',
+    type: 'objectList',
+    full: true,
+    hint: '上传 Logo 后按图片展示；留空则回退到上面的名称。名称同时作为图片的 alt。',
+    schema: [
+      { key: 'name', label: '名称（同时作为图片 alt）' },
+      imageField('logoUrl', 'Logo 图片'),
+    ],
   },
 ];
 

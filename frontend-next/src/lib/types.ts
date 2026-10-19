@@ -214,6 +214,10 @@ export type HomePage = {
     linkIcon: string;
   };
   partners: string[];
+  /** 后台开关：勾选后隐藏合作伙伴区块。默认不勾选 = 显示。 */
+  partnersHidden?: boolean;
+  /** 合作伙伴 Logo：name 用于 alt 与无图时的文字回退。 */
+  partnerLogos?: Array<{ name: string; logoUrl?: string }>;
   productIntro: {
     title: string;
     description: string;
