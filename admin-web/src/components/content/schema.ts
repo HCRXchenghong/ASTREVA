@@ -297,9 +297,6 @@ const HOME_CTA_FIELDS: FieldDef[] = [
 
 const PRODUCT_CENTER_FIELDS: FieldDef[] = [
   { key: 'productCenter.hero.title', label: '首屏标题' },
-  // 说明：产品中心页实际渲染的是 catalog.description，hero.description 历史字段已不再使用，
-  // 这里保留标签但注明，避免两边都改了却只有一处生效。
-  { key: 'productCenter.hero.description', label: '首屏描述（历史字段，产品页已改用下方「产品页描述」）', type: 'textarea' },
   imageField('productCenter.hero.backgroundImage', '首屏背景图'),
   videoField('productCenter.hero.backgroundVideo', '首屏背景视频'),
   { key: 'productCenter.catalog.eyebrow', label: '产品页眉标' },
@@ -310,11 +307,6 @@ const PRODUCT_CENTER_FIELDS: FieldDef[] = [
   { key: 'productCenter.catalog.categoriesAriaLabel', label: '分类区无障碍标签' },
   { key: 'productCenter.catalog.viewAllLabel', label: '查看全部文字' },
   { key: 'productCenter.catalog.emptyCategoryMessage', label: '分类为空时的提示' },
-  // 以下三个是历史字段：产品中心页已改用 catalog.*（见上方），当前前端没有任何位置渲染它们。
-  // 保留标签并注明，避免"填了却不生效"；确认不再需要后可整组删除。
-  { key: 'productCenter.intro.title', label: '选择区标题（历史字段，产品中心页已不再渲染）' },
-  { key: 'productCenter.intro.description', label: '选择区描述（历史字段，产品中心页已不再渲染）', type: 'textarea' },
-  { key: 'productCenter.intro.categoryCtaLabel', label: '品类按钮文字（历史字段，产品中心页已不再渲染）' },
   { key: 'productCenter.categoryPage.categoryCtaIcon', label: '品类按钮图标' },
   { key: 'productCenter.categoryPage.titleTemplate', label: '品类页标题模板' },
   { key: 'productCenter.categoryPage.backLabel', label: '返回按钮文字' },
@@ -390,12 +382,9 @@ export const SITE_FIELDS: FieldDef[] = [
   { key: 'site.copyright', label: '版权文案' },
   { key: 'site.serviceBridgeUrl', label: 'ServiceBridge 地址' },
   { key: 'site.localization.languageLabel', label: '语言选择标签' },
-  { key: 'site.localization.switchAriaLabel', label: '语言切换无障碍标签（旧版切换器遗留，当前界面为独立语言页路由，不渲染）' },
   { key: 'site.localization.chineseLabel', label: '中文名称' },
   { key: 'site.localization.englishLabel', label: '英语名称' },
   { key: 'site.localization.arabicLabel', label: '阿拉伯语名称' },
-  { key: 'site.localization.switchingText', label: '切换中提示（旧版切换器遗留，当前不渲染）' },
-  { key: 'site.localization.unavailableText', label: '译文未就绪提示（旧版切换器遗留，当前不渲染）' },
   { key: 'site.notFound.title', label: '404 页标题' },
   { key: 'site.notFound.description', label: '404 页说明', type: 'textarea' },
   { key: 'site.notFound.homeLabel', label: '404 页「返回首页」文字' },

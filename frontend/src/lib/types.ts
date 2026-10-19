@@ -15,12 +15,9 @@ export type SiteSettings = {
   locale: string;
   localization: {
     languageLabel: string;
-    switchAriaLabel: string;
     chineseLabel: string;
     englishLabel: string;
     arabicLabel: string;
-    switchingText: string;
-    unavailableText: string;
   };
   brandName: string;
   brandTagline: string;
@@ -153,14 +150,8 @@ export type ProductCenterPage = {
   seo: SEO;
   hero: {
     title: string;
-    description: string;
     backgroundImage: string;
     backgroundVideo?: string;
-  };
-  intro: {
-    title: string;
-    description: string;
-    categoryCtaLabel: string;
   };
   catalog: {
     eyebrow: string;
@@ -216,7 +207,6 @@ export type HomePage = {
     videoOpenExternalLabel: string;
     videoCloseLabel: string;
   };
-  partnerLabel: string;
   featuredProducts: {
     title: string;
     description: string;

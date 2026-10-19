@@ -3,12 +3,9 @@
     "locale": "zh-CN",
     "localization": {
       "languageLabel": "语言",
-      "switchAriaLabel": "切换网站语言",
       "chineseLabel": "中文",
       "englishLabel": "English",
-      "arabicLabel": "العربية",
-      "switchingText": "切换中…",
-      "unavailableText": "译文未就绪"
+      "arabicLabel": "العربية"
     },
     "brandName": "星渡ASTREVA",
     "brandTagline": "A Grate Innovation",
@@ -181,7 +178,6 @@
       "videoCloseLabel": "关闭视频",
       "primaryHref": "/products/"
     },
-    "partnerLabel": "我们的合作伙伴:",
     "featuredProducts": {
       "title": "产品展示",
       "description": "探索我们全系列的高性能排水产品，专为各类建筑与市政需求设计。",
@@ -254,14 +250,8 @@
     },
     "hero": {
       "title": "产品中心",
-      "description": "探索我们的系统在各核心领域的应用，选择您的业务板块以查看专属方案。",
       "backgroundImage": "",
       "backgroundVideo": ""
-    },
-    "intro": {
-      "title": "请选择应用场景与业务板块",
-      "description": "我们将为您精确匹配最合适的系统解决方案",
-      "categoryCtaLabel": "查看相关产品"
     },
     "catalog": {
       "eyebrow": "Product Center",
