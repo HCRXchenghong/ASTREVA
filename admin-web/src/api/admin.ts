@@ -1,3 +1,4 @@
+import type { AxiosRequestConfig } from 'axios';
 import client, { serviceBridgePrefix } from './client';
 
 // 客服引擎接口统一经 admin-server 代理（serviceBridgePrefix），
@@ -188,6 +189,27 @@ export const fetchAiBindings = () =>
 export const updateAiBindings = (bindings: Array<Record<string, unknown>>) =>
   client
     .put(bridge('/api/admin/ai-bindings'), { bindings })
+    .then((r) => r.data);
+
+// 能力候选供应商（故障转移链）：GET 返回全部候选，PUT 为整体替换语义
+// （请求里未出现的旧候选会被删除，传空数组即清空）。校验失败返回 400 + message。
+export const fetchAiBindingTargets = (config: AxiosRequestConfig = {}) =>
+  client
+    .get(bridge('/api/admin/ai-binding-targets'), config)
+    .then((r) => r.data);
+// skipErrorMessage 由调用方按需传入：能力绑定页需要把后端 message 显示在页面内，
+// 而不是只弹一条全局提示。
+export const updateAiBindingTargets = (
+  targets: Array<Record<string, unknown>>,
+  config: AxiosRequestConfig = {}
+) =>
+  client
+    .put(bridge('/api/admin/ai-binding-targets'), { targets }, config)
+    .then((r) => r.data);
+// 供应商熔断健康快照：closed / open / half_open，含连续失败次数与脱敏后的最后错误。
+export const fetchAiProviderHealth = (config: AxiosRequestConfig = {}) =>
+  client
+    .get(bridge('/api/admin/ai-providers/health'), config)
     .then((r) => r.data);
 export const fetchAgentPreferences = (id: string) =>
   client
