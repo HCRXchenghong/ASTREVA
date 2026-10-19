@@ -49,7 +49,7 @@ func registerAnalyticsDashboardRoutes(mux *http.ServeMux, service *app.Service, 
 			writeError(w, store.ErrUnauthorized)
 			return
 		}
-		counter, ok := service.Store().(store.InquiryCounter)
+		counter, ok := service.InquiryCounter()
 		if !ok {
 			// 理论上所有内置 Store 都实现了；真遇到自定义 Store 就如实报不可用，
 			// 绝不用 0 冒充「今天没有询盘」。

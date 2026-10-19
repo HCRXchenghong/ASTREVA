@@ -11,6 +11,16 @@ const VISITOR_ACTIVITY_PATH = '/api/internal/visitor-activity';
 const VISITOR_ACTIVITY_TIMEOUT_MS = 2000;
 const VISITOR_ACTIVITY_LOG_CAP = 200;
 
+// 数据看板「今日询盘」来自客服引擎（conversations/messages），不在 CMS 库。
+// 口径（用户已确认）：询盘 = 当天有访客消息的会话数；同一会话当天多条消息只计 1 次；
+// 与 site_leads（官网表单提交）是两件事，绝不能混用。
+const ENGINE_DASHBOARD_PATH = '/api/internal/analytics/dashboard';
+const ENGINE_LOGIN_PATH = '/api/admin/login';
+const ENGINE_CONVERSATIONS_PATH = '/api/admin/conversations';
+const ENGINE_DASHBOARD_TIMEOUT_MS = 2500;
+const ENGINE_INQUIRY_DEFINITION =
+  '询盘=当天有访客消息的会话数；同一会话当天多条消息只计 1 次；不含官网表单提交。';
+
 /**
  * 访客活跃转发的 fire-and-forget 发送器。
  *
@@ -171,6 +181,215 @@ function safePath(value) {
 }
 
 /**
+ * 客服引擎看板询盘读取器。
+ *
+ * 询盘口径只在引擎侧成立（conversations/messages），admin-server 需要把它合并进
+ * /site-admin-api/analytics/overview。读取顺序：
+ * 1. 优先调用引擎的只读聚合接口 `/api/internal/analytics/dashboard`
+ *    （服务间 X-Internal-Token，一次查询完成，口径注释见引擎 analytics_dashboard.go）；
+ * 2. 引擎尚未升级（404/503）时退回既有的管理员接口，在 admin-server 侧聚合：
+ *    `/api/admin/conversations` + `/api/conversations/{id}/messages`。
+ *
+ * 兼容路径会按 conversation.updated_at 先过滤（访客消息一定会刷新该字段），
+ * 再分页读取消息，避免把整库消息全拉一遍。失败时返回 `{ ok:false }`，
+ * 由调用方把指标显示为「未知」，绝不用 0 冒充「今天没有询盘」。
+ */
+export function createEngineDashboardClient({
+  apiUrl = '',
+  adminAccount = '',
+  adminPassword = '',
+  internalToken = '',
+  timeoutMs = ENGINE_DASHBOARD_TIMEOUT_MS,
+  fetchImpl = globalThis.fetch
+} = {}) {
+  let adminToken = { value: '', expiresAt: 0 };
+
+  // 延迟读取 env：server.mjs 的 loadDotEnv() 在 import 之后才执行。
+  function config() {
+    return {
+      base: String(apiUrl || process.env.SERVICEBRIDGE_API_URL || 'http://127.0.0.1:8080').trim().replace(/\/+$/, ''),
+      account: String(adminAccount || process.env.SERVICEBRIDGE_ADMIN_ACCOUNT || 'superadmin').trim(),
+      password: String(adminPassword || process.env.SERVICEBRIDGE_ADMIN_PASSWORD || '123456'),
+      internalToken: String(internalToken || process.env.INTERNAL_API_TOKEN || '').trim()
+    };
+  }
+
+  async function requestJson(target, options = {}) {
+    const response = await fetchImpl(target, {
+      ...options,
+      headers: { Accept: 'application/json', ...(options.headers || {}) },
+      signal: options.signal || AbortSignal.timeout(timeoutMs)
+    });
+    const text = await response.text().catch(() => '');
+    let payload = {};
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch {
+      payload = { message: text };
+    }
+    if (!response.ok) {
+      const message =
+        payload?.message ||
+        payload?.error?.message ||
+        (typeof payload?.error === 'string' ? payload.error : '') ||
+        `HTTP ${response.status}`;
+      const error = new Error(message);
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  }
+
+  async function login(force = false) {
+    const { base, account, password } = config();
+    if (!force && adminToken.value && adminToken.expiresAt > Date.now()) return adminToken.value;
+    const payload = await requestJson(`${base}${ENGINE_LOGIN_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account, password })
+    });
+    if (!payload?.token) throw new Error('客服引擎未返回管理员令牌');
+    adminToken = { value: payload.token, expiresAt: Date.now() + 11 * 60 * 60 * 1000 };
+    return payload.token;
+  }
+
+  function adminGet(pathname, token) {
+    return requestJson(`${config().base}${pathname}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+  }
+
+  function normalizeAggregate(payload) {
+    const today = Number(payload?.today?.inquiries);
+    const month = Number(payload?.month?.inquiries);
+    if (!Number.isInteger(today) || today < 0 || !Number.isInteger(month) || month < 0) return null;
+    return {
+      ok: true,
+      today,
+      month,
+      definition: String(payload?.definition || ENGINE_INQUIRY_DEFINITION),
+      source: 'engine-aggregate'
+    };
+  }
+
+  async function readAggregate({ tz, month }) {
+    const { base, internalToken: token } = config();
+    if (!token) return null;
+    const query = new URLSearchParams();
+    if (tz) query.set('tz', tz);
+    if (month) query.set('month', month);
+    const suffix = query.toString() ? `?${query}` : '';
+    try {
+      const payload = await requestJson(`${base}${ENGINE_DASHBOARD_PATH}${suffix}`, {
+        headers: { 'X-Internal-Token': token }
+      });
+      return normalizeAggregate(payload);
+    } catch {
+      // 引擎尚未升级（404）、令牌不匹配（401/503）或暂时不可用：交给兼容聚合。
+      return null;
+    }
+  }
+
+  async function conversationInquiries(conversationId, token, boundaries) {
+    let before = '';
+    let today = false;
+    let month = false;
+    // 单会话最多翻 50 页（每页 100 条）；正常会话远小于这个量级。
+    for (let page = 0; page < 50; page += 1) {
+      const query = new URLSearchParams({ limit: '100' });
+      if (before) query.set('before', before);
+      const payload = await adminGet(
+        `/api/conversations/${encodeURIComponent(conversationId)}/messages?${query}`,
+        token
+      );
+      const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+      if (!messages.length) break;
+      let oldest = Infinity;
+      for (const message of messages) {
+        if (message?.sender_type !== 'visitor') continue;
+        const createdAt = Date.parse(message.created_at || '');
+        if (!Number.isFinite(createdAt)) continue;
+        if (createdAt < oldest) oldest = createdAt;
+        if (createdAt >= boundaries.todayStart) today = true;
+        if (createdAt >= boundaries.monthStart && createdAt < boundaries.monthEnd) month = true;
+      }
+      if (!payload?.has_more || !payload?.next_before) break;
+      // 已经翻到早于本月首条消息的位置，再往前不可能有本月访客消息。
+      if (oldest < boundaries.monthStart) break;
+      before = payload.next_before;
+    }
+    return { today, month };
+  }
+
+  async function readViaAdminApi({ range }) {
+    const todayStart = Date.parse(range?.todayStart || '');
+    const monthStart = Date.parse(range?.monthStart || '');
+    const monthEnd = Date.parse(range?.monthEnd || '');
+    if (![todayStart, monthStart, monthEnd].every(Number.isFinite)) {
+      return { ok: false, message: '缺少统计区间，无法聚合询盘。', definition: ENGINE_INQUIRY_DEFINITION };
+    }
+    const boundaries = { todayStart, monthStart, monthEnd };
+    let token = await login(false);
+    let payload;
+    try {
+      payload = await adminGet(ENGINE_CONVERSATIONS_PATH, token);
+    } catch (error) {
+      if (error?.status !== 401 && error?.status !== 403) throw error;
+      token = await login(true);
+      payload = await adminGet(ENGINE_CONVERSATIONS_PATH, token);
+    }
+    const conversations = Array.isArray(payload?.conversations) ? payload.conversations : [];
+    // 访客消息会更新 conversation.updated_at：本月有访客消息的会话一定在
+    // updated_at >= monthStart 的集合里，先过滤可显著减少消息请求数。
+    const candidates = conversations.filter((conversation) => {
+      const updatedAt = Date.parse(conversation?.updated_at || conversation?.updatedAt || '');
+      return Number.isFinite(updatedAt) && updatedAt >= monthStart;
+    });
+    let today = 0;
+    let month = 0;
+    // 控制并发，避免看板轮询把引擎打满。
+    for (let index = 0; index < candidates.length; index += 4) {
+      const chunk = candidates.slice(index, index + 4);
+      const results = await Promise.all(
+        chunk.map((conversation) =>
+          conversationInquiries(conversation?.id, token, boundaries).catch(() => ({ today: false, month: false }))
+        )
+      );
+      for (const result of results) {
+        if (result.today) today += 1;
+        if (result.month) month += 1;
+      }
+    }
+    return {
+      ok: true,
+      today,
+      month,
+      definition: ENGINE_INQUIRY_DEFINITION,
+      // 兼容路径受引擎后台会话列表上限（当前 500 条）约束；
+      // 引擎升级后优先走一次查询的聚合接口，不再有该限制。
+      source: 'admin-api',
+      ...(candidates.length >= 500 ? { truncated: true } : {})
+    };
+  }
+
+  async function read({ tz = '', month = '', range = null } = {}) {
+    try {
+      const aggregate = await readAggregate({ tz, month });
+      if (aggregate) return aggregate;
+      return await readViaAdminApi({ range });
+    } catch (error) {
+      return {
+        ok: false,
+        message: `客服引擎询盘数据不可用：${error?.message || error}`,
+        definition: ENGINE_INQUIRY_DEFINITION
+      };
+    }
+  }
+
+  return { read };
+}
+
+/**
  * 官网数据看板与系统日志（访问部分）。
  * - POST /site-admin-api/analytics/visit 公开埋点（管理员登录之外的唯一公开写入口）
  *   - 已同意 analytics：前端带 visitor_id/session_id，按真实标识计数 UV；
@@ -188,9 +407,12 @@ export function createAnalyticsRouter({
   resolveClient,
   countryFromRequest,
   timezoneFromRequest,
-  visitorActivityForwarder = null
+  visitorActivityForwarder = null,
+  engineDashboard = null
 }) {
   const rateWindows = new Map();
+  // 询盘来自客服引擎；注入点便于单测替换，未注入时用默认真实客户端。
+  const inquiryReader = engineDashboard || createEngineDashboardClient();
 
   /** 统计日按看板时区切分，与 analyticsSummary 的 today 口径一致。 */
   function anonymousDayKey() {
@@ -288,10 +510,22 @@ export function createAnalyticsRouter({
     }
     try {
       if (pathname === '/site-admin-api/analytics/overview' && req.method === 'GET') {
-        const data = await platformStore.analyticsSummary({
-          tz: url.searchParams.get('tz') || timezoneFromRequest(req),
-          month: url.searchParams.get('month') || ''
-        });
+        const tz = url.searchParams.get('tz') || timezoneFromRequest(req);
+        const month = url.searchParams.get('month') || '';
+        const data = await platformStore.analyticsSummary({ tz, month });
+        // 询盘口径在客服引擎（有访客消息的会话数），与 CMS 的 leads（表单提交）分开。
+        // 引擎不可用时把 inquiries 置为 null，由前端显示「未知」，而不是 0。
+        const inquiries = await inquiryReader.read({ tz, month, range: data?.range });
+        data.today = { ...data.today, inquiries: inquiries?.ok ? inquiries.today : null };
+        data.month = { ...data.month, inquiries: inquiries?.ok ? inquiries.month : null };
+        data.inquiry = {
+          ok: Boolean(inquiries?.ok),
+          definition: inquiries?.definition || ENGINE_INQUIRY_DEFINITION,
+          source: inquiries?.source || 'engine',
+          ...(inquiries?.ok
+            ? (inquiries.truncated ? { truncated: true } : {})
+            : { message: inquiries?.message || '客服引擎未返回询盘数据。' })
+        };
         json(res, 200, { data });
         return true;
       }

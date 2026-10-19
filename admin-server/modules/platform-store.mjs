@@ -726,11 +726,46 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     }
   }
 
+  function zonedDayStartForParts(year, monthIndex, day, tz) {
+    const utcGuess = Date.UTC(year, monthIndex, day, 0, 0, 0);
+    // 夏令时地区：先用猜测时刻的偏移量算一次，再用落点时刻的偏移量校正，
+    // 避免跨 DST 边界的「月初 00:00」偏一小时。
+    const firstPass = utcGuess - tzOffsetMs(new Date(utcGuess), tz);
+    return new Date(utcGuess - tzOffsetMs(new Date(firstPass), tz));
+  }
+
   function zonedDayStart(base, tz) {
     const dtf = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
     const [year, month, day] = dtf.format(base).split('-').map(Number);
-    const utcGuess = Date.UTC(year, month - 1, day, 0, 0, 0);
-    return new Date(utcGuess - tzOffsetMs(new Date(utcGuess), tz));
+    return zonedDayStartForParts(year, month - 1, day, tz);
+  }
+
+  /**
+   * 看板「本月」区间：按看板时区取所选月份 1 日 00:00 到下月 1 日 00:00。
+   * 之前这里误用了 `zonedDayStart(monthBase)` 再对 UTC 月份做 +1，
+   * 结果 monthStart 落在「今天」而不是月初、monthEnd 也可能只覆盖一天，
+   * 趋势图因此拿不到整月数据。这里用年/月分量直接构造，避免受 UTC 与本地时区
+   * 日期错位影响（例如 Asia/Shanghai 的 10 月 1 日 00:00 == 9 月 30 日 16:00Z）。
+   */
+  function zonedMonthRange(month, now, tz) {
+    const match = /^(\d{4})-(\d{2})$/.exec(String(month || ''));
+    const monthNumber = match ? Number(match[2]) : 0;
+    let year;
+    let monthIndex;
+    if (match && monthNumber >= 1 && monthNumber <= 12) {
+      year = Number(match[1]);
+      monthIndex = monthNumber - 1;
+    } else {
+      const [currentYear, currentMonth] = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz, year: 'numeric', month: '2-digit'
+      }).format(now).split('-').map(Number);
+      year = currentYear;
+      monthIndex = currentMonth - 1;
+    }
+    return {
+      start: zonedDayStartForParts(year, monthIndex, 1, tz),
+      end: zonedDayStartForParts(year, monthIndex + 1, 1, tz)
+    };
   }
 
   function validTimezone(tz) {
@@ -848,18 +883,17 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
    * UV 口径为 `COUNT(DISTINCT visitor_id)`：已同意访客用真实前端标识，未同意访客用
    * 服务端派生的 `anon_*` 当日键，因此匿名流量也计入 UV；匿名键每天轮换，
    * 无法跨天识别同一人（最小化原则）。访问明细仍保留 IP/UA 供安全审计。
+   *
+   * 注意：这里返回的 `leads` 是**官网表单提交数**（site_leads），不是看板上的
+   * 「询盘」；看板询盘 = 当天有访客消息的会话数，由 analytics-router 从客服引擎
+   * 合并进来（today.inquiries / month.inquiries）。两者不要混用。
    */
   async function analyticsSummary(options = {}) {
     const tz = validTimezone(options.tz) ? options.tz : 'Asia/Shanghai';
     const now = new Date();
     const todayStart = zonedDayStart(now, tz);
-    const monthSource = /^\d{4}-\d{2}$/.test(String(options.month || '')) ? `${options.month}-01T00:00:00Z` : null;
-    const monthBase = monthSource ? new Date(monthSource) : now;
-    const monthStart = zonedDayStart(monthBase, tz);
-    const nextMonth = new Date(monthStart);
-    nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
-    nextMonth.setUTCDate(1);
-    const monthEnd = zonedDayStart(nextMonth, tz);
+    // 月份区间必须覆盖整个自然月（趋势图按天画满整月），不能退化成「今天」。
+    const { start: monthStart, end: monthEnd } = zonedMonthRange(options.month, now, tz);
 
     if (!usePostgres) {
       const inRange = (item, start, end) => {
