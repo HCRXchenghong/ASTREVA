@@ -170,3 +170,20 @@ body:has(#cookie-consent) [data-chat-launcher] {
     bottom: 15rem;
   }
 }
+
+/*
+ * 横幅出现时入口被抬高，面板跟着上升；同步收紧面板高度，避免顶到固定导航栏。
+ */
+[data-chat-panel] {
+  transition: max-height 0.25s ease;
+}
+
+body:has(#cookie-consent) [data-chat-panel] {
+  max-height: calc(100vh - 21rem);
+}
+
+@media (max-width: 767px) {
+  body:has(#cookie-consent) [data-chat-panel] {
+    max-height: calc(100vh - 26rem);
+  }
+}
