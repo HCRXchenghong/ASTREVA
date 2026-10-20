@@ -71,6 +71,11 @@ const isIndexable = !/noindex/i.test(robots);
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Progressive enhancement guard: reveal animations only hide content when JS
+         actually runs. Without it, a script failure would leave the page blank. -->
+    <script is:inline>
+      document.documentElement.classList.add('js');
+    </script>
     <script is:inline define:vars={{ astrevaLocale: locale, astrevaLocales: availableLocales, astrevaLocalePaths: switchPaths }}>
       window.__ASTREVA_LOCALE__ = astrevaLocale;
       window.__ASTREVA_LOCALES__ = astrevaLocales;
@@ -195,7 +200,7 @@ const isIndexable = !/noindex/i.test(robots);
     <meta name="googlebot" content={robots} />
     <meta name="bingbot" content={robots} />
     {isIndexable && <meta name="baiduspider" content="index, follow" />}
-    <meta name="theme-color" content="#0a4d8c" />
+    <meta name="theme-color" content="var(--color-brand-800)" />
     {verification.google && <meta name="google-site-verification" content={verification.google} />}
     {verification.bing && <meta name="msvalidate.01" content={verification.bing} />}
     {verification.baidu && <meta name="baidu-site-verification" content={verification.baidu} />}
@@ -258,7 +263,7 @@ const isIndexable = !/noindex/i.test(robots);
               {content.site.logoUrl ? (
                 <img src={content.site.logoUrl} alt={footer.logoAlt} class="w-10 h-10 rounded-full object-cover bg-white shadow-sm ring-1 ring-blue-400/30" />
               ) : (
-                <span role="img" aria-label={footer.logoAlt} class="grid h-10 w-10 place-items-center rounded-full bg-white text-sm font-black text-[#0a4d8c] shadow-sm ring-1 ring-blue-400/30">{content.site.brandName.slice(0, 1)}</span>
+                <span role="img" aria-label={footer.logoAlt} class="grid h-10 w-10 place-items-center rounded-full bg-white text-sm font-black text-brand-800 shadow-sm ring-1 ring-blue-400/30">{content.site.brandName.slice(0, 1)}</span>
               )}
               <span class="text-2xl font-bold tracking-wide">{content.site.brandName}</span>
             </div>
@@ -311,5 +316,30 @@ const isIndexable = !/noindex/i.test(robots);
       <ChatWidget client:only="react" serviceBridgeUrl={content.site.serviceBridgeUrl} chat={content.site.chat} lang={locale} />
       <CookieConsent client:only="react" cookie={content.site.cookie} privacyHref={localePath(locale, '/privacy/')} />
     </div>
+    <!-- Preline UI runtime: opens the navbar dropdowns, accordions, tabs and modals
+         through data/hs-* attributes. Bundled by Vite, never a plain script src. -->
+    <script>
+      import 'preline';
+
+      // Reveal-on-scroll: one observer for the whole page, elements unobserved
+      // after their first appearance so scrolling back never re-animates.
+      const revealables = document.querySelectorAll('.reveal');
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (reduceMotion || !('IntersectionObserver' in window)) {
+        revealables.forEach((element) => element.classList.add('is-visible'));
+      } else {
+        const observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue;
+              entry.target.classList.add('is-visible');
+              observer.unobserve(entry.target);
+            }
+          },
+          { rootMargin: '0px 0px -8% 0px', threshold: 0.08 }
+        );
+        revealables.forEach((element) => observer.observe(element));
+      }
+    </script>
   </body>
 </html>

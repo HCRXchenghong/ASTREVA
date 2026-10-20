@@ -23,9 +23,6 @@ cd "$ROOT_DIR"
 
 ENV_EXAMPLE="deployments/ubuntu/.env.ubuntu.example"
 COMPOSE_FILE="deployments/ubuntu/docker-compose.ubuntu.yml"
-# 官网目录跟随 ACTIVE_FRONTEND / FRONTEND_DIR，默认仍是现有生产前端 frontend。
-FRONTEND_NAME="${ACTIVE_FRONTEND:-${FRONTEND_DIR:-frontend}}"
-FRONTEND_DIST="$FRONTEND_NAME/dist"
 export GOCACHE="${GOCACHE:-/tmp/astreva-go-cache}"
 
 SUMMARY_FILE="$(mktemp "${TMPDIR:-/tmp}/astreva-verify-summary.XXXXXX")"
@@ -170,15 +167,15 @@ else
 fi
 
 # ---------------------------------------------------------------- 5. 官网构建
-begin "5/11 官网构建（$FRONTEND_DIST 缺失时使用桩内容 API）"
+begin "5/11 官网构建（frontend/dist 缺失时使用桩内容 API）"
 dist_present=0
-if [[ -d "$FRONTEND_DIST" ]] && [[ -n "$(ls -A "$FRONTEND_DIST" 2>/dev/null)" ]]; then
+if [[ -d frontend/dist ]] && [[ -n "$(ls -A frontend/dist 2>/dev/null)" ]]; then
   dist_present=1
 fi
 if [[ "${VERIFY_SKIP_STEP5:-0}" == "1" ]]; then
   mark_skip "VERIFY_SKIP_STEP5=1"
 elif [[ "$dist_present" -eq 1 ]]; then
-  mark_skip "$FRONTEND_DIST 已存在且非空"
+  mark_skip "frontend/dist 已存在且非空"
 else
   STUB_LOG="$(mktemp "${TMPDIR:-/tmp}/astreva-stub.XXXXXX")"
   node "$ROOT_DIR/scripts/verify-content-api-stub.mjs" >"$STUB_LOG" 2>&1 &
@@ -203,7 +200,7 @@ else
   printf '桩内容 API：http://127.0.0.1:%s（源文件 admin-server/seed/site-content.json）\n' "$stub_port"
   BUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/astreva-frontend-build.XXXXXX")"
   build_ok=0
-  if CONTENT_API_URL="http://127.0.0.1:$stub_port" ACTIVE_FRONTEND="$FRONTEND_NAME" npm run build:frontend 2>&1 | tee "$BUILD_LOG"; then
+  if CONTENT_API_URL="http://127.0.0.1:$stub_port" npm run build:frontend 2>&1 | tee "$BUILD_LOG"; then
     build_ok=1
   fi
   kill "$STUB_PID" 2>/dev/null || true
@@ -220,8 +217,8 @@ else
     fatal "使用桩内容 API 构建官网失败"
   fi
   rm -f "$BUILD_LOG"
-  if [[ ! -d "$FRONTEND_DIST" ]] || [[ -z "$(ls -A "$FRONTEND_DIST" 2>/dev/null)" ]]; then
-    fatal "构建命令成功但 $FRONTEND_DIST 仍为空"
+  if [[ ! -d frontend/dist ]] || [[ -z "$(ls -A frontend/dist 2>/dev/null)" ]]; then
+    fatal "构建命令成功但 frontend/dist 仍为空"
   fi
   mark_pass
 fi

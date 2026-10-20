@@ -1,9 +1,11 @@
 ---
 import InnerPageHero from '../components/InnerPageHero.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
+import Icon from '../components/ui/Icon.astro';
 import { staticPage } from '../lib/content';
 import { localePath, localizeHref, type SiteLocale } from '../lib/i18n';
 import { resolveVideoSource } from '../lib/video';
+import { resolveIcon } from '../lib/icons';
 import type { SiteContent } from '../lib/types';
 
 type Props = { content: SiteContent; locale: SiteLocale };
@@ -36,7 +38,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
         <h2 class="text-4xl font-extrabold text-gray-900">{solutionUi.introTitle}</h2>
         <p class="mt-5 text-lg leading-relaxed text-gray-600">{solutionUi.introDescription}</p>
       </header>
-      <div class="flex flex-col gap-16 lg:flex-row lg:items-start">
+      <div class="flex flex-col gap-16 lg:flex-row lg:items-start lg:gap-12">
         <div class="flex-1 space-y-32">
           {solutionSections.map((section, index) => (
             <section id={section.id} class={`relative scroll-mt-44 ${index > 0 ? 'border-t border-gray-200 pt-12' : ''}`}>
@@ -64,10 +66,10 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
                   ) : (section.videoImage || section.image) ? (
                     <>
                       <img src={section.videoImage || section.image} alt={section.title} class="h-full w-full object-cover opacity-60" />
-                      <div class="video-play-btn" aria-hidden="true"><span class="ml-1 text-3xl text-[#0a4d8c]">{solutionUi.videoPlayIcon}</span></div>
+                      <div class="video-play-btn" aria-hidden="true"><Icon name={resolveIcon(solutionUi.videoPlayIcon)} class="ml-1 h-7 w-7 fill-brand-800 text-brand-800" /></div>
                     </>
                   ) : (
-                    <div role="img" aria-label={section.title} class="grid h-full w-full place-items-center bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"><span aria-hidden="true">◇</span></div>
+                    <div role="img" aria-label={section.title} class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"><Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} /></div>
                   )}
                   <div class="absolute bottom-6 left-6 max-w-[calc(100%-48px)] rounded-lg bg-black/40 p-4 text-white backdrop-blur-sm">
                     <p class="text-sm font-bold">{section.videoCaption}</p>
@@ -77,13 +79,13 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
 
               {index === 1 ? (
                 <div class="grid gap-16 md:grid-cols-2 md:items-center">
-                  <div class="order-2 rounded-3xl border border-gray-200 bg-gray-100 p-8 md:order-1">
-                    <h3 class="mb-4 font-bold text-[#0a4d8c]">{solutionUi.architectureTitle}</h3>
+                  <div class="order-2 rounded-2xl border border-line-100 bg-surface-50 p-6 md:order-1 md:p-8">
+                    <h3 class="mb-4 font-bold text-brand-800">{solutionUi.architectureTitle}</h3>
                     <div class="space-y-4">
                       {systemCards.map((card) => (
-                        <div class="rounded-xl border-l-4 border-[#0a66c2] bg-white p-4 shadow-sm">
-                          <p class="mb-1 text-xs font-bold uppercase text-gray-400">{card.step}</p>
-                          <p class="text-sm font-medium text-gray-800">{card.title}</p>
+                        <div class="rounded-lg border border-line-100 bg-white p-4 transition-colors hover:border-brand-200">
+                          <p class="mb-1 text-[11px] font-black uppercase tracking-[0.14em] text-ink-400">{card.step}</p>
+                          <p class="text-sm font-semibold leading-6 text-ink-800">{card.title}</p>
                         </div>
                       ))}
                     </div>
@@ -91,8 +93,8 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
                   <div class="order-1 md:order-2">
                     <h3 class="mb-6 text-2xl font-extrabold text-gray-900">{section.focusTitle}</h3>
                     <p class="mb-8 leading-relaxed text-gray-600">{section.focusDescription}</p>
-                    <a href={localHref(section.ctaHref || solutionUi.ctaHref)} class="inline-flex items-center gap-2 rounded-lg bg-[#0a4d8c] px-8 py-3 font-bold text-white transition-colors hover:bg-[#084b8c]">
-                      {section.ctaLabel || solutionUi.ctaLabel} <span aria-hidden="true">{solutionUi.ctaIcon}</span>
+                    <a href={localHref(section.ctaHref || solutionUi.ctaHref)} class="inline-flex items-center gap-2 rounded-lg bg-brand-800 px-8 py-3 font-bold text-white transition-colors hover:bg-brand-700">
+                      {section.ctaLabel || solutionUi.ctaLabel} <Icon name={resolveIcon(solutionUi.ctaIcon)} class="h-4 w-4" />
                     </a>
                   </div>
                 </div>
@@ -102,8 +104,8 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
                     <h3 class="mb-6 text-3xl font-extrabold leading-tight text-gray-900">{section.focusTitle}</h3>
                     <div class="space-y-4">
                       {section.bullets.slice(0, 2).map((bullet) => (
-                        <div class="rounded-lg bg-blue-50 p-4">
-                          <p class="mb-1 text-sm font-bold text-[#0a4d8c]">{bullet}</p>
+                        <div class="rounded-lg border border-line-100 bg-white p-4">
+                          <p class="mb-1 text-sm font-bold text-brand-800">{bullet}</p>
                           <p class="text-xs text-gray-500">{section.detailNote || solutionUi.detailNote}</p>
                         </div>
                       ))}
@@ -113,7 +115,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
                     {section.image ? (
                       <img src={section.image} alt={section.title} class="h-[400px] w-full rounded-3xl object-cover" />
                     ) : (
-                      <div role="img" aria-label={section.title} class="grid h-[400px] w-full place-items-center rounded-3xl bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"><span aria-hidden="true">◇</span></div>
+                      <div role="img" aria-label={section.title} class="grid h-[400px] w-full place-items-center rounded-3xl bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"><Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} /></div>
                     )}
                     <p class="mt-8 leading-relaxed text-gray-600">{section.focusDescription}</p>
                   </div>
@@ -122,13 +124,13 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
                 <div class="grid gap-12 md:grid-cols-2 md:items-center">
                   <div class="space-y-6">
                     <h3 class="flex items-center gap-3 text-2xl font-extrabold text-gray-900">
-                      <span class="text-[#0a66c2]" aria-hidden="true">{solutionUi.featureIcon}</span> {section.focusTitle}
+                      <Icon name={resolveIcon(solutionUi.featureIcon)} class="h-5 w-5 shrink-0 text-brand-500" /> {section.focusTitle}
                     </h3>
                     <p class="leading-relaxed text-gray-600">{section.focusDescription}</p>
                     <ul class="space-y-3">
                       {section.bullets.map((bullet) => (
                         <li class="flex items-start gap-2 text-sm font-medium text-gray-800">
-                          <span class="mt-0.5 text-green-500" aria-hidden="true">{solutionUi.bulletIcon}</span> {bullet}
+                          <Icon name={resolveIcon(solutionUi.bulletIcon)} class="mt-0.5 h-4 w-4 shrink-0 text-brand-500" strokeWidth={2.4} /> {bullet}
                         </li>
                       ))}
                     </ul>
@@ -137,7 +139,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
                     {section.image ? (
                       <img src={section.image} alt={section.title} class="rounded-2xl shadow-lg" />
                     ) : (
-                      <div role="img" aria-label={section.title} class="grid aspect-[4/3] w-full place-items-center rounded-2xl bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400 shadow-lg"><span aria-hidden="true">◇</span></div>
+                      <div role="img" aria-label={section.title} class="grid aspect-[4/3] w-full place-items-center rounded-2xl bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400 shadow-lg"><Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} /></div>
                     )}
                   </div>
                 </div>
@@ -146,7 +148,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
           ))}
         </div>
 
-        <aside class="order-first w-full shrink-0 lg:sticky lg:top-32 lg:order-none lg:w-[300px] lg:self-start">
+        <aside class="order-first w-full shrink-0 lg:sticky lg:top-32 lg:order-none lg:w-[260px] lg:self-start">
           <div class="solution-rail">
             <div class="rail-card">
               <p class="rail-eyebrow">{solutionUi.sideNavTitle}</p>
@@ -261,11 +263,11 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
       transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
     }
     .rail-link::before {
-      background: #0a66c2;
+      background: var(--color-brand-500);
       border-radius: 9999px;
       content: '';
       height: 22px;
-      left: -14px;
+      left: 0;
       opacity: 0;
       position: absolute;
       top: 50%;
@@ -285,17 +287,17 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
     .rail-link:hover,
     .rail-link.active {
       background: #f0f7ff;
-      color: #0a4d8c;
+      color: var(--color-brand-800);
       transform: translateX(2px);
     }
     .rail-link.active::before {
       opacity: 1;
     }
     .rail-link.active span {
-      color: #0a66c2;
+      color: var(--color-brand-500);
     }
     .advisor-card {
-      background: linear-gradient(180deg, #fff 0%, #f7fbff 100%);
+      background: #fff;
       padding: 18px;
     }
     .advisor-title {
@@ -316,13 +318,13 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
       width: 100%;
     }
     .advisor-primary {
-      background: #0a4d8c;
+      background: var(--color-brand-500);
       color: #fff;
       margin-bottom: 10px;
-      box-shadow: 0 12px 24px rgba(10, 77, 140, 0.18);
+      box-shadow: 0 10px 20px rgba(10, 102, 194, 0.18);
     }
     .advisor-primary:hover {
-      background: #084b8c;
+      background: var(--color-brand-700);
       transform: translateY(-1px);
     }
     .advisor-secondary {
@@ -332,7 +334,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
     }
     .advisor-secondary:hover {
       border-color: rgba(10, 102, 194, 0.45);
-      color: #0a4d8c;
+      color: var(--color-brand-800);
     }
     .video-placeholder {
       aspect-ratio: 16 / 9;

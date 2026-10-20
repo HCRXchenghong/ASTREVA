@@ -56,7 +56,7 @@ export default function CookieConsent({ cookie, privacyHref = '/privacy/' }: { c
         <div className="text-gray-600 text-sm leading-relaxed flex-1">
           <strong className="text-gray-900 font-bold mr-2 text-base">{cookie.title}</strong>
           {cookie.text}
-          <a href={privacyHref} className="text-[#0a66c2] hover:text-[#084b8c] hover:underline mx-1 font-semibold">
+          <a href={privacyHref} className="text-brand-500 hover:text-brand-700 hover:underline mx-1 font-semibold">
             {cookie.privacyLabel}
           </a>
           {cookie.suffixText}
@@ -65,7 +65,7 @@ export default function CookieConsent({ cookie, privacyHref = '/privacy/' }: { c
           <button
             type="button"
             onClick={() => choose(true)}
-            className="flex-1 md:flex-none bg-[#0a66c2] text-white px-8 py-2.5 rounded-sm text-sm font-bold hover:bg-[#084b8c] transition-colors"
+            className="flex-1 md:flex-none bg-brand-500 text-white px-8 py-2.5 rounded-sm text-sm font-bold hover:bg-brand-700 transition-colors"
           >
             {cookie.acceptAllLabel}
           </button>

@@ -35,7 +35,6 @@ import { createAnalyticsRouter, createVisitorActivityForwarder, detectDanger } f
 import { createSystemRouter } from './modules/system-router.mjs';
 import { sanitizeContentRichText, sanitizeHtml } from './modules/html-sanitize.mjs';
 import { createWebsiteSeoRouter } from './modules/website-seo-router.mjs';
-import { resolveFrontend } from '../scripts/frontend-target.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -2619,8 +2618,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname.startsWith('/assets/')) {
-      // 静态资源目录跟随 ACTIVE_FRONTEND / FRONTEND_DIR，切换官网前端时无需改后台。
-      const publicRoot = resolveFrontend().public;
+      const publicRoot = path.join(ROOT, 'frontend', 'public');
       const file = path.join(publicRoot, pathname);
       if (!isInsideRoot(publicRoot, file)) return send(res, 403, 'forbidden');
       return serveFile(res, file, true);

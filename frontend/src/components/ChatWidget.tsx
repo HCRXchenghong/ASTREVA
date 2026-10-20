@@ -208,7 +208,7 @@ export default function ChatWidget({ serviceBridgeUrl, chat, lang }: { serviceBr
       )}
       <button
         onClick={toggleChat}
-        className="relative w-14 h-14 bg-[#0a66c2] text-white rounded-full flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.3)] hover:bg-[#084b8c] hover:scale-105 transition-all"
+        className="relative w-14 h-14 bg-brand-500 text-white rounded-full flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.3)] hover:bg-brand-700 hover:scale-105 transition-all"
         aria-label={chat.ariaLabel}
       >
         {isOpen ? <X size={26} /> : <MessageCircle size={26} className="fill-current text-white" />}

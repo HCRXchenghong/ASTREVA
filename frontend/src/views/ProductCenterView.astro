@@ -1,7 +1,9 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import Icon from '../components/ui/Icon.astro';
 import { productsForCategory } from '../lib/content';
 import { localePath, localizeHref, type SiteLocale } from '../lib/i18n';
+import { resolveIcon } from '../lib/icons';
 import type { SiteContent } from '../lib/types';
 
 type Props = { content: SiteContent; locale: SiteLocale };
@@ -20,39 +22,43 @@ const localHref = (path: string) => localizeHref(locale, path) as string;
 ---
 
 <BaseLayout content={content} seo={productCenter.seo} path={localePath(locale, '/products/')} locale={locale}>
-  <div class="min-h-screen w-full bg-[#f6f8fa] pt-24">
-    <section class="relative min-h-[280px] overflow-hidden border-b border-white/10 bg-[#071a31] text-white md:min-h-[320px]">
+  <div class="min-h-screen w-full bg-surface-50 pt-24">
+    <section class="relative flex min-h-[360px] items-end overflow-hidden bg-navy-950 text-white md:min-h-[440px]">
       {productCenter.hero.backgroundImage && (
         <div
-          class="absolute inset-y-0 right-0 w-full bg-cover bg-center opacity-65 md:w-[62%]"
+          class="absolute inset-y-0 right-0 w-full bg-cover bg-center opacity-55 md:w-[62%]"
           style={`background-image:url('${productCenter.hero.backgroundImage}')`}
         ></div>
       )}
-      <div class="absolute inset-0 bg-[linear-gradient(90deg,#071a31_0%,#071a31_38%,rgba(7,26,49,0.78)_62%,rgba(7,26,49,0.28)_100%)]"></div>
-      <div class="relative z-10 mx-auto flex min-h-[280px] max-w-7xl items-center px-6 py-14 md:min-h-[320px]">
-        <div class="max-w-2xl">
-          <p class="text-xs font-black uppercase tracking-[0.22em] text-[#d7a83d]">{catalogCopy.eyebrow}</p>
-          <h1 class="mt-4 text-4xl font-black tracking-tight md:text-6xl">{productCenter.hero.title}</h1>
-          <p class="mt-5 max-w-xl text-base leading-8 text-slate-200 md:text-lg">
-            {catalogCopy.description}
-          </p>
+      <div class="absolute inset-0 bg-linear-to-r from-brand-950 via-brand-950/85 to-navy-950/40"></div>
+      <div class="absolute inset-0 bg-navy-950/30"></div>
+      <div class="blueprint-grid absolute inset-0" aria-hidden="true"></div>
+      <div class="absolute inset-x-0 bottom-0 h-px bg-white/15"></div>
+      <div class="relative z-10 mx-auto w-full max-w-7xl px-6 pb-14 pt-12 md:pb-16 md:pt-16">
+        <div class="max-w-3xl">
+          <div class="mb-5 flex items-center gap-4">
+            <span class="h-px w-10 bg-accent-500" aria-hidden="true"></span>
+            <p class="text-xs font-black uppercase tracking-[0.24em] text-accent-500">{catalogCopy.eyebrow}</p>
+          </div>
+          <h1 class="display-tight text-5xl font-black leading-[1.02] md:text-6xl">{productCenter.hero.title}</h1>
+          <p class="mt-5 max-w-xl text-base leading-8 text-slate-300 md:text-lg md:leading-7">{catalogCopy.description}</p>
         </div>
       </div>
     </section>
 
     <section id="product-categories" class="scroll-mt-24 py-12 md:py-16">
       <div class="mx-auto max-w-7xl px-6">
-        <div class="mb-7 flex items-end justify-between gap-6 border-b border-[#d8dee7] pb-5">
+        <div class="mb-7 flex items-end justify-between gap-6 border-b border-line-200 pb-5">
           <div>
-            <p class="text-xs font-black uppercase tracking-[0.2em] text-[#b88923]">{catalogCopy.categoriesEyebrow}</p>
-            <h2 class="mt-2 text-3xl font-black text-[#172033]">{catalogCopy.categoriesTitle}</h2>
+            <p class="text-xs font-black uppercase tracking-[0.2em] text-accent-600">{catalogCopy.categoriesEyebrow}</p>
+            <h2 class="mt-2 text-3xl font-black text-ink-800">{catalogCopy.categoriesTitle}</h2>
           </div>
-          <p class="hidden max-w-lg text-right text-sm leading-7 text-[#667085] md:block">{catalogCopy.categoriesDescription}</p>
+          <p class="hidden max-w-lg text-right text-sm leading-7 text-ink-500 md:block">{catalogCopy.categoriesDescription}</p>
         </div>
 
         <div class="grid items-start gap-7 lg:grid-cols-[250px_minmax(0,1fr)]">
           <aside
-            class="overflow-hidden border border-[#d8dee7] bg-white"
+            class="overflow-hidden border border-line-200 bg-white"
             style="border-radius:var(--radius-ui)"
             role="tablist"
             aria-orientation="vertical"
@@ -87,11 +93,11 @@ const localHref = (path: string) => localizeHref(locale, path) as string;
               >
                 <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                   <div>
-                    <h3 class="text-2xl font-black text-[#172033] md:text-3xl">{category.name}</h3>
-                    <p class="mt-2 max-w-2xl text-sm leading-7 text-[#667085]">{category.description}</p>
+                    <h3 class="text-2xl font-black text-ink-800 md:text-3xl">{category.name}</h3>
+                    <p class="mt-2 max-w-2xl text-sm leading-7 text-ink-500">{category.description}</p>
                   </div>
-                  <a href={localHref(`/products/${category.slug}/`)} class="inline-flex shrink-0 items-center gap-2 text-sm font-black text-[#0a66c2] hover:text-[#084b8c]">
-                    {catalogCopy.viewAllLabel} <span aria-hidden="true">{categoryCtaIcon}</span>
+                  <a href={localHref(`/products/${category.slug}/`)} class="inline-flex shrink-0 items-center gap-2 text-sm font-black text-brand-500 hover:text-brand-700">
+                    {catalogCopy.viewAllLabel} <Icon name={resolveIcon(categoryCtaIcon)} class="h-4 w-4" />
                   </a>
                 </div>
 
@@ -100,28 +106,28 @@ const localHref = (path: string) => localizeHref(locale, path) as string;
                     {products.map((product) => (
                       <a
                         href={localHref(`/products/${product.categorySlug}/${product.slug}/`)}
-                        class="group overflow-hidden border border-[#d8dee7] bg-white shadow-[0_10px_28px_rgba(15,32,52,0.05)] transition-all duration-300 hover:-translate-y-1 hover:border-[#9fb7d1] hover:shadow-[0_16px_36px_rgba(15,32,52,0.10)]"
+                        class="group overflow-hidden border border-line-200 bg-white shadow-[0_10px_28px_rgba(15,32,52,0.05)] transition-all duration-300 hover:-translate-y-1 hover:border-brand-300 hover:shadow-[0_16px_36px_rgba(15,32,52,0.10)]"
                         style="border-radius:var(--radius-ui)"
                       >
                         <div class="aspect-[16/8.5] overflow-hidden bg-slate-100">
                           {product.coverImage ? (
                             <img src={product.coverImage} alt={product.name} class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
                           ) : (
-                            <div role="img" aria-label={product.name} class="grid h-full w-full place-items-center bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 text-5xl font-black text-slate-400"><span aria-hidden="true">◇</span></div>
+                            <div role="img" aria-label={product.name} class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-5xl font-black text-slate-400"><Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} /></div>
                           )}
                         </div>
                         <div class="flex items-start justify-between gap-5 p-5 md:p-6">
                           <div>
-                            <h4 class="text-xl font-black text-[#172033] transition-colors group-hover:text-[#0a5ca8]">{product.name}</h4>
-                            <p class="mt-2 line-clamp-2 text-sm leading-6 text-[#667085]">{product.summary}</p>
+                            <h4 class="text-xl font-black text-ink-800 transition-colors group-hover:text-brand-600">{product.name}</h4>
+                            <p class="mt-2 line-clamp-2 text-sm leading-6 text-ink-500">{product.summary}</p>
                           </div>
-                          <span class="mt-1 shrink-0 text-xl text-[#0a66c2] transition-transform group-hover:translate-x-1" aria-hidden="true">{categoryCtaIcon}</span>
+                          <Icon name={resolveIcon(categoryCtaIcon)} class="mt-1 h-5 w-5 shrink-0 text-brand-500 transition-transform group-hover:translate-x-1" />
                         </div>
                       </a>
                     ))}
                   </div>
                 ) : (
-                  <div class="border border-dashed border-[#cfd7e2] bg-white p-10 text-center text-sm text-[#667085]" style="border-radius:var(--radius-ui)">
+                  <div class="border border-dashed border-line-200 bg-white p-10 text-center text-sm text-ink-500" style="border-radius:var(--radius-ui)">
                     {catalogCopy.emptyCategoryMessage}
                   </div>
                 )}
@@ -167,8 +173,8 @@ const localHref = (path: string) => localizeHref(locale, path) as string;
     .catalog-trigger {
       align-items: center;
       background: #fff;
-      border-bottom: 1px solid #e1e6ed;
-      color: #303a4b;
+      border-bottom: 1px solid var(--color-line-100);
+      color: var(--color-ink-700);
       display: grid;
       gap: 14px;
       grid-template-columns: 34px 1fr;
@@ -181,7 +187,7 @@ const localHref = (path: string) => localizeHref(locale, path) as string;
     }
     .catalog-trigger:last-child { border-bottom: 0; }
     .catalog-trigger::before {
-      background: #0a66c2;
+      background: var(--color-brand-500);
       bottom: 0;
       content: '';
       left: 0;
@@ -191,17 +197,17 @@ const localHref = (path: string) => localizeHref(locale, path) as string;
       width: 4px;
     }
     .catalog-trigger span {
-      color: #9aa5b4;
+      color: var(--color-ink-400);
       font-size: 12px;
       font-weight: 900;
     }
     .catalog-trigger strong { font-size: 15px; font-weight: 900; }
     .catalog-trigger:hover,
     .catalog-trigger[aria-selected='true'] {
-      background: #edf5ff;
-      color: #0a4d8c;
+      background: var(--color-brand-50);
+      color: var(--color-brand-800);
     }
     .catalog-trigger[aria-selected='true']::before { opacity: 1; }
-    .catalog-trigger[aria-selected='true'] span { color: #0a66c2; }
+    .catalog-trigger[aria-selected='true'] span { color: var(--color-brand-500); }
   </style>
 </BaseLayout>

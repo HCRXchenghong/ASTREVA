@@ -6,21 +6,20 @@
   "scripts": {
     "dev": "astro dev --host 0.0.0.0 --port 4321",
     "build": "astro build",
-    "preview": "astro preview --host 0.0.0.0"
+    "preview": "astro preview --host 0.0.0.0 --port 4321"
   },
   "dependencies": {
     "@astrojs/react": "^6.0.4",
     "@astrojs/sitemap": "^3.7.3",
     "astro": "7.2.4",
     "lucide-react": "1.16.0",
+    "preline": "^5.0.0",
     "react": "19.2.6",
-    "react-dom": "19.2.6",
-    "tailwindcss": "3.4.17"
+    "react-dom": "19.2.6"
   },
   "devDependencies": {
-    "autoprefixer": "10.5.0",
-    "postcss": "^8.5.26",
-    "typescript": "6.0.3",
-    "vite": "8.2.2"
+    "@tailwindcss/vite": "^4.3.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "6.0.3"
   }
 }

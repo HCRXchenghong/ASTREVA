@@ -1,6 +1,7 @@
 import { defineConfig } from 'astro/config';
 import react from '@astrojs/react';
 import sitemap from '@astrojs/sitemap';
+import tailwindcss from '@tailwindcss/vite';
 import { loadEnv } from 'vite';
 
 const env = loadEnv(process.env.NODE_ENV || 'development', process.cwd(), '');
@@ -22,5 +23,9 @@ export default defineConfig({
       },
       filter: (page) => !/\/404\/?$/.test(page)
     })
-  ]
+  ],
+  // Tailwind CSS v4 走 Vite 插件，不再需要 postcss/tailwind 配置文件。
+  vite: {
+    plugins: [tailwindcss()]
+  }
 });

@@ -1,8 +1,13 @@
 ---
 import VideoModal from '../components/VideoModal';
 import BaseLayout from '../layouts/BaseLayout.astro';
+import Button from '../components/ui/Button.astro';
+import Container from '../components/ui/Container.astro';
+import Icon from '../components/ui/Icon.astro';
+import SectionHeading from '../components/ui/SectionHeading.astro';
 import { featuredProducts } from '../lib/content';
 import { localePath, localizeHref, type SiteLocale } from '../lib/i18n';
+import { resolveIcon } from '../lib/icons';
 import type { SiteContent } from '../lib/types';
 
 type Props = { content: SiteContent; locale: SiteLocale };
@@ -11,161 +16,295 @@ const { content, locale } = Astro.props;
 const home = content.home;
 const featured = featuredProducts(content, 3);
 const localHref = (path: string) => localizeHref(locale, path) as string;
+const categoryName = (slug: string) => content.categories.find((category) => category.slug === slug)?.name || '';
+const proofPoints = home.advantages.slice(0, 4);
+const pad = (index: number) => String(index + 1).padStart(2, '0');
 ---
 
 <BaseLayout content={content} seo={home.seo} path={localePath(locale, '/')} locale={locale}>
   <div class="w-full">
-    <div id="home-hero" class="relative h-screen min-h-[700px] flex items-center bg-slate-900 overflow-hidden scroll-mt-24">
-      {home.hero.backgroundVideo ? (
-        <video
-          class="pointer-events-none absolute inset-0 h-full w-full object-cover"
-          autoplay
-          muted
-          loop
-          playsinline
-          preload="auto"
-          poster={home.hero.backgroundImage || undefined}
-          aria-hidden="true"
-        >
-          <source src={home.hero.backgroundVideo} type="video/mp4" />
-        </video>
-      ) : home.hero.backgroundImage ? (
-        <div class="absolute inset-0 bg-cover bg-center bg-no-repeat" style={`background-image:url('${home.hero.backgroundImage}')`}></div>
-      ) : (
-        <div class="absolute inset-0 bg-gradient-to-br from-slate-900 via-[#0a4070] to-slate-800"></div>
-      )}
-      <div class="absolute inset-0 bg-gradient-to-r from-[#03203c]/95 via-[#0a4070]/80 to-transparent mix-blend-multiply"></div>
-      <div class="absolute inset-0 bg-[#061e38]/40"></div>
-      <div class="relative z-10 max-w-7xl mx-auto px-6 w-full pt-16">
-        <p class="text-blue-300 font-medium tracking-wide mb-4 text-lg">{home.hero.eyebrow}</p>
-        <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 tracking-tight">
-          {home.hero.title}<span class="text-[0.4em] align-top relative -top-4">{home.hero.trademark}</span>
-        </h1>
-        <p class="text-xl md:text-2xl text-gray-200 mb-12 max-w-2xl font-light">{home.hero.subtitle}</p>
-        <VideoModal
-          client:only="react"
-          primaryLabel={home.hero.primaryCta}
-          primaryHref={localHref(home.hero.primaryHref)}
-          secondaryLabel={home.hero.secondaryCta}
-          videoUrl={home.hero.videoUrl}
-          videoTitle={home.hero.videoTitle}
-          previewLabel={home.hero.videoPreviewLabel}
-          openExternalLabel={home.hero.videoOpenExternalLabel}
-          closeLabel={home.hero.videoCloseLabel}
-        />
-      </div>
-    </div>
+    <!-- Hero: full-bleed media, blueprint grid, proof bar pinned to the bottom -->
+    <section
+      id="home-hero"
+      class="relative flex min-h-[100svh] flex-col justify-between overflow-hidden bg-navy-950 scroll-mt-24"
+    >
+      {
+        home.hero.backgroundVideo ? (
+          <video
+            class="pointer-events-none absolute inset-0 h-full w-full object-cover"
+            autoplay
+            muted
+            loop
+            playsinline
+            preload="auto"
+            poster={home.hero.backgroundImage || undefined}
+            aria-hidden="true"
+          >
+            <source src={home.hero.backgroundVideo} type="video/mp4" />
+          </video>
+        ) : home.hero.backgroundImage ? (
+          <div
+            class="absolute inset-0 bg-cover bg-center bg-no-repeat"
+            style={`background-image:url('${home.hero.backgroundImage}')`}
+          />
+        ) : (
+          <div class="absolute inset-0 bg-linear-to-br from-slate-900 via-brand-900 to-slate-800" />
+        )
+      }
+      <div class="absolute inset-0 bg-linear-to-r from-brand-950/95 via-brand-950/70 to-transparent" />
+      <div class="absolute inset-0 bg-navy-950/45" />
+      <div class="blueprint-grid absolute inset-0" aria-hidden="true"></div>
 
-    <section id="home-products" class="py-24 bg-gray-50 scroll-mt-24">
-      <div class="max-w-7xl mx-auto px-6">
-        <div class="text-center mb-16">
-          <h2 class="text-4xl font-extrabold text-[#0a4d8c] mb-4">{home.featuredProducts.title}</h2>
-          <p class="text-gray-500 max-w-2xl mx-auto">{home.featuredProducts.description}</p>
+      <Container class="relative z-10 flex flex-1 flex-col justify-center pb-10 pt-28 md:pb-16 md:pt-36">
+        <div class="flex items-center gap-4">
+          <span class="h-px w-10 bg-accent-500" aria-hidden="true"></span>
+          <p class="text-sm font-bold uppercase tracking-[0.24em] text-accent-500">{home.hero.eyebrow}</p>
         </div>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {featured.map((item) => (
-            <a href={localHref(`/products/${item.categorySlug}/${item.slug}/`)} class="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-xl transition-shadow group border border-gray-100">
-              <div class="h-64 overflow-hidden bg-slate-100">
-                {item.coverImage ? (
-                  <img src={item.coverImage} alt={item.name} class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
-                ) : (
-                  <div role="img" aria-label={item.name} class="grid h-full w-full place-items-center bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 text-5xl font-black text-slate-400"><span aria-hidden="true">◇</span></div>
-                )}
-              </div>
-              <div class="p-8">
-                <h3 class="text-xl font-bold mb-3 text-gray-800">{item.name}</h3>
-                <p class="text-gray-600 mb-6 line-clamp-2">{item.summary}</p>
-                <span class="text-[#0a66c2] font-semibold flex items-center gap-1 group-hover:gap-3 transition-all">{home.featuredProducts.linkLabel} <span aria-hidden="true">{home.featuredProducts.linkIcon}</span></span>
-              </div>
-            </a>
-          ))}
+        <h1 class="display-tight mt-5 max-w-5xl text-5xl font-black leading-[0.98] text-white sm:text-6xl md:mt-6 md:text-8xl md:leading-[0.95]">
+          {home.hero.title}<span class="relative -top-[0.55em] align-top text-[0.22em] tracking-normal text-white/60">
+            {home.hero.trademark}
+          </span>
+        </h1>
+        <p class="mt-5 max-w-xl text-base font-light leading-relaxed text-slate-200 md:mt-8 md:text-2xl">
+          {home.hero.subtitle}
+        </p>
+        <div class="mt-8 md:mt-12">
+          <VideoModal
+            client:only="react"
+            primaryLabel={home.hero.primaryCta}
+            primaryHref={localHref(home.hero.primaryHref)}
+            secondaryLabel={home.hero.secondaryCta}
+            videoUrl={home.hero.videoUrl}
+            videoTitle={home.hero.videoTitle}
+            previewLabel={home.hero.videoPreviewLabel}
+            openExternalLabel={home.hero.videoOpenExternalLabel}
+            closeLabel={home.hero.videoCloseLabel}
+          />
         </div>
-      </div>
+      </Container>
+
+      {
+        proofPoints.length > 0 && (
+          <Container class="relative z-10 hidden pb-24 md:block">
+            <div class="grid grid-cols-2 gap-px overflow-hidden border-t border-white/15 md:grid-cols-4">
+              {proofPoints.map((item) => (
+                <div class="flex items-baseline gap-3 py-5 pr-6">
+                  <Icon name={resolveIcon(item.icon, 'advantage')} class="h-5 w-5 shrink-0 text-accent-500" />
+                  <span class="text-sm font-semibold text-white/85">{item.title}</span>
+                </div>
+              ))}
+            </div>
+          </Container>
+        )
+      }
     </section>
 
-    <section id="home-product-intro" class="py-24 bg-white scroll-mt-24">
-      <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center gap-16">
-        <div class="md:w-1/2">
-          <h2 class="text-4xl font-extrabold text-[#0a4d8c] mb-6">{home.productIntro.title}</h2>
-          <p class="text-lg text-gray-600 mb-6 leading-relaxed">{home.productIntro.description}</p>
-          <ul class="space-y-4 mb-8">
-            {home.productIntro.bullets.map((text) => (
-              <li class="flex items-center gap-3 text-gray-700 font-medium">
-              <span class="text-[#0a66c2] text-2xl leading-none" aria-hidden="true">{home.productIntro.bulletIcon}</span> {text}
-              </li>
-            ))}
-          </ul>
-          <a href={localHref(home.productIntro.ctaHref)} class="inline-flex bg-transparent border-2 border-[#0a66c2] text-[#0a66c2] hover:bg-[#0a66c2] hover:text-white px-8 py-3 rounded-lg font-bold transition-colors">
-            {home.productIntro.ctaLabel}
-          </a>
+    <!-- Products -->
+    <section id="home-products" class="bg-white py-28 scroll-mt-24">
+      <Container>
+        <div class="reveal flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+          <SectionHeading
+            align="left"
+            title={home.featuredProducts.title}
+            description={home.featuredProducts.description}
+            class="max-w-2xl"
+          />
         </div>
-        <div class="md:w-1/2 relative">
-          <div class="aspect-square md:aspect-[4/3] rounded-3xl overflow-hidden shadow-2xl relative z-10 border border-gray-100">
+
+        <div class="mt-14 grid grid-cols-1 gap-6 md:grid-cols-3">
+          {
+            featured.map((item, index) => (
+              <a
+                href={localHref(`/products/${item.categorySlug}/${item.slug}/`)}
+                class="reveal group relative flex flex-col overflow-hidden rounded-xl border border-line-100 bg-white transition-all duration-500 hover:-translate-y-1 hover:border-brand-200 hover:shadow-[0_24px_60px_-24px_rgba(10,64,112,0.35)]"
+                style={`--reveal-delay:${index * 90}ms`}
+              >
+                <div class="relative aspect-[4/3] overflow-hidden bg-slate-100">
+                  {item.coverImage ? (
+                    <img
+                      src={item.coverImage}
+                      alt={item.name}
+                      loading="lazy"
+                      class="h-full w-full object-cover transition-transform duration-[900ms] ease-out group-hover:scale-[1.06]"
+                    />
+                  ) : (
+                    <div
+                      role="img"
+                      aria-label={item.name}
+                      class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-5xl font-black text-slate-400"
+                    >
+                      <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
+                    </div>
+                  )}
+                  <span class="absolute left-5 top-5 rounded-full bg-white/95 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-brand-800 backdrop-blur">
+                    {categoryName(item.categorySlug)}
+                  </span>
+                </div>
+                <div class="flex flex-1 flex-col p-7">
+                  <h3 class="text-xl font-black text-ink-900">{item.name}</h3>
+                  <p class="mt-3 line-clamp-2 flex-1 text-sm leading-6 text-ink-500">{item.summary}</p>
+                  <span class="mt-6 inline-flex items-center gap-2 text-sm font-black text-brand-500">
+                    {home.featuredProducts.linkLabel}
+                    <Icon
+                      name={resolveIcon(home.featuredProducts.linkIcon)}
+                      class="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1"
+                    />
+                  </span>
+                </div>
+              </a>
+            ))
+          }
+        </div>
+      </Container>
+    </section>
+
+    <!-- Product intro: asymmetric split -->
+    <section id="home-product-intro" class="relative overflow-hidden bg-surface-50 py-28 scroll-mt-24">
+      <div class="blueprint-grid-light absolute inset-0" aria-hidden="true"></div>
+      <Container class="relative grid items-center gap-14 lg:grid-cols-12 lg:gap-20">
+        <div class="reveal lg:col-span-5">
+          <span class="mb-6 block h-px w-12 bg-accent-500" aria-hidden="true"></span>
+          <h2 class="display-tight text-4xl font-black text-brand-950 md:text-5xl">{home.productIntro.title}</h2>
+          <p class="mt-6 text-base leading-8 text-ink-600">{home.productIntro.description}</p>
+          <ul class="mt-10 divide-y divide-line-100 border-y border-line-100">
+            {
+              home.productIntro.bullets.map((text) => (
+                <li class="flex items-center gap-4 py-4 text-sm font-semibold text-ink-800">
+                  <span class="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-500/10 text-brand-500">
+                    <Icon name={resolveIcon(home.productIntro.bulletIcon)} class="h-4 w-4" strokeWidth={2} />
+                  </span>
+                  {text}
+                </li>
+              ))
+            }
+          </ul>
+          <div class="mt-10">
+            <Button href={localHref(home.productIntro.ctaHref)} variant="primary">
+              {home.productIntro.ctaLabel}
+            </Button>
+          </div>
+        </div>
+
+        <div class="reveal relative lg:col-span-7" style="--reveal-delay:120ms">
+          <span
+            class="absolute -left-4 -top-4 hidden h-24 w-24 border-l-2 border-t-2 border-accent-500 lg:block"
+            aria-hidden="true"
+          ></span>
+          <div class="relative aspect-[4/3] overflow-hidden rounded-xl bg-slate-100 shadow-[0_40px_80px_-40px_rgba(3,32,60,0.55)]">
             {home.productIntro.image ? (
-              <img src={home.productIntro.image} alt={home.productIntro.title} class="w-full h-full object-cover" />
+              <img src={home.productIntro.image} alt={home.productIntro.title} class="h-full w-full object-cover" />
             ) : (
-              <div role="img" aria-label={home.productIntro.title} class="grid h-full w-full place-items-center bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"><span aria-hidden="true">◇</span></div>
+              <div
+                role="img"
+                aria-label={home.productIntro.title}
+                class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"
+              >
+                <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
+              </div>
             )}
           </div>
         </div>
-      </div>
+      </Container>
     </section>
 
-    <section id="home-advantages" class="py-24 bg-[#0a4d8c] text-white scroll-mt-24">
-      <div class="max-w-7xl mx-auto px-6">
-        <div class="text-center mb-16">
-          <h2 class="text-4xl font-extrabold mb-4">{home.advantagesIntro.title}</h2>
-          <p class="text-blue-200 max-w-2xl mx-auto">{home.advantagesIntro.description}</p>
+    <!-- Advantages: navy, hairline grid, outlined numerals -->
+    <section id="home-advantages" class="relative overflow-hidden bg-navy-950 py-28 text-white scroll-mt-24">
+      <div class="blueprint-grid absolute inset-0" aria-hidden="true"></div>
+      <Container class="relative">
+        <div class="reveal max-w-3xl">
+          <span class="mb-6 block h-px w-12 bg-accent-500" aria-hidden="true"></span>
+          <h2 class="display-tight text-4xl font-black text-white md:text-5xl">{home.advantagesIntro.title}</h2>
+          <p class="mt-5 max-w-2xl text-base leading-8 text-slate-300">{home.advantagesIntro.description}</p>
         </div>
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
-          {home.advantages.map((item) => (
-              <div class="bg-[#0c59a3] p-8 rounded-2xl hover:-translate-y-2 transition-transform border border-blue-400/20">
-                <div class="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center text-blue-300 mb-6 text-3xl font-black">
-                  {item.icon}
+
+        <div class="mt-24 grid grid-cols-1 border-t border-white/12 md:grid-cols-2">
+          {
+            home.advantages.map((item, index) => (
+              <div
+                class:list={[
+                  'reveal group relative border-b border-white/12 py-10 pr-6 transition-colors hover:bg-white/[0.03]',
+                  index % 2 === 0 ? 'md:border-r md:border-white/12 md:pr-12' : 'md:pl-12'
+                ]}
+                style={`--reveal-delay:${index * 80}ms`}
+              >
+                <div class="flex items-start justify-between gap-6">
+                  <div class="max-w-md">
+                    <div class="mb-5 flex items-center gap-3">
+                      <Icon name={resolveIcon(item.icon, 'advantage')} class="h-6 w-6 shrink-0 text-accent-500" />
+                      <h3 class="text-xl font-bold text-white">{item.title}</h3>
+                    </div>
+                    <p class="text-sm leading-7 text-slate-400">{item.description}</p>
+                  </div>
+                  <span class="index-numeral shrink-0 text-5xl font-black md:text-6xl" aria-hidden="true">
+                    {pad(index)}
+                  </span>
                 </div>
-                <h3 class="text-xl font-bold mb-3">{item.title}</h3>
-                <p class="text-blue-100 text-sm leading-relaxed">{item.description}</p>
               </div>
-            ))}
+            ))
+          }
         </div>
-      </div>
+      </Container>
     </section>
 
-    {home.testimonials.length > 0 && <section id="home-testimonials" class="py-24 bg-gray-50 scroll-mt-24">
-      <div class="max-w-7xl mx-auto px-6">
-        <h2 class="text-4xl font-extrabold text-center text-[#0a4d8c] mb-16">{home.testimonialsTitle}</h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {home.testimonials.map((review) => (
-            <div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 relative hover:shadow-md transition-shadow">
-              <span class="text-blue-100 absolute top-6 right-6 text-5xl leading-none font-serif" aria-hidden="true">“</span>
-              <p class="text-gray-600 mb-6 relative z-10 italic">"{review.text}"</p>
-              <div class="flex items-center gap-4 mt-auto">
-                <div class="w-12 h-12 bg-[#0a66c2]/10 text-[#0a66c2] rounded-full flex items-center justify-center font-bold text-lg">{review.name[0]}</div>
-                <div>
-                  <h4 class="font-bold text-gray-900">{review.name}</h4>
-                  <p class="text-xs text-gray-500">{review.role}</p>
-                </div>
-              </div>
+    {
+      home.testimonials.length > 0 && (
+        <section id="home-testimonials" class="bg-white py-28 scroll-mt-24">
+          <Container>
+            <div class="reveal max-w-2xl">
+              <span class="mb-6 block h-px w-12 bg-accent-500" aria-hidden="true" />
+              <h2 class="display-tight text-4xl font-black text-brand-950 md:text-5xl">{home.testimonialsTitle}</h2>
             </div>
-          ))}
-        </div>
-      </div>
-    </section>}
+            <div class="mt-14 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {home.testimonials.map((review, index) => (
+                <figure
+                  class="reveal flex flex-col justify-between rounded-xl border border-line-100 bg-surface-50 p-8 transition-colors hover:border-brand-200"
+                  style={`--reveal-delay:${index * 80}ms`}
+                >
+                  <blockquote class="text-base leading-8 text-ink-700">“{review.text}”</blockquote>
+                  <figcaption class="mt-8 flex items-center gap-4 border-t border-line-100 pt-6">
+                    <span class="grid h-11 w-11 place-items-center rounded-full bg-brand-800 text-sm font-black text-white">
+                      {review.name[0]}
+                    </span>
+                    <span>
+                      <span class="block text-sm font-bold text-ink-900">{review.name}</span>
+                      <span class="block text-xs text-ink-500">{review.role}</span>
+                    </span>
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
+          </Container>
+        </section>
+      )
+    }
 
-    <section id="home-cta" class="py-20 bg-white scroll-mt-24">
-      <div class="max-w-5xl mx-auto px-6">
-        <div class="bg-gradient-to-br from-[#0a4d8c] to-[#0d6bcc] rounded-3xl p-12 md:p-20 text-center text-white relative overflow-hidden shadow-2xl border border-blue-400/30">
-          {home.cta.backgroundImage && <div class="absolute top-0 left-0 w-full h-full opacity-10 bg-cover mix-blend-overlay" style={`background-image:url('${home.cta.backgroundImage}')`}></div>}
-          <div class="relative z-10">
-            <h2 class="text-4xl md:text-5xl font-extrabold mb-6">{home.cta.title}</h2>
-            <p class="text-xl text-blue-100 mb-10 max-w-2xl mx-auto">{home.cta.description}</p>
-            <div class="flex flex-col sm:flex-row justify-center gap-4">
-              <a href={localHref(home.cta.primaryHref)} class="bg-white text-[#0a4d8c] px-8 py-4 rounded-lg font-bold hover:bg-gray-50 transition-colors shadow-lg">{home.cta.primaryLabel}</a>
-              <a href={localHref(home.cta.secondaryHref)} class="bg-transparent border border-white text-white px-8 py-4 rounded-lg font-bold hover:bg-white/10 transition-colors">{home.cta.secondaryLabel}</a>
-            </div>
+    <!-- Closing CTA: a light band, so the navy advantages section above and the
+         navy footer below don't merge into one undifferentiated dark block. -->
+    <section id="home-cta" class="relative overflow-hidden border-t border-line-100 bg-white py-24 scroll-mt-24">
+      <div class="blueprint-grid-light absolute inset-0" aria-hidden="true"></div>
+      {home.cta.backgroundImage && (
+        <div
+          class="absolute inset-0 bg-cover opacity-[0.04]"
+          style={`background-image:url('${home.cta.backgroundImage}')`}
+        />
+      )}
+      <Container class="relative">
+        <div class="reveal grid items-center gap-12 lg:grid-cols-12">
+          <div class="lg:col-span-7">
+            <span class="mb-6 block h-px w-12 bg-accent-500" aria-hidden="true"></span>
+            <h2 class="display-tight max-w-2xl text-4xl font-black text-brand-950 md:text-5xl">{home.cta.title}</h2>
+            <p class="mt-5 max-w-xl text-base leading-8 text-ink-500">{home.cta.description}</p>
+          </div>
+          <div class="flex flex-col gap-3 sm:flex-row lg:col-span-5 lg:justify-end">
+            <Button href={localHref(home.cta.primaryHref)} variant="primary" size="lg">
+              {home.cta.primaryLabel}
+            </Button>
+            <Button href={localHref(home.cta.secondaryHref)} variant="outline" size="lg">
+              {home.cta.secondaryLabel}
+            </Button>
           </div>
         </div>
-      </div>
+      </Container>
     </section>
   </div>
 </BaseLayout>

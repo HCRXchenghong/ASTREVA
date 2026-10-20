@@ -11,30 +11,63 @@ type Props = {
 
 const { id, eyebrow, title, description, subtitle, backgroundImage, backgroundVideo } = Astro.props;
 const titleLines = String(title || '').split('\n');
-const hasVideo = Boolean(backgroundVideo);
+const hasMedia = Boolean(backgroundVideo || backgroundImage);
 ---
 
-<section id={id} class="relative flex h-[65vh] min-h-[520px] items-center overflow-hidden bg-slate-900 text-white scroll-mt-24">
-  {backgroundVideo ? (
-    <video class="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-90" autoplay muted loop playsinline preload="auto" aria-hidden="true">
-      <source src={backgroundVideo} type="video/mp4" />
-    </video>
-  ) : (
-    backgroundImage && <div class="absolute inset-0 bg-cover bg-center opacity-50 mix-blend-overlay" style={`background-image:url('${backgroundImage}')`}></div>
-  )}
-  <div class={`absolute inset-0 ${hasVideo ? 'bg-gradient-to-r from-[#03203c]/72 via-[#0a4d8c]/36 to-[#061e38]/22' : 'bg-gradient-to-r from-[#03203c]/95 via-[#0a4d8c]/72 to-[#061e38]/55 mix-blend-multiply'}`}></div>
-  <div class={`absolute inset-0 ${hasVideo ? 'bg-[#061e38]/10' : 'bg-[#061e38]/35'}`}></div>
-  <div class="relative z-10 mx-auto w-full max-w-7xl px-6 text-center">
-    {eyebrow && <p class="mb-4 text-sm font-bold uppercase tracking-[0.28em] text-blue-300">{eyebrow}</p>}
-    <h1 class="mb-6 text-5xl font-extrabold leading-tight text-white md:text-6xl">
-      {titleLines.map((line, index) => (
-        <>
-          {index > 0 && <br />}
-          {line}
-        </>
-      ))}
-    </h1>
-    {subtitle && <p class="mx-auto mt-4 max-w-3xl text-lg font-light leading-relaxed text-gray-300">{subtitle}</p>}
-    {description && <p class="mx-auto max-w-3xl text-xl font-light leading-relaxed text-gray-200">{description}</p>}
+<section
+  id={id}
+  class="relative flex min-h-[360px] items-end overflow-hidden bg-navy-950 text-white scroll-mt-24 md:min-h-[440px]"
+>
+  {
+    backgroundVideo ? (
+      <video
+        class="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-80"
+        autoplay
+        muted
+        loop
+        playsinline
+        preload="auto"
+        aria-hidden="true"
+      >
+        <source src={backgroundVideo} type="video/mp4" />
+      </video>
+    ) : backgroundImage ? (
+      <div class="absolute inset-0 bg-cover bg-center opacity-60" style={`background-image:url('${backgroundImage}')`} />
+    ) : null
+  }
+  <div
+    class:list={[
+      'absolute inset-0',
+      hasMedia
+        ? 'bg-linear-to-r from-brand-950/95 via-brand-950/70 to-navy-950/30'
+        : 'bg-linear-to-br from-navy-950 via-brand-900 to-navy-900'
+    ]}
+  >
+  </div>
+  <div class="absolute inset-0 bg-navy-950/35"></div>
+  <div class="blueprint-grid absolute inset-0" aria-hidden="true"></div>
+  <div class="absolute inset-x-0 bottom-0 h-px bg-white/15"></div>
+
+  <div class="relative z-10 mx-auto w-full max-w-7xl px-6 pb-14 pt-12 md:pb-16 md:pt-16">
+    <div class="max-w-4xl">
+      {
+        eyebrow && (
+          <div class="mb-6 flex items-center gap-4">
+            <span class="h-px w-10 bg-accent-500" aria-hidden="true" />
+            <p class="text-xs font-black uppercase tracking-[0.24em] text-accent-500">{eyebrow}</p>
+          </div>
+        )
+      }
+      <h1 class="display-tight text-5xl font-black leading-[1.02] text-white md:text-7xl">
+        {titleLines.map((line, index) => (
+          <>
+            {index > 0 && <br />}
+            {line}
+          </>
+        ))}
+      </h1>
+      {subtitle && <p class="mt-6 max-w-2xl text-lg font-light leading-relaxed text-slate-300">{subtitle}</p>}
+      {description && <p class="mt-6 max-w-2xl text-lg font-light leading-relaxed text-slate-300">{description}</p>}
+    </div>
   </div>
 </section>

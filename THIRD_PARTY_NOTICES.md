@@ -14,7 +14,7 @@
 
 ## 使用范围说明
 
-Preline UI 作为 npm 依赖被 frontend-next 引用，用于图标按钮、手风琴等交互组件的
+Preline UI 作为 npm 依赖被 frontend 引用，用于图标按钮、手风琴等交互组件的
 样式变体与无障碍行为；本项目未将其作为组件库对外再分发，也未基于它构建任何与
 Preline UI 竞争的 UI 库或建站工具。
 

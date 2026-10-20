@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, ArrowUpRight, BookOpen, ChevronDown, ChevronRight, FileText, Menu, Search, X } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, BookOpen, Box, ChevronDown, ChevronRight, FileText, Menu, Search, X } from 'lucide-react';
 import type { Category, Product, SiteSettings } from '../lib/types';
 import { DEFAULT_LOCALE, isSiteLocale, localizeHref, type SiteLocale } from '../lib/i18n';
 
@@ -84,7 +84,7 @@ function LanguageSwitcher({ site }: { site: SiteSettings }) {
         className="flex h-11 items-center gap-1.5 rounded-xl bg-white px-2.5 shadow-[0_4px_14px_rgba(15,23,42,0.14)] transition-transform hover:scale-105"
       >
         <img src={current.flag} alt="" className="h-6 w-8 rounded-[3px]" />
-        <ChevronDown size={15} className={'text-[#0a66c2] transition-transform ' + (open ? 'rotate-180' : '')} />
+        <ChevronDown size={15} className={'text-brand-500 transition-transform ' + (open ? 'rotate-180' : '')} />
       </button>
       {open && (
         <div className="absolute right-0 top-[52px] z-50 flex flex-col gap-1.5 rounded-xl border border-gray-200 bg-white p-2 shadow-[0_12px_32px_rgba(15,23,42,0.16)]">
@@ -165,16 +165,16 @@ export default function Navbar({ site, categories, products, currentPath, locale
 
   return (
     <div className={`fixed left-0 top-0 z-50 w-full transition-all duration-300 ${isScrolled ? 'bg-white shadow-md' : 'bg-white/95 shadow-sm backdrop-blur-sm'}`}>
-      <div className="mx-auto flex h-24 max-w-7xl items-center justify-between px-7">
-        <a className="flex items-center gap-3" href={localHref('/')}>
+      <div className="mx-auto flex h-24 max-w-7xl items-center justify-between px-4 md:px-7">
+        <a className="flex min-w-0 items-center gap-2.5 md:gap-3" href={localHref('/')}>
           {site.logoUrl ? (
-            <img src={site.logoUrl} alt={site.brandName} className="h-[58px] w-[58px] object-contain" />
+            <img src={site.logoUrl} alt={site.brandName} className="h-11 w-11 shrink-0 object-contain md:h-[58px] md:w-[58px]" />
           ) : (
-            <span role="img" aria-label={site.brandName} className="grid h-[58px] w-[58px] place-items-center rounded-xl bg-[#0a4d8c] text-xl font-black text-white">{site.brandName.slice(0, 1)}</span>
+            <span role="img" aria-label={site.brandName} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-800 text-base font-black text-white md:h-[58px] md:w-[58px] md:text-xl">{site.brandName.slice(0, 1)}</span>
           )}
-          <div className="flex flex-col">
-            <span className="text-2xl font-extrabold leading-tight tracking-wide text-[#0a4d8c]">{site.brandName}</span>
-            <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">{site.brandTagline}</span>
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate text-lg font-extrabold leading-tight tracking-wide text-brand-800 md:text-2xl">{site.brandName}</span>
+            <span className="hidden truncate text-xs font-semibold uppercase tracking-widest text-gray-500 sm:block">{site.brandTagline}</span>
           </div>
         </a>
 
@@ -189,17 +189,17 @@ export default function Navbar({ site, categories, products, currentPath, locale
               <a
                 href={item.href}
                 onFocus={() => item.hasDropdown && setActiveDropdown(item.key)}
-                className={`flex items-center gap-1.5 text-[17px] font-semibold transition-colors ${isActive(item) ? 'text-[#0a5ca8]' : 'text-gray-700 hover:text-[#0a5ca8]'}`}
+                className={`flex items-center gap-1.5 text-[17px] font-semibold transition-colors ${isActive(item) ? 'text-brand-600' : 'text-gray-700 hover:text-brand-600'}`}
               >
                 {item.label}
                 {item.hasDropdown && <ChevronRight size={17} className={`transition-transform ${activeDropdown === item.key ? 'rotate-90' : 'rotate-0'}`} />}
               </a>
 
               {item.hasDropdown && activeDropdown === 'products' && (
-                <div className="fixed left-0 top-24 w-screen overflow-hidden rounded-b-lg border-t border-[#d8dee7] bg-white shadow-[0_24px_60px_rgba(18,32,54,0.16)]">
-                  <div className="border-b border-[#e1e6ed] bg-[#f7f9fb]">
+                <div className="fixed left-0 top-24 w-screen overflow-hidden rounded-b-lg border-t border-line-200 bg-white shadow-[0_24px_60px_rgba(18,32,54,0.16)]">
+                  <div className="border-b border-line-100 bg-surface-100">
                     <div className="mx-auto flex max-w-7xl items-center gap-9 px-7">
-                      <span className="shrink-0 py-5 text-xs font-black uppercase tracking-[0.18em] text-[#7a8493]">{productMenu.categoryLabel}</span>
+                      <span className="shrink-0 py-5 text-xs font-black uppercase tracking-[0.18em] text-ink-500">{productMenu.categoryLabel}</span>
                       <div className="flex min-w-0 flex-1 items-center gap-8 overflow-x-auto">
                         {sortedCategories.map((category) => {
                           const active = hoveredCategory === category.slug;
@@ -209,8 +209,8 @@ export default function Navbar({ site, categories, products, currentPath, locale
                               href={localHref(`/products/${category.slug}/`)}
                               onMouseEnter={() => setHoveredCategory(category.slug)}
                               onFocus={() => setHoveredCategory(category.slug)}
-                              className={`relative shrink-0 py-5 text-[15px] font-black transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-[3px] after:bg-[#0a66c2] after:transition-opacity ${
-                                active ? 'text-[#0a5ca8] after:opacity-100' : 'text-[#3d4755] after:opacity-0 hover:text-[#0a5ca8]'
+                              className={`relative shrink-0 py-5 text-[15px] font-black transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-[3px] after:bg-brand-500 after:transition-opacity ${
+                                active ? 'text-brand-600 after:opacity-100' : 'text-ink-700 after:opacity-0 hover:text-brand-600'
                               }`}
                             >
                               {category.name}
@@ -225,17 +225,17 @@ export default function Navbar({ site, categories, products, currentPath, locale
                   <div className="mx-auto max-w-7xl px-7 py-7">
                     <div className="mb-5 flex items-end justify-between gap-6">
                       <div>
-                        <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#b88923]">{productMenu.popularSeriesLabel}</p>
-                        <h3 className="mt-1.5 text-xl font-black text-[#172033]">{popularSeriesTitle}</h3>
+                        <p className="text-[11px] font-black uppercase tracking-[0.2em] text-accent-600">{productMenu.popularSeriesLabel}</p>
+                        <h3 className="mt-1.5 text-xl font-black text-ink-800">{popularSeriesTitle}</h3>
                       </div>
                       {hoveredCategoryInfo && (
-                        <a href={localHref(`/products/${hoveredCategoryInfo.slug}/`)} className="inline-flex items-center gap-2 text-sm font-black text-[#0a66c2] hover:text-[#084b8c]">
+                        <a href={localHref(`/products/${hoveredCategoryInfo.slug}/`)} className="inline-flex items-center gap-2 text-sm font-black text-brand-500 hover:text-brand-700">
                           {viewAllCategoryLabel} <ArrowRight size={16} />
                         </a>
                       )}
                     </div>
 
-                    <div className="grid grid-cols-4 divide-x divide-[#e1e6ed] border-y border-[#e1e6ed]">
+                    <div className="grid grid-cols-4 divide-x divide-line-100 border-y border-line-100">
                       {activeProducts.map((product) => (
                         <a
                           key={product.id}
@@ -245,23 +245,23 @@ export default function Navbar({ site, categories, products, currentPath, locale
                           {product.coverImage ? (
                             <img src={product.coverImage} alt="" className="h-16 w-20 shrink-0 rounded-lg object-cover" />
                           ) : (
-                            <span aria-hidden="true" className="grid h-16 w-20 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-slate-100 to-slate-300 text-2xl font-black text-slate-400">◇</span>
+                            <span aria-hidden="true" className="grid h-16 w-20 shrink-0 place-items-center rounded-lg bg-linear-to-br from-slate-100 to-slate-300 text-slate-400"><Box size={22} strokeWidth={1.4} /></span>
                           )}
-                          <span className="min-w-0 flex-1 text-[15px] font-black leading-6 text-[#303a4b] transition-colors group-hover:text-[#0a5ca8]">{product.name}</span>
-                          <ArrowRight size={16} className="shrink-0 text-[#9aa5b4] transition-all group-hover:translate-x-1 group-hover:text-[#0a66c2]" />
+                          <span className="min-w-0 flex-1 text-[15px] font-black leading-6 text-ink-700 transition-colors group-hover:text-brand-600">{product.name}</span>
+                          <ArrowRight size={16} className="shrink-0 text-ink-400 transition-all group-hover:translate-x-1 group-hover:text-brand-500" />
                         </a>
                       ))}
                     </div>
                   </div>
 
-                  <div className="border-t border-[#e1e6ed] bg-[#f7f9fb]">
-                    <div className="mx-auto grid max-w-7xl grid-cols-4 divide-x divide-[#e1e6ed] px-7">
+                  <div className="border-t border-line-100 bg-surface-100">
+                    <div className="mx-auto grid max-w-7xl grid-cols-4 divide-x divide-line-100 px-7">
                       {productMenu.utilityLinks.map(({ label, href, icon }) => {
                         const Icon = utilityIconMap[icon as keyof typeof utilityIconMap] || ArrowRight;
-                        return <a key={`${label}-${href}`} href={localHref(href)} className="group flex items-center justify-center gap-3 px-5 py-4 text-sm font-black text-[#303a4b] transition-colors hover:bg-[#edf5ff] hover:text-[#0a5ca8]">
-                          <Icon size={17} className="text-[#0a66c2]" />
+                        return <a key={`${label}-${href}`} href={localHref(href)} className="group flex items-center justify-center gap-3 px-5 py-4 text-sm font-black text-ink-700 transition-colors hover:bg-brand-50 hover:text-brand-600">
+                          <Icon size={17} className="text-brand-500" />
                           {label}
-                          <ArrowRight size={14} className="text-[#0a66c2] opacity-70 transition-transform group-hover:translate-x-1 group-hover:opacity-100" />
+                          <ArrowRight size={14} className="text-brand-500 opacity-70 transition-transform group-hover:translate-x-1 group-hover:opacity-100" />
                         </a>;
                       })}
                     </div>
@@ -276,7 +276,7 @@ export default function Navbar({ site, categories, products, currentPath, locale
           <LanguageSwitcher site={site} />
 
         {phone && (
-          <a href={`tel:${phone}`} className="hidden items-center gap-2.5 rounded-lg bg-[#0a66c2] px-7 py-3 text-[17px] font-medium text-white shadow-lg shadow-blue-500/30 transition-colors hover:bg-[#084b8c] md:flex">
+          <a href={`tel:${phone}`} className="hidden items-center gap-2.5 rounded-lg bg-brand-500 px-7 py-3 text-[17px] font-medium text-white shadow-lg shadow-blue-500/30 transition-colors hover:bg-brand-700 md:flex">
             {phone} <ArrowUpRight size={19} />
           </a>
         )}
@@ -292,15 +292,15 @@ export default function Navbar({ site, categories, products, currentPath, locale
           <div className="flex flex-col gap-1">
             {navItems.map((item) =>
               item.hasDropdown ? (
-                <div key={item.href} className="border-b border-[#e5e9ef] pb-2">
+                <div key={item.href} className="border-b border-line-100 pb-2">
                   <div className="flex items-center justify-between">
-                    <a href={item.href} className={`py-3 text-lg font-bold ${isActive(item) ? 'text-[#0a66c2]' : 'text-gray-700'}`}>
+                    <a href={item.href} className={`py-3 text-lg font-bold ${isActive(item) ? 'text-brand-500' : 'text-gray-700'}`}>
                       {item.label}
                     </a>
                     <button
                       type="button"
                       onClick={() => setMobileProductsOpen((value) => !value)}
-                      className="rounded-lg p-2 text-[#536173]"
+                      className="rounded-lg p-2 text-ink-600"
                       aria-label={productMenu.mobileToggleLabel}
                       aria-expanded={mobileProductsOpen}
                     >
@@ -308,9 +308,9 @@ export default function Navbar({ site, categories, products, currentPath, locale
                     </button>
                   </div>
                   {mobileProductsOpen && (
-                    <div className="mb-2 grid grid-cols-1 gap-1 border-l-2 border-[#0a66c2] pl-4">
+                    <div className="mb-2 grid grid-cols-1 gap-1 border-l-2 border-brand-500 pl-4">
                       {sortedCategories.map((category) => (
-                        <a key={category.slug} href={localHref(`/products/${category.slug}/`)} className="py-2 text-[15px] font-bold text-[#536173] hover:text-[#0a5ca8]">
+                        <a key={category.slug} href={localHref(`/products/${category.slug}/`)} className="py-2 text-[15px] font-bold text-ink-600 hover:text-brand-600">
                           {category.name}
                         </a>
                       ))}
@@ -318,13 +318,13 @@ export default function Navbar({ site, categories, products, currentPath, locale
                   )}
                 </div>
               ) : (
-                <a key={item.href} href={item.href} className={`border-b border-[#e5e9ef] py-3 text-lg font-bold ${isActive(item) ? 'text-[#0a66c2]' : 'text-gray-700'}`}>
+                <a key={item.href} href={item.href} className={`border-b border-line-100 py-3 text-lg font-bold ${isActive(item) ? 'text-brand-500' : 'text-gray-700'}`}>
                   {item.label}
                 </a>
               )
             )}
             {phone && (
-              <a href={`tel:${phone}`} className="mt-4 rounded-lg bg-[#0a66c2] px-6 py-3.5 text-center text-lg font-bold text-white">
+              <a href={`tel:${phone}`} className="mt-4 rounded-lg bg-brand-500 px-6 py-3.5 text-center text-lg font-bold text-white">
                 {phone}
               </a>
             )}
