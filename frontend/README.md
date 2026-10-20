@@ -59,6 +59,10 @@ npm run dev:frontend        # 开发服务器 http://127.0.0.1:4321
 npm run build:frontend      # 契约校验 + 构建到 frontend/dist
 npm run preview:frontend    # 预览构建产物
 npm run typecheck           # astro check（.astro + TS 全量类型检查）
+npm run lint                # ESLint（flat config，Astro + TS）
+npm run format              # Prettier 写入
+npm run format:check        # 只检查格式
+npm run check               # typecheck + lint
 npm run cms:contract        # 只跑内容契约校验
 ```
 
@@ -78,6 +82,12 @@ CONTENT_API_URL="http://127.0.0.1:$STUB_PORT" npm run build:frontend
    - 因此凡是「响应式字号 + 行高」的组合，都要显式补齐断点，例如 `text-5xl leading-tight md:text-6xl md:leading-none`、`text-base leading-8 md:text-lg md:leading-7`。
 3. **默认字体栈不同**：v4 的 `font-sans` 首项是 `-apple-system`，v3 是 `ui-sans-serif`。已通过 `--font-sans` 令牌统一。
 
+## 代码规范
+
+- **ESLint**：`eslint.config.js`（flat config），启用 `@eslint/js` + `typescript-eslint` + `eslint-plugin-astro`；`dist/`、`.astro/` 被忽略。
+- **Prettier**：`.prettierrc.json` + `prettier-plugin-astro`，规则为单引号、120 列、无尾逗号。
+- 提交前建议至少跑 `npm run check`（类型 + lint）；CI/部署前跑根目录的 `npm run verify`。
+
 ## 渲染与体积
 
 - **关键 UI 走 SSR**：`Navbar` 与 Hero 的 `VideoModal`（主 CTA 在它里面）用 `client:load`，导航和主按钮是服务端 HTML，爬虫和慢网都能拿到；`ChatWidget` / `CookieConsent` 仍用 `client:only`（它们依赖 `window` 且非关键路径）。
@@ -87,18 +97,18 @@ CONTENT_API_URL="http://127.0.0.1:$STUB_PORT" npm run build:frontend
 
 ## 验收记录
 
-| 项目 | 结果 |
-| --- | --- |
-| 路由 | 67 个 HTML 页面（zh-CN 根路径 / en / ar） |
-| 布局回归 | 11 条主路由 × 1440 / 390 两档视口，横向溢出 0，控制台报错 0 |
-| 类型检查 | `npm run typecheck` → **0 errors / 0 warnings / 0 hints** |
-| 内容契约 | `cms:contract` 通过（页面内零硬编码中文/链接） |
-| 全量验证 | `bash scripts/verify-all.sh` → 11/11 PASS |
-| 发布链路 | 原子发布 + `current` symlink 切换通过 |
-| 交互 | 导航下拉、语言切换、Cookie、FAQ、表单、客服 iframe 均可用 |
-| 多语言 | `zh-CN` 根路径 / `en` / `ar`，`ar` 为 `dir="rtl"` |
-| 无 JS 降级 | 内容默认可见（`html.js` 守卫），不会因脚本失败白屏 |
-| reduced-motion | 滚动揭示动画自动关闭 |
+| 项目           | 结果                                                        |
+| -------------- | ----------------------------------------------------------- |
+| 路由           | 67 个 HTML 页面（zh-CN 根路径 / en / ar）                   |
+| 布局回归       | 11 条主路由 × 1440 / 390 两档视口，横向溢出 0，控制台报错 0 |
+| 类型检查       | `npm run typecheck` → **0 errors / 0 warnings / 0 hints**   |
+| 内容契约       | `cms:contract` 通过（页面内零硬编码中文/链接）              |
+| 全量验证       | `bash scripts/verify-all.sh` → 11/11 PASS                   |
+| 发布链路       | 原子发布 + `current` symlink 切换通过                       |
+| 交互           | 导航下拉、语言切换、Cookie、FAQ、表单、客服 iframe 均可用   |
+| 多语言         | `zh-CN` 根路径 / `en` / `ar`，`ar` 为 `dir="rtl"`           |
+| 无 JS 降级     | 内容默认可见（`html.js` 守卫），不会因脚本失败白屏          |
+| reduced-motion | 滚动揭示动画自动关闭                                        |
 
 ## 部署
 

@@ -1,5 +1,6 @@
 ---
 import Accordion from '../components/ui/Accordion.astro';
+import Container from '../components/ui/Container.astro';
 import InnerPageHero from '../components/InnerPageHero.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { staticPage } from '../lib/content';
@@ -16,7 +17,13 @@ const page = staticPage(content, 'faq');
 const faqs = content.faqs.filter((faq) => faq.enabled !== false);
 ---
 
-<BaseLayout content={content} seo={page.seo} path={localePath(locale, '/support/faq/')} locale={locale} jsonLd={[faqJsonLd(faqs)]}>
+<BaseLayout
+  content={content}
+  seo={page.seo}
+  path={localePath(locale, '/support/faq/')}
+  locale={locale}
+  jsonLd={[faqJsonLd(faqs)]}
+>
   <div class="w-full pt-24">
     <InnerPageHero
       id="faq-hero"
@@ -27,16 +34,25 @@ const faqs = content.faqs.filter((faq) => faq.enabled !== false);
       backgroundVideo={page.hero.backgroundVideo}
     />
     <div id="faq-list" class="py-24 bg-slate-50 min-h-[60vh] scroll-mt-24">
-      <div class="max-w-3xl mx-auto px-6">
-        {page.sections?.intro && (
-          <p class="mb-10 text-center text-lg leading-relaxed text-gray-600">{page.sections.intro}</p>
-        )}
-        {page.body && <div class="prose-content mb-12 rounded-3xl bg-white p-8 text-gray-600 shadow-sm border border-gray-100" set:html={page.body}></div>}
+      <Container size="prose">
+        {
+          page.sections?.intro && (
+            <p class="mb-10 text-center text-lg leading-relaxed text-gray-600">{page.sections.intro}</p>
+          )
+        }
+        {
+          page.body && (
+            <div
+              class="prose-content mb-12 rounded-3xl bg-white p-8 text-gray-600 shadow-sm border border-gray-100"
+              set:html={page.body}
+            />
+          )
+        }
         <Accordion
           idPrefix="faq"
           items={faqs.map((faq) => ({ id: faq.id, question: faq.question, answer: faq.answer }))}
         />
-      </div>
+      </Container>
     </div>
   </div>
 </BaseLayout>

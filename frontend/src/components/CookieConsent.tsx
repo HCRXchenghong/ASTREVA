@@ -13,7 +13,13 @@ type CookieCopy = {
 /** Marker attribute used by the footer "cookie settings" entry. */
 const COOKIE_SETTINGS_TRIGGER = '[data-cookie-settings]';
 
-export default function CookieConsent({ cookie, privacyHref = '/privacy/' }: { cookie: CookieCopy; privacyHref?: string }) {
+export default function CookieConsent({
+  cookie,
+  privacyHref = '/privacy/'
+}: {
+  cookie: CookieCopy;
+  privacyHref?: string;
+}) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {

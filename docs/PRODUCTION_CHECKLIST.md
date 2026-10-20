@@ -1,0 +1,69 @@
+# 上线检查清单
+
+面向「明天就要发版」的场景。按顺序执行，任何一步失败都不要继续。
+
+## 1. 依赖与代码质量
+
+```bash
+npm ci                 # 会触发 postinstall：缺失的 rolldown 原生绑定自动补装
+npm run check          # typecheck + ESLint + 内容契约
+npm run format:check   # 格式检查（不通过则 npm run format 后重新提交）
+```
+
+期望：`check` 全绿；`format:check` 无输出。
+
+## 2. 构建
+
+```bash
+npm run build:frontend
+```
+
+期望：`67 page(s) built`，且 `frontend/dist` 非空。
+
+## 3. 全量验证
+
+```bash
+npm run verify         # = bash scripts/verify-all.sh
+```
+
+期望：`PASS 11 / FAIL 0 / SKIP 0`。含后台单测、admin-web 构建、Go 测试、Compose/Caddy 校验、PostgreSQL 集成。
+
+## 4. 内容模型变更（本次必须做一次）
+
+这次新增了合作伙伴 Logo 与隐藏开关，生产库里的内容是旧结构：
+
+1. 打开后台「内容管理 → 官网内容 → 首页」。
+2. 不做任何修改直接 **保存一次**。
+3. 之后 `home.partnersHidden`（默认 false = 显示）与 `home.partnerLogos` 才会写进 PostgreSQL。
+
+> 注意：`partnersHidden` 的语义是「隐藏」。不勾选即显示，不会因为空值误隐藏。
+
+## 5. 发布前自检
+
+- `/`、`/products/`、`/solutions/`、`/support/`、`/support/faq/`、`/about/` 均返回 200
+- `/en/`、`/ar/` 正常，`/ar/` 的 `<html dir="rtl">`
+- `sitemap-index.xml`、`robots.txt`、`llms.txt` 可访问
+- 导航在下拉、移动端菜单、语言切换均可用
+- Cookie 同意、表单提交、客服 iframe 均可用（表单需要后台在线）
+- 浏览器控制台无报错
+
+## 6. 部署
+
+```bash
+# 与现有发布流程一致：构建 → 原子发布 → current symlink 切换
+PUBLISH_DIR=/usr/share/nginx/site node scripts/build-frontend.mjs
+```
+
+或使用控制台的「保存并发布」（走同一个 `buildFrontend()`）。
+
+## 7. 回滚
+
+- 静态产物：`releases/` 下保留最近 3 个版本，把 `current` 指回上一个即可。
+- 代码：`git revert <commit>`，重新发布。
+- 内容：后台有发布前的快照（`backups/`），关闭开关或回填内容字段即可。
+
+## 已知限制（非阻塞）
+
+- `npm ci` 在 macOS 上仍可能因 npm 可选依赖 bug 漏装 rolldown 绑定；postinstall 会自动补装，失败时会打印手动命令。
+- `ChatWidget` / `CookieConsent` 是 `client:only`，不参与服务端渲染（非关键路径）。
+- 英文/阿拉伯语内容依赖后台译文；译文未就绪时构建会跳过对应路由（409），不会回退中文。

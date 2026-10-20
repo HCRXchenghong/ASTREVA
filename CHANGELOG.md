@@ -1,5 +1,17 @@
 # 更新记录
 
+## v1.4.0 - 2026-10-21
+
+### 重点变更
+
+- 官网前端整体替换：旧 Astro + Tailwind v3 站点下线，新前端（Astro 7 + Tailwind CSS v4 + Preline UI 5 + React islands）成为唯一实现；路由、内容接口、多语言（zh-CN / en / ar + RTL）与 SEO 产物保持一致，共 67 个静态页面。
+- 视觉重设计：蓝图网格、金色索引、描边序号、非对称版式与滚动揭示，形成统一的「精密工程感」设计语言；品牌色与圆角全部收敛到 `frontend/src/styles/themes/astreva.css` 令牌，页面内零硬编码品牌色。
+- 图标系统：CMS 里的字符图标（✓ ▶ 工 滴 盾 …）统一映射为内联 SVG，带上下文映射与兜底，编辑字段不变。
+- 性能：导航与 Hero 主 CTA 改为服务端渲染；Preline 只引入用到的 accordion 插件。整站 JS 从约 155 KB 降到 75 KB（gzip），CSS 13 KB（gzip）。
+- 工程化：接入 ESLint（flat config）+ Prettier（含 Astro 插件），新增 `npm run check` / `npm run verify`；构建期内容缓存；`postinstall` 自动修复 npm 可选依赖导致的 rolldown 原生绑定缺失。
+- 内容模型：新增 `home.partnersHidden`（隐藏合作伙伴区块）与 `home.partnerLogos`（可上传 Logo，未上传回退名称），后台首页可编辑。
+- 文档：新增 `docs/PRODUCTION_CHECKLIST.md` 上线检查清单；`frontend/README.md` 记录设计语言、图标系统、Tailwind v3→v4 迁移坑与部署模型。
+
 ## v1.3.0 - 2026-09-01
 
 ### 重点变更

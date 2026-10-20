@@ -53,10 +53,7 @@ const { items, idPrefix = 'accordion', defaultOpen = 0, alwaysOpen = true } = As
           </h3>
           <div
             id={contentId}
-            class:list={[
-              'hs-accordion-content overflow-hidden transition-[height] duration-300',
-              !open && 'hidden'
-            ]}
+            class:list={['hs-accordion-content overflow-hidden transition-[height] duration-300', !open && 'hidden']}
             role="region"
             aria-labelledby={headingId}
           >

@@ -42,21 +42,21 @@ const BY_CONTEXT: Record<string, Record<string, IconName>> = {
   advantage: {
     '▶': 'zap',
     '✓': 'shieldCheck',
-    '工': 'truck',
-    '滴': 'leaf',
+    工: 'truck',
+    滴: 'leaf',
     '◇': 'layers'
   },
   service: {
-    '盾': 'shieldCheck',
-    '工': 'wrench',
+    盾: 'shieldCheck',
+    工: 'wrench',
     '?': 'help',
     '☎': 'phone',
     '✉': 'mail'
   },
   // "产品说明" 里存的是「工」，但那一段是文字说明，用文档图标更准确。
   description: {
-    '工': 'file',
-    '层': 'layers'
+    工: 'file',
+    层: 'layers'
   }
 };
 
@@ -67,14 +67,14 @@ const BY_GLYPH: Record<string, IconName> = {
   '←': 'arrowLeft',
   '↓': 'download',
   '▶': 'play',
-  '工': 'wrench',
-  '滴': 'droplet',
-  '盾': 'shieldCheck',
+  工: 'wrench',
+  滴: 'droplet',
+  盾: 'shieldCheck',
   '?': 'help',
   '☎': 'phone',
   '✉': 'mail',
-  '层': 'layers',
-  '文': 'file',
+  层: 'layers',
+  文: 'file',
   '◇': 'box',
   '★': 'star'
 };

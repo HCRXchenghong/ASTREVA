@@ -32,16 +32,20 @@ const ruleTone = tone === 'dark' ? 'bg-accent-500' : 'bg-accent-500';
 ---
 
 <div class:list={[isCenter ? 'text-center' : 'text-left', className]}>
-  {eyebrow && (
-    <div class:list={['mb-5 flex items-center gap-3', isCenter && 'justify-center']}>
-      <span class:list={['h-px w-8', ruleTone]} aria-hidden="true"></span>
-      <p class:list={['text-xs font-black uppercase tracking-[0.22em]', eyebrowTone]}>{eyebrow}</p>
-    </div>
-  )}
+  {
+    eyebrow && (
+      <div class:list={['mb-5 flex items-center gap-3', isCenter && 'justify-center']}>
+        <span class:list={['h-px w-8', ruleTone]} aria-hidden="true" />
+        <p class:list={['text-xs font-black uppercase tracking-[0.22em]', eyebrowTone]}>{eyebrow}</p>
+      </div>
+    )
+  }
   <h2 class:list={['display-tight text-4xl font-black md:text-5xl', isCenter ? 'mb-5' : 'mb-4', titleTone, titleClass]}>
     {title}
   </h2>
-  {description && (
-    <p class:list={['text-base leading-8', bodyTone, isCenter ? 'mx-auto max-w-2xl' : 'max-w-2xl']}>{description}</p>
-  )}
+  {
+    description && (
+      <p class:list={['text-base leading-8', bodyTone, isCenter ? 'mx-auto max-w-2xl' : 'max-w-2xl']}>{description}</p>
+    )
+  }
 </div>

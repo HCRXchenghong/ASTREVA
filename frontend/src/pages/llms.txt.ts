@@ -15,7 +15,9 @@ function languageLabel(content: SiteContent, locale: SiteLocale) {
 function languageSection(content: SiteContent, locale: SiteLocale) {
   const labels = content.site.aiDiscovery;
   const url = (path: string) => absoluteUrl(localePath(locale, path));
-  const staticLabels = new Map(content.staticPages.map((page) => [page.slug, page.title || page.hero?.title || page.slug]));
+  const staticLabels = new Map(
+    content.staticPages.map((page) => [page.slug, page.title || page.hero?.title || page.slug])
+  );
   return [
     `## ${languageLabel(content, locale)}`,
     '',
@@ -40,7 +42,10 @@ function languageSection(content: SiteContent, locale: SiteLocale) {
     ...content.products
       .slice()
       .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((product) => `- [${product.name}](${url(`/products/${product.categorySlug}/${product.slug}/`)}): ${product.summary}`),
+      .map(
+        (product) =>
+          `- [${product.name}](${url(`/products/${product.categorySlug}/${product.slug}/`)}): ${product.summary}`
+      ),
     '',
     `### ${labels.contactTitle}`,
     '',

@@ -32,7 +32,10 @@ const hasMedia = Boolean(backgroundVideo || backgroundImage);
         <source src={backgroundVideo} type="video/mp4" />
       </video>
     ) : backgroundImage ? (
-      <div class="absolute inset-0 bg-cover bg-center opacity-60" style={`background-image:url('${backgroundImage}')`} />
+      <div
+        class="absolute inset-0 bg-cover bg-center opacity-60"
+        style={`background-image:url('${backgroundImage}')`}
+      />
     ) : null
   }
   <div
@@ -59,12 +62,14 @@ const hasMedia = Boolean(backgroundVideo || backgroundImage);
         )
       }
       <h1 class="display-tight text-5xl font-black leading-[1.02] text-white md:text-7xl">
-        {titleLines.map((line, index) => (
-          <>
-            {index > 0 && <br />}
-            {line}
-          </>
-        ))}
+        {
+          titleLines.map((line, index) => (
+            <>
+              {index > 0 && <br />}
+              {line}
+            </>
+          ))
+        }
       </h1>
       {subtitle && <p class="mt-6 max-w-2xl text-lg font-light leading-relaxed text-slate-300">{subtitle}</p>}
       {description && <p class="mt-6 max-w-2xl text-lg font-light leading-relaxed text-slate-300">{description}</p>}

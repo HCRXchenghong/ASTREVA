@@ -1,5 +1,6 @@
 ---
 import InnerPageHero from '../components/InnerPageHero.astro';
+import Container from '../components/ui/Container.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Icon from '../components/ui/Icon.astro';
 import { staticPage } from '../lib/content';
@@ -24,10 +25,16 @@ const page = staticPage(content, 'install');
       backgroundVideo={page.hero.backgroundVideo}
     />
     <div id="install-content" class="py-24 bg-slate-50 min-h-[60vh] scroll-mt-24">
-      <div class="max-w-5xl mx-auto px-6">
-        <h2 class="text-4xl font-extrabold text-center text-gray-900 mb-16 flex items-center justify-center gap-3"><Icon name={resolveIcon(page.sections.icon)} class="h-8 w-8 shrink-0 text-brand-500" /> {page.title}</h2>
-        <div class="bg-white p-10 md:p-14 rounded-3xl shadow-sm border border-gray-100 prose-content" set:html={page.body}></div>
-      </div>
+      <Container size="mid">
+        <h2 class="text-4xl font-extrabold text-center text-gray-900 mb-16 flex items-center justify-center gap-3">
+          <Icon name={resolveIcon(page.sections.icon)} class="h-8 w-8 shrink-0 text-brand-500" />
+          {page.title}
+        </h2>
+        <div
+          class="bg-white p-10 md:p-14 rounded-3xl shadow-sm border border-gray-100 prose-content"
+          set:html={page.body}
+        />
+      </Container>
     </div>
   </div>
 </BaseLayout>

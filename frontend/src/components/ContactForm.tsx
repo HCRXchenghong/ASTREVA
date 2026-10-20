@@ -98,28 +98,72 @@ export default function ContactForm({ form }: { form: FormCopy }) {
       <input name="website" className="hidden" tabIndex={-1} autoComplete="off" />
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
         <div>
-          <label htmlFor="contact-name" className="mb-2 block text-sm font-semibold text-gray-700">{form.nameLabel}</label>
-          <input id="contact-name" name="name" type="text" required className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 transition-colors focus:border-brand-500 focus:outline-none" placeholder={form.namePlaceholder} />
+          <label htmlFor="contact-name" className="mb-2 block text-sm font-semibold text-gray-700">
+            {form.nameLabel}
+          </label>
+          <input
+            id="contact-name"
+            name="name"
+            type="text"
+            required
+            className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 transition-colors focus:border-brand-500 focus:outline-none"
+            placeholder={form.namePlaceholder}
+          />
         </div>
         <div>
-          <label htmlFor="contact-company" className="mb-2 block text-sm font-semibold text-gray-700">{form.companyLabel} <span className="font-normal text-gray-400">({form.optionalLabel})</span></label>
-          <input id="contact-company" name="companyName" type="text" className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 transition-colors focus:border-brand-500 focus:outline-none" placeholder={form.companyPlaceholder} />
+          <label htmlFor="contact-company" className="mb-2 block text-sm font-semibold text-gray-700">
+            {form.companyLabel} <span className="font-normal text-gray-400">({form.optionalLabel})</span>
+          </label>
+          <input
+            id="contact-company"
+            name="companyName"
+            type="text"
+            className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 transition-colors focus:border-brand-500 focus:outline-none"
+            placeholder={form.companyPlaceholder}
+          />
         </div>
         <div>
-          <label htmlFor="contact-phone" className="mb-2 block text-sm font-semibold text-gray-700">{form.phoneLabel}</label>
-          <input id="contact-phone" name="phone" type="tel" className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 transition-colors focus:border-brand-500 focus:outline-none" placeholder={form.phonePlaceholder} />
+          <label htmlFor="contact-phone" className="mb-2 block text-sm font-semibold text-gray-700">
+            {form.phoneLabel}
+          </label>
+          <input
+            id="contact-phone"
+            name="phone"
+            type="tel"
+            className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 transition-colors focus:border-brand-500 focus:outline-none"
+            placeholder={form.phonePlaceholder}
+          />
         </div>
         <div>
-          <label htmlFor="contact-email" className="mb-2 block text-sm font-semibold text-gray-700">{form.emailLabel} <span className="font-normal text-gray-400">({form.optionalLabel})</span></label>
-          <input id="contact-email" name="email" type="email" className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 transition-colors focus:border-brand-500 focus:outline-none" placeholder={form.emailPlaceholder} />
+          <label htmlFor="contact-email" className="mb-2 block text-sm font-semibold text-gray-700">
+            {form.emailLabel} <span className="font-normal text-gray-400">({form.optionalLabel})</span>
+          </label>
+          <input
+            id="contact-email"
+            name="email"
+            type="email"
+            className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 transition-colors focus:border-brand-500 focus:outline-none"
+            placeholder={form.emailPlaceholder}
+          />
         </div>
       </div>
       <div>
-        <label htmlFor="contact-message" className="mb-2 block text-sm font-semibold text-gray-700">{form.messageLabel} <span className="font-normal text-gray-400">({form.optionalLabel})</span></label>
-        <textarea id="contact-message" name="message" className="min-h-28 w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 transition-colors focus:border-brand-500 focus:outline-none" placeholder={form.messagePlaceholder} />
+        <label htmlFor="contact-message" className="mb-2 block text-sm font-semibold text-gray-700">
+          {form.messageLabel} <span className="font-normal text-gray-400">({form.optionalLabel})</span>
+        </label>
+        <textarea
+          id="contact-message"
+          name="message"
+          className="min-h-28 w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 transition-colors focus:border-brand-500 focus:outline-none"
+          placeholder={form.messagePlaceholder}
+        />
       </div>
       {message && <p className={`text-sm ${status === 'success' ? 'text-green-600' : 'text-red-600'}`}>{message}</p>}
-      <button type="submit" disabled={status === 'submitting'} className="w-full bg-brand-500 hover:bg-brand-700 disabled:opacity-60 text-white font-bold py-4 rounded-xl transition-all shadow-md hover:shadow-lg">
+      <button
+        type="submit"
+        disabled={status === 'submitting'}
+        className="w-full bg-brand-500 hover:bg-brand-700 disabled:opacity-60 text-white font-bold py-4 rounded-xl transition-all shadow-md hover:shadow-lg"
+      >
         {status === 'submitting' ? form.submittingLabel : form.submitLabel}
       </button>
     </form>

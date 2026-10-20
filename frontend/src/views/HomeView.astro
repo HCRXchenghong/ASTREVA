@@ -51,8 +51,8 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
           <div class="absolute inset-0 bg-linear-to-br from-slate-900 via-brand-900 to-slate-800" />
         )
       }
-      <div class="absolute inset-0 bg-linear-to-r from-brand-950/95 via-brand-950/70 to-transparent" />
-      <div class="absolute inset-0 bg-navy-950/45" />
+      <div class="absolute inset-0 bg-linear-to-r from-brand-950/95 via-brand-950/70 to-transparent"></div>
+      <div class="absolute inset-0 bg-navy-950/45"></div>
       <div class="blueprint-grid absolute inset-0" aria-hidden="true"></div>
 
       <Container class="relative z-10 flex flex-1 flex-col justify-center pb-10 pt-28 md:pb-16 md:pt-36">
@@ -60,7 +60,9 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
           <span class="h-px w-10 bg-accent-500" aria-hidden="true"></span>
           <p class="text-sm font-bold uppercase tracking-[0.24em] text-accent-500">{home.hero.eyebrow}</p>
         </div>
-        <h1 class="display-tight mt-5 max-w-5xl text-5xl font-black leading-[0.98] text-white sm:text-6xl md:mt-6 md:text-8xl md:leading-[0.95]">
+        <h1
+          class="display-tight mt-5 max-w-5xl text-5xl font-black leading-[0.98] text-white sm:text-6xl md:mt-6 md:text-8xl md:leading-[0.95]"
+        >
           {home.hero.title}<span class="relative -top-[0.55em] align-top text-[0.22em] tracking-normal text-white/60">
             {home.hero.trademark}
           </span>
@@ -188,20 +190,23 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
         <div class="reveal relative lg:col-span-7" style="--reveal-delay:120ms">
           <span
             class="absolute -left-4 -top-4 hidden h-24 w-24 border-l-2 border-t-2 border-accent-500 lg:block"
-            aria-hidden="true"
-          ></span>
-          <div class="relative aspect-[4/3] overflow-hidden rounded-xl bg-slate-100 shadow-[0_40px_80px_-40px_rgba(3,32,60,0.55)]">
-            {home.productIntro.image ? (
-              <img src={home.productIntro.image} alt={home.productIntro.title} class="h-full w-full object-cover" />
-            ) : (
-              <div
-                role="img"
-                aria-label={home.productIntro.title}
-                class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"
-              >
-                <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
-              </div>
-            )}
+            aria-hidden="true"></span>
+          <div
+            class="relative aspect-[4/3] overflow-hidden rounded-xl bg-slate-100 shadow-[0_40px_80px_-40px_rgba(3,32,60,0.55)]"
+          >
+            {
+              home.productIntro.image ? (
+                <img src={home.productIntro.image} alt={home.productIntro.title} class="h-full w-full object-cover" />
+              ) : (
+                <div
+                  role="img"
+                  aria-label={home.productIntro.title}
+                  class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"
+                >
+                  <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
+                </div>
+              )
+            }
           </div>
         </div>
       </Container>
@@ -282,12 +287,14 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
          navy footer below don't merge into one undifferentiated dark block. -->
     <section id="home-cta" class="relative overflow-hidden border-t border-line-100 bg-white py-24 scroll-mt-24">
       <div class="blueprint-grid-light absolute inset-0" aria-hidden="true"></div>
-      {home.cta.backgroundImage && (
-        <div
-          class="absolute inset-0 bg-cover opacity-[0.04]"
-          style={`background-image:url('${home.cta.backgroundImage}')`}
-        />
-      )}
+      {
+        home.cta.backgroundImage && (
+          <div
+            class="absolute inset-0 bg-cover opacity-[0.04]"
+            style={`background-image:url('${home.cta.backgroundImage}')`}
+          />
+        )
+      }
       <Container class="relative">
         <div class="reveal grid items-center gap-12 lg:grid-cols-12">
           <div class="lg:col-span-7">

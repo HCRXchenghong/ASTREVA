@@ -1,15 +1,24 @@
 ---
 /**
- * Page-width container. Every section should use this instead of repeating
- * `max-w-7xl mx-auto px-6` by hand (the old frontend repeated it 15 times).
+ * Page-width container. Every page should use this instead of repeating
+ * `max-w-7xl mx-auto px-6` by hand.
  */
 type Props = {
   class?: string;
-  size?: 'wide' | 'narrow';
+  size?: 'wide' | 'mid' | 'narrow' | 'prose' | 'full';
 };
 
 const { class: className = '', size = 'wide' } = Astro.props;
-const width = size === 'narrow' ? 'max-w-4xl' : 'max-w-7xl';
+
+const widths = {
+  wide: 'max-w-7xl',
+  mid: 'max-w-5xl',
+  narrow: 'max-w-4xl',
+  prose: 'max-w-3xl',
+  full: ''
+};
+
+const width = widths[size];
 ---
 
 <!-- w-full is load-bearing: inside a column flex parent, `mx-auto` disables the

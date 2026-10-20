@@ -30,7 +30,7 @@
 ## 本地运行
 
 ```bash
-npm install                 # 依赖装在项目内缓存，避免污染系统 npm 缓存
+npm install                 # 依赖装在项目内缓存；postinstall 会在缺失时自动恢复 rolldown 原生绑定
 cp .env.example .env
 npm run build:admin-web     # 首次需要；run-local-stack 也会在缺失时自动构建
 bash scripts/run-local-stack.sh
@@ -44,6 +44,8 @@ bash scripts/run-local-stack.sh
 - 客服访客端：`http://127.0.0.1:5173/?embed=1`
 - 客服 API：`http://127.0.0.1:8080/healthz`
 - 构建服务：`http://127.0.0.1:8787/healthz`
+
+质量检查：`npm run check`（类型 + lint + 内容契约）或 `npm run verify`（完整 11 项验证）。
 
 开发控制台时可以用热更新：`npm run dev:admin-web`（Vite 起在 `5174`，把 `/site-admin-api` 与 `/site-admin-auth` 代理到 `1337`）。
 

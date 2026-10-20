@@ -45,11 +45,19 @@ function sanitizeVisitorSession(data: unknown): VisitorSessionPayload | null {
     visitorToken,
     conversationId,
     sessionType: String(record.sessionType || ''),
-    savedAt: Number(record.savedAt || 0),
+    savedAt: Number(record.savedAt || 0)
   };
 }
 
-export default function ChatWidget({ serviceBridgeUrl, chat, lang }: { serviceBridgeUrl: string; chat: ChatCopy; lang?: string }) {
+export default function ChatWidget({
+  serviceBridgeUrl,
+  chat,
+  lang
+}: {
+  serviceBridgeUrl: string;
+  chat: ChatCopy;
+  lang?: string;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(Number(chat.initialUnreadCount));
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -72,15 +80,22 @@ export default function ChatWidget({ serviceBridgeUrl, chat, lang }: { serviceBr
   };
 
   const iframeUrl = useMemo(() => {
-    const base =
-      normalizeBridgeUrl(serviceBridgeUrl) || normalizeBridgeUrl(envBridgeUrl) || window.location.origin;
+    const base = normalizeBridgeUrl(serviceBridgeUrl) || normalizeBridgeUrl(envBridgeUrl) || window.location.origin;
     try {
       const url = new URL(base);
-      if (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1") {
+      if (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1') {
         url.hostname = window.location.hostname;
       }
       url.searchParams.set('embed', '1');
-      const lang = String(siteLocale || '').toLowerCase().startsWith('ar') ? 'ar' : String(siteLocale || '').toLowerCase().startsWith('en') ? 'en' : 'zh-CN';
+      const lang = String(siteLocale || '')
+        .toLowerCase()
+        .startsWith('ar')
+        ? 'ar'
+        : String(siteLocale || '')
+              .toLowerCase()
+              .startsWith('en')
+          ? 'en'
+          : 'zh-CN';
       url.searchParams.set('lang', lang);
       return url.toString();
     } catch {

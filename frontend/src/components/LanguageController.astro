@@ -23,19 +23,27 @@ const { apiBase, availableLocales, switchPaths } = Astro.props;
   (() => {
     const supported = ['zh-CN', 'en', 'ar'];
     const storageKey = 'astreva-site-locale';
-    const available = Array.isArray(astrevaLocales) ? astrevaLocales.filter((item) => supported.includes(item)) : ['zh-CN'];
+    const available = Array.isArray(astrevaLocales)
+      ? astrevaLocales.filter((item) => supported.includes(item))
+      : ['zh-CN'];
     const paths = astrevaLocalePaths && typeof astrevaLocalePaths === 'object' ? astrevaLocalePaths : {};
     const htmlLocale = document.documentElement.lang;
-    let currentLocale = supported.includes(htmlLocale) ? htmlLocale : 'zh-CN';
+    const currentLocale = supported.includes(htmlLocale) ? htmlLocale : 'zh-CN';
 
     function storedLocale() {
-      try { return localStorage.getItem(storageKey); }
-      catch { return null; }
+      try {
+        return localStorage.getItem(storageKey);
+      } catch {
+        return null;
+      }
     }
 
     function remember(locale) {
-      try { localStorage.setItem(storageKey, locale); }
-      catch {}
+      try {
+        localStorage.setItem(storageKey, locale);
+      } catch {
+        /* ignore: storage unavailable (private mode) */
+      }
     }
 
     function homeFor(locale) {
@@ -82,5 +90,8 @@ const { apiBase, availableLocales, switchPaths } = Astro.props;
 </script>
 
 <style is:global>
-  html[dir="rtl"] body{direction:rtl;text-align:right}
+  html[dir='rtl'] body {
+    direction: rtl;
+    text-align: right;
+  }
 </style>

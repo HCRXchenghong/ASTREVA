@@ -14,7 +14,16 @@ type Props = {
   closeLabel: string;
 };
 
-export default function VideoModal({ primaryLabel, primaryHref, secondaryLabel, videoUrl, videoTitle, previewLabel, openExternalLabel, closeLabel }: Props) {
+export default function VideoModal({
+  primaryLabel,
+  primaryHref,
+  secondaryLabel,
+  videoUrl,
+  videoTitle,
+  previewLabel,
+  openExternalLabel,
+  closeLabel
+}: Props) {
   const [open, setOpen] = useState(false);
   const embed = resolveVideoSource(videoUrl);
   const modal = (
@@ -83,10 +92,16 @@ export default function VideoModal({ primaryLabel, primaryHref, secondaryLabel, 
   return (
     <>
       <div className="flex flex-col sm:flex-row gap-6 items-start sm:items-center">
-        <a href={primaryHref} className="bg-brand-500 hover:bg-brand-700 text-white px-8 py-3.5 rounded-lg font-medium transition-all flex items-center gap-2 shadow-lg shadow-blue-500/30">
+        <a
+          href={primaryHref}
+          className="bg-brand-500 hover:bg-brand-700 text-white px-8 py-3.5 rounded-lg font-medium transition-all flex items-center gap-2 shadow-lg shadow-blue-500/30"
+        >
           {primaryLabel} <ArrowUpRight size={20} />
         </a>
-        <button onClick={() => setOpen(true)} className="text-white flex items-center gap-3 font-semibold hover:text-blue-300 transition-colors group">
+        <button
+          onClick={() => setOpen(true)}
+          className="text-white flex items-center gap-3 font-semibold hover:text-blue-300 transition-colors group"
+        >
           {secondaryLabel}
           <span className="w-12 h-12 bg-white/10 group-hover:bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center transition-all border border-white/20">
             <Play size={20} className="fill-current ml-1" />

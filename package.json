@@ -33,7 +33,12 @@
     "rebuild:webhook": "node scripts/rebuild-webhook.mjs",
     "servicebridge:backend": "cd servicebridge/backend && go run ./cmd/server",
     "servicebridge:web": "cd servicebridge/apps/user-web && python3 -m http.server 5173",
-    "typecheck": "npm --workspace frontend run typecheck"
+    "typecheck": "npm --workspace frontend run typecheck",
+    "lint": "npm --workspace frontend run lint",
+    "format": "npm --workspace frontend run format",
+    "check": "npm run typecheck && npm run lint && npm run cms:contract",
+    "postinstall": "node scripts/ensure-rolldown-binding.mjs",
+    "verify": "bash scripts/verify-all.sh"
   },
   "devDependencies": {
     "playwright-core": "1.62.1"

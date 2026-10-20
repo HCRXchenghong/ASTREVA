@@ -16,7 +16,14 @@ import {
   stripLocalePrefix,
   type SiteLocale
 } from '../lib/i18n';
-import { absoluteAssetUrl, absoluteUrl, organizationJsonLd, pageDescription, pageTitle, websiteJsonLd } from '../lib/seo';
+import {
+  absoluteAssetUrl,
+  absoluteUrl,
+  organizationJsonLd,
+  pageDescription,
+  pageTitle,
+  websiteJsonLd
+} from '../lib/seo';
 import type { SEO, SiteContent } from '../lib/types';
 
 type Props = {
@@ -76,7 +83,10 @@ const isIndexable = !/noindex/i.test(robots);
     <script is:inline>
       document.documentElement.classList.add('js');
     </script>
-    <script is:inline define:vars={{ astrevaLocale: locale, astrevaLocales: availableLocales, astrevaLocalePaths: switchPaths }}>
+    <script
+      is:inline
+      define:vars={{ astrevaLocale: locale, astrevaLocales: availableLocales, astrevaLocalePaths: switchPaths }}
+    >
       window.__ASTREVA_LOCALE__ = astrevaLocale;
       window.__ASTREVA_LOCALES__ = astrevaLocales;
       window.__ASTREVA_LOCALE_PATHS__ = astrevaLocalePaths;
@@ -109,9 +119,10 @@ const isIndexable = !/noindex/i.test(robots);
           try {
             const existing = storage.getItem(key);
             if (existing) return existing;
-            const value = window.crypto && typeof window.crypto.randomUUID === 'function'
-              ? window.crypto.randomUUID()
-              : `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+            const value =
+              window.crypto && typeof window.crypto.randomUUID === 'function'
+                ? window.crypto.randomUUID()
+                : `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
             storage.setItem(key, value);
             return value;
           } catch {
@@ -132,7 +143,9 @@ const isIndexable = !/noindex/i.test(robots);
               const blob = new Blob([body], { type: 'text/plain;charset=UTF-8' });
               if (navigator.sendBeacon(endpoint(), blob)) return;
             }
-          } catch {}
+          } catch {
+            /* ignore: storage unavailable */
+          }
           try {
             fetch(endpoint(), {
               method: 'POST',
@@ -142,7 +155,9 @@ const isIndexable = !/noindex/i.test(robots);
               mode: 'cors',
               credentials: 'omit'
             }).catch(() => {});
-          } catch {}
+          } catch {
+            /* ignore: storage unavailable */
+          }
         }
         let pageviewSent = false;
         function sendPageview() {
@@ -211,10 +226,17 @@ const isIndexable = !/noindex/i.test(robots);
     {content.site.logoUrl && <link rel="apple-touch-icon" href={content.site.logoUrl} />}
     {keywords && <meta name="keywords" content={keywords} />}
     <link rel="canonical" href={canonical} />
-    {isIndexable && hreflangAlternates.map((alternate) => (
-      <link rel="alternate" hreflang={alternate.locale} href={alternate.href} />
-    ))}
-    {isIndexable && <link rel="alternate" hreflang="x-default" href={absoluteUrl(localePath(DEFAULT_LOCALE, basePath))} />}
+    {
+      isIndexable &&
+        hreflangAlternates.map((alternate) => (
+          <link rel="alternate" hreflang={alternate.locale} href={alternate.href} />
+        ))
+    }
+    {
+      isIndexable && (
+        <link rel="alternate" hreflang="x-default" href={absoluteUrl(localePath(DEFAULT_LOCALE, basePath))} />
+      )
+    }
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={content.site.brandName} />
     <meta property="og:locale" content={ogLocale} data-astreva-og-locale />
@@ -233,9 +255,7 @@ const isIndexable = !/noindex/i.test(robots);
     <meta name="twitter:description" content={description} />
     {image && <meta name="twitter:image" content={image} />}
     {image && <meta name="twitter:image:alt" content={`${title} - ${content.site.brandName}`} />}
-    {structuredData.map((item) => (
-      <script type="application/ld+json" set:html={JSON.stringify(item)} />
-    ))}
+    {structuredData.map((item) => <script type="application/ld+json" set:html={JSON.stringify(item)} />)}
   </head>
   <body>
     <LanguageController
@@ -260,11 +280,23 @@ const isIndexable = !/noindex/i.test(robots);
         <div class="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
           <div>
             <div class="flex items-center gap-2 mb-6">
-              {content.site.logoUrl ? (
-                <img src={content.site.logoUrl} alt={footer.logoAlt} class="w-10 h-10 rounded-full object-cover bg-white shadow-sm ring-1 ring-blue-400/30" />
-              ) : (
-                <span role="img" aria-label={footer.logoAlt} class="grid h-10 w-10 place-items-center rounded-full bg-white text-sm font-black text-brand-800 shadow-sm ring-1 ring-blue-400/30">{content.site.brandName.slice(0, 1)}</span>
-              )}
+              {
+                content.site.logoUrl ? (
+                  <img
+                    src={content.site.logoUrl}
+                    alt={footer.logoAlt}
+                    class="w-10 h-10 rounded-full object-cover bg-white shadow-sm ring-1 ring-blue-400/30"
+                  />
+                ) : (
+                  <span
+                    role="img"
+                    aria-label={footer.logoAlt}
+                    class="grid h-10 w-10 place-items-center rounded-full bg-white text-sm font-black text-brand-800 shadow-sm ring-1 ring-blue-400/30"
+                  >
+                    {content.site.brandName.slice(0, 1)}
+                  </span>
+                )
+              }
               <span class="text-2xl font-bold tracking-wide">{content.site.brandName}</span>
             </div>
             <p class="text-gray-400 text-sm mb-6 leading-relaxed">
@@ -274,34 +306,68 @@ const isIndexable = !/noindex/i.test(robots);
           <div>
             <h4 class="text-lg font-semibold mb-6">{footer.quickLinksTitle}</h4>
             <ul class="space-y-3 text-gray-400 text-sm">
-              {footer.quickLinks.filter((link) => link.href !== '/projects/').map((link) => <li><a href={localizeHref(locale, link.href)} class="hover:text-blue-400 transition-colors">{link.label}</a></li>)}
+              {
+                footer.quickLinks
+                  .filter((link) => link.href !== '/projects/')
+                  .map((link) => (
+                    <li>
+                      <a href={localizeHref(locale, link.href)} class="hover:text-blue-400 transition-colors">
+                        {link.label}
+                      </a>
+                    </li>
+                  ))
+              }
             </ul>
           </div>
           <div>
             <h4 class="text-lg font-semibold mb-6">{footer.supportTitle}</h4>
             <ul class="space-y-3 text-gray-400 text-sm">
-              {footer.supportLinks.map((link) => <li><a href={localizeHref(locale, link.href)} class="hover:text-blue-400 transition-colors">{link.label}</a></li>)}
+              {
+                footer.supportLinks.map((link) => (
+                  <li>
+                    <a href={localizeHref(locale, link.href)} class="hover:text-blue-400 transition-colors">
+                      {link.label}
+                    </a>
+                  </li>
+                ))
+              }
             </ul>
           </div>
           <div>
             <h4 class="text-lg font-semibold mb-6">{footer.socialTitle}</h4>
             <div class="flex flex-wrap gap-4">
-              {Object.entries(content.site.socialLinks).filter(([, url]) => Boolean(url)).map(([name, url]) => (
-                <a href={url as string} class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center hover:bg-blue-600 transition-colors uppercase text-xs font-bold" aria-label={name}>
-                  {content.site.socialIcons?.[name] || name.slice(0, 1)}
-                </a>
-              ))}
-              {Object.values(content.site.socialLinks).filter(Boolean).length === 0 && (
-                <span class="text-gray-500 text-sm">{footer.socialEmptyText}</span>
-              )}
+              {
+                Object.entries(content.site.socialLinks)
+                  .filter(([, url]) => Boolean(url))
+                  .map(([name, url]) => (
+                    <a
+                      href={url as string}
+                      class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center hover:bg-blue-600 transition-colors uppercase text-xs font-bold"
+                      aria-label={name}
+                    >
+                      {content.site.socialIcons?.[name] || name.slice(0, 1)}
+                    </a>
+                  ))
+              }
+              {
+                Object.values(content.site.socialLinks).filter(Boolean).length === 0 && (
+                  <span class="text-gray-500 text-sm">{footer.socialEmptyText}</span>
+                )
+              }
             </div>
           </div>
         </div>
-        <div class="max-w-7xl mx-auto px-6 pt-8 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-gray-500">
+        <div
+          class="max-w-7xl mx-auto px-6 pt-8 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-gray-500"
+        >
           <p>{content.site.copyright}</p>
           <div class="flex gap-6">
-            <a href={localePath(locale, '/privacy/')} class="hover:text-gray-300 transition-colors">{footer.privacyLabel}</a>
-            <a href={localePath(locale, '/agreement/')} class="hover:text-gray-300 transition-colors">{footer.agreementLabel}</a>
+            <a href={localePath(locale, '/privacy/')} class="hover:text-gray-300 transition-colors"
+              >{footer.privacyLabel}</a
+            >
+            <a href={localePath(locale, '/agreement/')} class="hover:text-gray-300 transition-colors"
+              >{footer.agreementLabel}</a
+            >
             <button
               type="button"
               data-cookie-settings
@@ -313,7 +379,12 @@ const isIndexable = !/noindex/i.test(robots);
           </div>
         </div>
       </footer>
-      <ChatWidget client:only="react" serviceBridgeUrl={content.site.serviceBridgeUrl} chat={content.site.chat} lang={locale} />
+      <ChatWidget
+        client:only="react"
+        serviceBridgeUrl={content.site.serviceBridgeUrl}
+        chat={content.site.chat}
+        lang={locale}
+      />
       <CookieConsent client:only="react" cookie={content.site.cookie} privacyHref={localePath(locale, '/privacy/')} />
     </div>
     <!-- Preline UI runtime: opens the navbar dropdowns, accordions, tabs and modals

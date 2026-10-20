@@ -2,12 +2,14 @@ import type { SiteContent, StaticPageForSlug, StaticPageSlug } from './types';
 import { DEFAULT_LOCALE, type SiteLocale } from './i18n';
 
 // CONTENT_API_URL 仅供静态构建进程访问内网后台，避免把容器内部地址注入浏览器代码。
-const CONTENT_API_URL = (process.env.CONTENT_API_URL || process.env.PUBLIC_ADMIN_URL || 'http://127.0.0.1:1337').replace(/\/$/, '');
+const CONTENT_API_URL = (
+  process.env.CONTENT_API_URL ||
+  process.env.PUBLIC_ADMIN_URL ||
+  'http://127.0.0.1:1337'
+).replace(/\/$/, '');
 export const PUBLIC_CONTENT_API_URL = (process.env.PUBLIC_ADMIN_URL || CONTENT_API_URL).replace(/\/$/, '');
 const CONTENT_API_TOKEN = process.env.CONTENT_API_TOKEN || '';
-const CONTENT_BRIDGE_URL = normalizeServiceBridgeUrl(
-  process.env.PUBLIC_SERVICEBRIDGE_URL || ''
-);
+const CONTENT_BRIDGE_URL = normalizeServiceBridgeUrl(process.env.PUBLIC_SERVICEBRIDGE_URL || '');
 
 type ContentApiErrorPayload = {
   error?: { message?: string };
@@ -55,9 +57,7 @@ function normalizeContent(content: SiteContent): SiteContent {
     ...content,
     site: {
       ...content.site,
-      serviceBridgeUrl:
-        CONTENT_BRIDGE_URL ||
-        normalizeServiceBridgeUrl(content.site.serviceBridgeUrl)
+      serviceBridgeUrl: CONTENT_BRIDGE_URL || normalizeServiceBridgeUrl(content.site.serviceBridgeUrl)
     }
   };
 }
@@ -105,9 +105,24 @@ async function requestContent(locale: SiteLocale): Promise<SiteContent> {
   return payload.data;
 }
 
+/**
+ * Per-process cache. A static build renders every page in one process and the
+ * same locale is requested by page frontmatter, getStaticPaths and the layout,
+ * so without this the content API is hit dozens of times for identical data.
+ * Failures are evicted so a retry still happens.
+ */
+const contentCache = new Map<SiteLocale, Promise<SiteContent>>();
+
 /** Load the content model for one locale; en/ar surface 409 as TranslationNotReadyError. */
-export async function getContent(locale: SiteLocale = DEFAULT_LOCALE): Promise<SiteContent> {
-  return normalizeContent(await requestContent(locale));
+export function getContent(locale: SiteLocale = DEFAULT_LOCALE): Promise<SiteContent> {
+  const cached = contentCache.get(locale);
+  if (cached) return cached;
+  const pending = requestContent(locale).then(normalizeContent);
+  contentCache.set(locale, pending);
+  pending.catch(() => {
+    if (contentCache.get(locale) === pending) contentCache.delete(locale);
+  });
+  return pending;
 }
 
 const translationAvailability = new Map<SiteLocale, Promise<boolean>>();

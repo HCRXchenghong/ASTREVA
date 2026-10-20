@@ -1,5 +1,6 @@
 ---
 import InnerPageHero from '../components/InnerPageHero.astro';
+import Container from '../components/ui/Container.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Icon from '../components/ui/Icon.astro';
 import { staticPage } from '../lib/content';
@@ -32,119 +33,174 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
       backgroundVideo={page.hero.backgroundVideo}
     />
 
-    <div class="mx-auto max-w-7xl px-6 py-20">
+    <Container class="py-20">
       <header class="mb-16 max-w-4xl">
         <h2 class="text-4xl font-extrabold text-gray-900">{solutionUi.introTitle}</h2>
         <p class="mt-5 text-lg leading-relaxed text-gray-600">{solutionUi.introDescription}</p>
       </header>
       <div class="flex flex-col gap-16 lg:flex-row lg:items-start lg:gap-12">
         <div class="flex-1 space-y-32">
-          {solutionSections.map((section, index) => (
-            <section id={section.id} class={`relative scroll-mt-44 ${index > 0 ? 'border-t border-gray-200 pt-12' : ''}`}>
-              <span class="section-number">{section.number}</span>
-              <div class="mb-12">
-                <h2 class="mb-6 text-4xl font-extrabold text-gray-900">{section.title}</h2>
-                <p class="max-w-4xl text-lg leading-relaxed text-gray-600">{section.description}</p>
-              </div>
-
-              {index === 0 && (
-                <div class="video-placeholder mb-12">
-                  {section.video.url ? (
-                    section.video.isYouTube ? (
-                      <iframe
-                        src={section.video.url}
-                        title={section.videoCaption || section.title}
-                        class="h-full w-full border-0"
-                        allow="autoplay; encrypted-media; picture-in-picture; web-share"
-                        allowfullscreen
-                        referrerpolicy="strict-origin-when-cross-origin"
-                      ></iframe>
-                    ) : (
-                      <video src={section.video.url} poster={section.videoImage || section.image} controls playsinline preload="metadata" class="h-full w-full object-cover"></video>
-                    )
-                  ) : (section.videoImage || section.image) ? (
-                    <>
-                      <img src={section.videoImage || section.image} alt={section.title} class="h-full w-full object-cover opacity-60" />
-                      <div class="video-play-btn" aria-hidden="true"><Icon name={resolveIcon(solutionUi.videoPlayIcon)} class="ml-1 h-7 w-7 fill-brand-800 text-brand-800" /></div>
-                    </>
-                  ) : (
-                    <div role="img" aria-label={section.title} class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"><Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} /></div>
-                  )}
-                  <div class="absolute bottom-6 left-6 max-w-[calc(100%-48px)] rounded-lg bg-black/40 p-4 text-white backdrop-blur-sm">
-                    <p class="text-sm font-bold">{section.videoCaption}</p>
-                  </div>
+          {
+            solutionSections.map((section, index) => (
+              <section
+                id={section.id}
+                class={`relative scroll-mt-44 ${index > 0 ? 'border-t border-gray-200 pt-12' : ''}`}
+              >
+                <span class="section-number">{section.number}</span>
+                <div class="mb-12">
+                  <h2 class="mb-6 text-4xl font-extrabold text-gray-900">{section.title}</h2>
+                  <p class="max-w-4xl text-lg leading-relaxed text-gray-600">{section.description}</p>
                 </div>
-              )}
 
-              {index === 1 ? (
-                <div class="grid gap-16 md:grid-cols-2 md:items-center">
-                  <div class="order-2 rounded-2xl border border-line-100 bg-surface-50 p-6 md:order-1 md:p-8">
-                    <h3 class="mb-4 font-bold text-brand-800">{solutionUi.architectureTitle}</h3>
-                    <div class="space-y-4">
-                      {systemCards.map((card) => (
-                        <div class="rounded-lg border border-line-100 bg-white p-4 transition-colors hover:border-brand-200">
-                          <p class="mb-1 text-[11px] font-black uppercase tracking-[0.14em] text-ink-400">{card.step}</p>
-                          <p class="text-sm font-semibold leading-6 text-ink-800">{card.title}</p>
+                {index === 0 && (
+                  <div class="video-placeholder mb-12">
+                    {section.video.url ? (
+                      section.video.isYouTube ? (
+                        <iframe
+                          src={section.video.url}
+                          title={section.videoCaption || section.title}
+                          class="h-full w-full border-0"
+                          allow="autoplay; encrypted-media; picture-in-picture; web-share"
+                          allowfullscreen
+                          referrerpolicy="strict-origin-when-cross-origin"
+                        />
+                      ) : (
+                        <video
+                          src={section.video.url}
+                          poster={section.videoImage || section.image}
+                          controls
+                          playsinline
+                          preload="metadata"
+                          class="h-full w-full object-cover"
+                        />
+                      )
+                    ) : section.videoImage || section.image ? (
+                      <>
+                        <img
+                          src={section.videoImage || section.image}
+                          alt={section.title}
+                          class="h-full w-full object-cover opacity-60"
+                        />
+                        <div class="video-play-btn" aria-hidden="true">
+                          <Icon
+                            name={resolveIcon(solutionUi.videoPlayIcon)}
+                            class="ml-1 h-7 w-7 fill-brand-800 text-brand-800"
+                          />
                         </div>
-                      ))}
+                      </>
+                    ) : (
+                      <div
+                        role="img"
+                        aria-label={section.title}
+                        class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"
+                      >
+                        <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
+                      </div>
+                    )}
+                    <div class="absolute bottom-6 left-6 max-w-[calc(100%-48px)] rounded-lg bg-black/40 p-4 text-white backdrop-blur-sm">
+                      <p class="text-sm font-bold">{section.videoCaption}</p>
                     </div>
                   </div>
-                  <div class="order-1 md:order-2">
-                    <h3 class="mb-6 text-2xl font-extrabold text-gray-900">{section.focusTitle}</h3>
-                    <p class="mb-8 leading-relaxed text-gray-600">{section.focusDescription}</p>
-                    <a href={localHref(section.ctaHref || solutionUi.ctaHref)} class="inline-flex items-center gap-2 rounded-lg bg-brand-800 px-8 py-3 font-bold text-white transition-colors hover:bg-brand-700">
-                      {section.ctaLabel || solutionUi.ctaLabel} <Icon name={resolveIcon(solutionUi.ctaIcon)} class="h-4 w-4" />
-                    </a>
-                  </div>
-                </div>
-              ) : index === 2 ? (
-                <div class="flex flex-col gap-12 md:flex-row">
-                  <div class="md:w-1/3">
-                    <h3 class="mb-6 text-3xl font-extrabold leading-tight text-gray-900">{section.focusTitle}</h3>
-                    <div class="space-y-4">
-                      {section.bullets.slice(0, 2).map((bullet) => (
-                        <div class="rounded-lg border border-line-100 bg-white p-4">
-                          <p class="mb-1 text-sm font-bold text-brand-800">{bullet}</p>
-                          <p class="text-xs text-gray-500">{section.detailNote || solutionUi.detailNote}</p>
-                        </div>
-                      ))}
+                )}
+
+                {index === 1 ? (
+                  <div class="grid gap-16 md:grid-cols-2 md:items-center">
+                    <div class="order-2 rounded-2xl border border-line-100 bg-surface-50 p-6 md:order-1 md:p-8">
+                      <h3 class="mb-4 font-bold text-brand-800">{solutionUi.architectureTitle}</h3>
+                      <div class="space-y-4">
+                        {systemCards.map((card) => (
+                          <div class="rounded-lg border border-line-100 bg-white p-4 transition-colors hover:border-brand-200">
+                            <p class="mb-1 text-[11px] font-black uppercase tracking-[0.14em] text-ink-400">
+                              {card.step}
+                            </p>
+                            <p class="text-sm font-semibold leading-6 text-ink-800">{card.title}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div class="order-1 md:order-2">
+                      <h3 class="mb-6 text-2xl font-extrabold text-gray-900">{section.focusTitle}</h3>
+                      <p class="mb-8 leading-relaxed text-gray-600">{section.focusDescription}</p>
+                      <a
+                        href={localHref(section.ctaHref || solutionUi.ctaHref)}
+                        class="inline-flex items-center gap-2 rounded-lg bg-brand-800 px-8 py-3 font-bold text-white transition-colors hover:bg-brand-700"
+                      >
+                        {section.ctaLabel || solutionUi.ctaLabel}{' '}
+                        <Icon name={resolveIcon(solutionUi.ctaIcon)} class="h-4 w-4" />
+                      </a>
                     </div>
                   </div>
-                  <div class="md:w-2/3">
-                    {section.image ? (
-                      <img src={section.image} alt={section.title} class="h-[400px] w-full rounded-3xl object-cover" />
-                    ) : (
-                      <div role="img" aria-label={section.title} class="grid h-[400px] w-full place-items-center rounded-3xl bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"><Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} /></div>
-                    )}
-                    <p class="mt-8 leading-relaxed text-gray-600">{section.focusDescription}</p>
+                ) : index === 2 ? (
+                  <div class="flex flex-col gap-12 md:flex-row">
+                    <div class="md:w-1/3">
+                      <h3 class="mb-6 text-3xl font-extrabold leading-tight text-gray-900">{section.focusTitle}</h3>
+                      <div class="space-y-4">
+                        {section.bullets.slice(0, 2).map((bullet) => (
+                          <div class="rounded-lg border border-line-100 bg-white p-4">
+                            <p class="mb-1 text-sm font-bold text-brand-800">{bullet}</p>
+                            <p class="text-xs text-gray-500">{section.detailNote || solutionUi.detailNote}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div class="md:w-2/3">
+                      {section.image ? (
+                        <img
+                          src={section.image}
+                          alt={section.title}
+                          class="h-[400px] w-full rounded-3xl object-cover"
+                        />
+                      ) : (
+                        <div
+                          role="img"
+                          aria-label={section.title}
+                          class="grid h-[400px] w-full place-items-center rounded-3xl bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"
+                        >
+                          <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
+                        </div>
+                      )}
+                      <p class="mt-8 leading-relaxed text-gray-600">{section.focusDescription}</p>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div class="grid gap-12 md:grid-cols-2 md:items-center">
-                  <div class="space-y-6">
-                    <h3 class="flex items-center gap-3 text-2xl font-extrabold text-gray-900">
-                      <Icon name={resolveIcon(solutionUi.featureIcon)} class="h-5 w-5 shrink-0 text-brand-500" /> {section.focusTitle}
-                    </h3>
-                    <p class="leading-relaxed text-gray-600">{section.focusDescription}</p>
-                    <ul class="space-y-3">
-                      {section.bullets.map((bullet) => (
-                        <li class="flex items-start gap-2 text-sm font-medium text-gray-800">
-                          <Icon name={resolveIcon(solutionUi.bulletIcon)} class="mt-0.5 h-4 w-4 shrink-0 text-brand-500" strokeWidth={2.4} /> {bullet}
-                        </li>
-                      ))}
-                    </ul>
+                ) : (
+                  <div class="grid gap-12 md:grid-cols-2 md:items-center">
+                    <div class="space-y-6">
+                      <h3 class="flex items-center gap-3 text-2xl font-extrabold text-gray-900">
+                        <Icon name={resolveIcon(solutionUi.featureIcon)} class="h-5 w-5 shrink-0 text-brand-500" />{' '}
+                        {section.focusTitle}
+                      </h3>
+                      <p class="leading-relaxed text-gray-600">{section.focusDescription}</p>
+                      <ul class="space-y-3">
+                        {section.bullets.map((bullet) => (
+                          <li class="flex items-start gap-2 text-sm font-medium text-gray-800">
+                            <Icon
+                              name={resolveIcon(solutionUi.bulletIcon)}
+                              class="mt-0.5 h-4 w-4 shrink-0 text-brand-500"
+                              strokeWidth={2.4}
+                            />{' '}
+                            {bullet}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      {section.image ? (
+                        <img src={section.image} alt={section.title} class="rounded-2xl shadow-lg" />
+                      ) : (
+                        <div
+                          role="img"
+                          aria-label={section.title}
+                          class="grid aspect-[4/3] w-full place-items-center rounded-2xl bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400 shadow-lg"
+                        >
+                          <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    {section.image ? (
-                      <img src={section.image} alt={section.title} class="rounded-2xl shadow-lg" />
-                    ) : (
-                      <div role="img" aria-label={section.title} class="grid aspect-[4/3] w-full place-items-center rounded-2xl bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400 shadow-lg"><Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} /></div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </section>
-          ))}
+                )}
+              </section>
+            ))
+          }
         </div>
 
         <aside class="order-first w-full shrink-0 lg:sticky lg:top-32 lg:order-none lg:w-[260px] lg:self-start">
@@ -152,23 +208,29 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
             <div class="rail-card">
               <p class="rail-eyebrow">{solutionUi.sideNavTitle}</p>
               <div class="space-y-1">
-                {solutionSections.map((section, index) => (
-                  <a href={`#${section.id}`} data-solution-nav class={`rail-link ${index === 0 ? 'active' : ''}`}>
-                    <span>{String(index + 1).padStart(2, '0')}</span>
-                    <strong>{section.navLabel}</strong>
-                  </a>
-                ))}
+                {
+                  solutionSections.map((section, index) => (
+                    <a href={`#${section.id}`} data-solution-nav class={`rail-link ${index === 0 ? 'active' : ''}`}>
+                      <span>{String(index + 1).padStart(2, '0')}</span>
+                      <strong>{section.navLabel}</strong>
+                    </a>
+                  ))
+                }
               </div>
             </div>
             <div class="advisor-card">
               <p class="advisor-title">{solutionUi.adviceTitle}</p>
-              <a href={localHref(solutionUi.advicePrimaryHref)} class="advisor-primary">{solutionUi.advicePrimaryLabel}</a>
-              <a href={localHref(solutionUi.adviceSecondaryHref)} class="advisor-secondary">{solutionUi.adviceSecondaryLabel}</a>
+              <a href={localHref(solutionUi.advicePrimaryHref)} class="advisor-primary"
+                >{solutionUi.advicePrimaryLabel}</a
+              >
+              <a href={localHref(solutionUi.adviceSecondaryHref)} class="advisor-secondary"
+                >{solutionUi.adviceSecondaryLabel}</a
+              >
             </div>
           </div>
         </aside>
       </div>
-    </div>
+    </Container>
   </div>
 
   <script>
@@ -211,7 +273,9 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
   </script>
 
   <style>
-    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
     .blueprint-bg {
       background-image: radial-gradient(rgba(255, 255, 255, 0.35) 0.5px, transparent 0.5px);
       background-size: 20px 20px;
@@ -259,7 +323,10 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
       min-height: 46px;
       padding: 0 12px;
       position: relative;
-      transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+      transition:
+        background-color 0.2s ease,
+        color 0.2s ease,
+        transform 0.2s ease;
     }
     .rail-link::before {
       background: var(--color-brand-500);
@@ -313,7 +380,11 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
       font-weight: 900;
       padding: 13px 14px;
       text-align: center;
-      transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+      transition:
+        border-color 0.2s ease,
+        background-color 0.2s ease,
+        color 0.2s ease,
+        transform 0.2s ease;
       width: 100%;
     }
     .advisor-primary {
