@@ -62,6 +62,18 @@ PUBLISH_DIR=/usr/share/nginx/site node scripts/build-frontend.mjs
 - 代码：`git revert <commit>`，重新发布。
 - 内容：后台有发布前的快照（`backups/`），关闭开关或回填内容字段即可。
 
+## 客服联调注意
+
+访客端会按 iframe 所在主机推导 API 地址（`<host>:8080`），因此**用哪个主机打开官网，就要把对应来源加进白名单**：
+
+```
+SERVICEBRIDGE_CORS_ALLOWED_ORIGINS=http://127.0.0.1:4321,http://127.0.0.1:5173,http://localhost:4321,http://localhost:5173
+```
+
+漏配时的表现是访客端弹出「连接客服系统失败，请确认后端已启动」，控制台里能看到
+`Access to fetch at http://localhost:8080/api/visitor/conversations ... blocked by CORS`。
+修改 `.env` 后需要**重启 ServiceBridge 后端**才生效。
+
 ## 已知限制（非阻塞）
 
 - `npm ci` 在 macOS 上仍可能因 npm 可选依赖 bug 漏装 rolldown 绑定；postinstall 会自动补装，失败时会打印手动命令。
