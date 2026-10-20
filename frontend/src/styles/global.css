@@ -12,8 +12,8 @@
  */
 @source "../../node_modules/@preline/accordion/index.js";
 @source "../../../node_modules/@preline/accordion/index.js";
-@import "preline/variants.css";
-@import "preline/theme.css";
+@import "@preline/accordion/variants.css";
+@import "@preline/accordion/theme.css";
 
 /* ASTREVA 品牌令牌必须最后导入，才能覆盖 Preline 的默认蓝色。 */
 @import "./themes/astreva.css";

@@ -164,7 +164,7 @@ export default function Navbar({ site, categories, products, currentPath, locale
   const viewAllCategoryLabel = productMenu.viewAllCategoryLabelTemplate.replace('{category}', hoveredCategoryInfo?.name || '');
 
   return (
-    <div className={`fixed left-0 top-0 z-50 w-full transition-all duration-300 ${isScrolled ? 'bg-white shadow-md' : 'bg-white/95 shadow-sm backdrop-blur-sm'}`}>
+    <header className={`fixed left-0 top-0 z-50 w-full transition-all duration-300 ${isScrolled ? 'bg-white shadow-md' : 'bg-white/95 shadow-sm backdrop-blur-sm'}`}>
       <div className="mx-auto flex h-24 max-w-7xl items-center justify-between px-4 md:px-7">
         <a className="flex min-w-0 items-center gap-2.5 md:gap-3" href={localHref('/')}>
           {site.logoUrl ? (
@@ -178,7 +178,7 @@ export default function Navbar({ site, categories, products, currentPath, locale
           </div>
         </a>
 
-        <div className="hidden h-full items-center gap-10 md:flex">
+        <nav className="hidden h-full items-center gap-10 md:flex" aria-label="Primary">
           {navItems.map((item) => (
             <div
               key={item.href}
@@ -270,7 +270,7 @@ export default function Navbar({ site, categories, products, currentPath, locale
               )}
             </div>
           ))}
-        </div>
+        </nav>
 
         <div className="flex items-center gap-3 md:gap-5">
           <LanguageSwitcher site={site} locale={locale} />
@@ -288,7 +288,7 @@ export default function Navbar({ site, categories, products, currentPath, locale
       </div>
 
       {mobileOpen && (
-        <div className="max-h-[calc(100vh-6rem)] overflow-y-auto border-t border-gray-100 bg-white px-7 py-5 shadow-xl md:hidden">
+        <nav className="max-h-[calc(100vh-6rem)] overflow-y-auto border-t border-gray-100 bg-white px-7 py-5 shadow-xl md:hidden" aria-label="Mobile">
           <div className="flex flex-col gap-1">
             {navItems.map((item) =>
               item.hasDropdown ? (
@@ -329,8 +329,8 @@ export default function Navbar({ site, categories, products, currentPath, locale
               </a>
             )}
           </div>
-        </div>
+        </nav>
       )}
-    </div>
+    </header>
   );
 }

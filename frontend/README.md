@@ -50,7 +50,7 @@ src/
 2. **不写死文案。** `pages/`、`components/`、`layouts/` 里出现中文或 http(s) 链接，`npm run cms:contract` 会直接失败。所有文案来自内容接口。
 3. **版式用组件。** 区块用 `Section` + `Container` + `SectionHeading`，按钮用 `Button`，图标用 `Icon`，不要重新拼 class 串。
 4. **整站圆角统一 10px**，由 `--radius-*` 统一覆写。
-5. **Preline 用法**：`global.css` 已接入 `variants.css` + `theme.css`；`BaseLayout` 里 `import 'preline'` 做自动初始化。组件按 `hs-accordion` / `hs-dropdown` 等约定写 `data-*` 与 `hs-*` 类即可。
+5. **Preline 用法**：`global.css` 导入 `@preline/accordion` 的 `variants.css` + `theme.css`；`BaseLayout` 里 `import '@preline/accordion'` 做自动初始化。新增其他组件时，按同样方式引入对应的 `@preline/<plugin>` 包。
 
 ## 运行与构建
 
@@ -81,7 +81,7 @@ CONTENT_API_URL="http://127.0.0.1:$STUB_PORT" npm run build:frontend
 ## 渲染与体积
 
 - **关键 UI 走 SSR**：`Navbar` 与 Hero 的 `VideoModal`（主 CTA 在它里面）用 `client:load`，导航和主按钮是服务端 HTML，爬虫和慢网都能拿到；`ChatWidget` / `CookieConsent` 仍用 `client:only`（它们依赖 `window` 且非关键路径）。
-- **Preline 按插件引入**：站点只用了手风琴，因此 `import '@preline/accordion'`，而不是整包 `preline`（后者会把 27 个插件全打进产物）。umbrella 包仍保留，只用于 `theme.css` / `variants.css`。
+- **Preline 按插件引入**：站点只用了手风琴，因此依赖 `@preline/accordion` 而不是整包 `preline`（后者会把 27 个插件全打进产物）。这个包同时提供 JS、`theme.css` 和 `variants.css`，所以 umbrella 依赖已经移除。
 - 构建产物（gzip）：JS 约 **75 KB**（其中 React 运行时占大头），CSS 约 **13 KB**。
 - 滚动揭示用原生 `IntersectionObserver`，无第三方动画库。
 
