@@ -86,24 +86,44 @@ export async function resolveBuildSnapshot(source = 'current') {
   }
 }
 
-export async function withSnapshotContentApi(snapshot, callback) {
-  const server = createServer((req, res) => {
+export async function withSnapshotContentApi(snapshot, callback, options = {}) {
+  const apiBase = String(options.apiBase || '').replace(/\/$/, '');
+  const server = createServer(async (req, res) => {
     // 只比对 pathname，不要比对整个 req.url：前端请求带 `?locale=zh-CN`（commit 097c4be 加的），
     // 早先这里用 `req.url !== '/site-admin-api/public-content'` 精确比较，于是快照服务回 404、
     // 构建失败、dist 被清空 → 控制台「保存并发布」100% 失败且官网直接 404。
-    let pathname = '';
+    let parsed;
     try {
-      pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+      parsed = new URL(req.url || '/', 'http://127.0.0.1');
     } catch {
-      pathname = '';
+      parsed = null;
     }
-    if (req.method !== 'GET' || pathname !== '/site-admin-api/public-content') {
+    if (req.method !== 'GET' || parsed?.pathname !== '/site-admin-api/public-content') {
       res.writeHead(404);
       res.end('not found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ data: snapshot.content, meta: { source: snapshot.version?.id === 'current' ? 'current-content' : 'active-fallback-version', version: snapshot.version } }));
+
+    const locale = parsed.searchParams.get('locale') || 'zh-CN';
+    if (locale === 'zh-CN' || !apiBase) {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ data: snapshot.content, meta: { source: snapshot.version?.id === 'current' ? 'current-content' : 'active-fallback-version', version: snapshot.version } }));
+      return;
+    }
+
+    // 快照只冻结源语言内容。其它语言必须回源查真实译文：
+    // 早先对任何 locale 都返回中文快照，构建会把中文塞进 /en/、/ar/，并生成错误的 hreflang。
+    try {
+      const upstream = await fetch(`${apiBase}/site-admin-api/public-content?locale=${encodeURIComponent(locale)}`, {
+        headers: { 'Cache-Control': 'no-store' }
+      });
+      const body = await upstream.text();
+      res.writeHead(upstream.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(body);
+    } catch (error) {
+      res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: { message: `翻译内容接口不可达：${error.message}` } }));
+    }
   });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -151,9 +171,24 @@ export async function buildFrontend(options = {}) {
   const snapshot = options.snapshotContent
     ? { content: options.snapshotContent, version: { id: 'draft-preview', name: '草稿预览' } }
     : await resolveBuildSnapshot(source);
+  let apiBase = process.env.CONTENT_API_URL || '';
+  if (!apiBase && process.env.CURRENT_CONTENT_URL) {
+    try {
+      apiBase = new URL(process.env.CURRENT_CONTENT_URL).origin;
+    } catch {
+      apiBase = '';
+    }
+  }
+  if (!apiBase) apiBase = 'http://127.0.0.1:1337';
   await withSnapshotContentApi(snapshot, (contentApiUrl) => run('npm', ['run', 'build:frontend'], {
-    env: { ...process.env, CONTENT_API_URL: contentApiUrl }
-  }));
+    env: {
+      ...process.env,
+      CONTENT_API_URL: contentApiUrl,
+      // PUBLIC_ADMIN_URL 会被烘进页面（埋点、语言推荐）。缺失时绝不能退回快照地址：
+      // 那是一个构建结束就消失的随机端口，线上埋点会 100% 丢失。
+      PUBLIC_ADMIN_URL: process.env.PUBLIC_ADMIN_URL || apiBase
+    }
+  }), { apiBase });
   const publishDir = process.env.PUBLISH_DIR || '';
   if (!publishDir) return;
   const resolvedPublishDir = path.resolve(publishDir);

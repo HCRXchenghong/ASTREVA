@@ -2363,7 +2363,16 @@ function isInsideRoot(root, file) {
 
 async function serveFile(res, file, cache = false) {
   const safeFile = path.normalize(file);
-  if (!existsSync(safeFile)) {
+  let stat;
+  try {
+    stat = await fs.stat(safeFile);
+  } catch {
+    send(res, 404, 'not found');
+    return;
+  }
+  // 目录必须在这里拦住：对目录 createReadStream 会抛 EISDIR，
+  // 未处理的 'error' 事件会直接杀掉整个后台进程（请求 /site-admin-assets/ 即可触发）。
+  if (!stat.isFile()) {
     send(res, 404, 'not found');
     return;
   }
@@ -2372,7 +2381,12 @@ async function serveFile(res, file, cache = false) {
     'Content-Type': mimeTypes[ext] || 'application/octet-stream',
     'Cache-Control': cache ? 'public, max-age=31536000, immutable' : 'no-store'
   });
-  createReadStream(safeFile).pipe(res);
+  const stream = createReadStream(safeFile);
+  stream.on('error', () => {
+    if (!res.headersSent) send(res, 500, 'read error');
+    else res.destroy();
+  });
+  stream.pipe(res);
 }
 
 /** 所有响应统一安全头：CSP 按控制台/官网/客服三个来源收敛。 */
