@@ -354,7 +354,10 @@ export type SolutionsPage = StaticPageBase<'solutions'> & {
   };
 };
 
-export type FaqPage = StaticPageBase<'faq'>;
+export type FaqPage = StaticPageBase<'faq'> & {
+  /** 后台「FAQ 区简介」，可为空。 */
+  sections?: { intro?: string };
+};
 export type WarrantyPage = StaticPageBase<'warranty'> & {
   sections: { icon: string };
 };

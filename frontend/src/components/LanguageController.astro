@@ -9,14 +9,13 @@ type Props = {
   switchPaths: Record<string, string>;
 };
 
-const { apiBase, locale, availableLocales, switchPaths } = Astro.props;
+const { apiBase, availableLocales, switchPaths } = Astro.props;
 ---
 
 <script
   is:inline
   define:vars={{
     astrevaApiBase: apiBase,
-    astrevaLocale: locale,
     astrevaLocales: availableLocales,
     astrevaLocalePaths: switchPaths
   }}
@@ -26,7 +25,8 @@ const { apiBase, locale, availableLocales, switchPaths } = Astro.props;
     const storageKey = 'astreva-site-locale';
     const available = Array.isArray(astrevaLocales) ? astrevaLocales.filter((item) => supported.includes(item)) : ['zh-CN'];
     const paths = astrevaLocalePaths && typeof astrevaLocalePaths === 'object' ? astrevaLocalePaths : {};
-    let currentLocale = supported.includes(astrevaLocale) ? astrevaLocale : 'zh-CN';
+    const htmlLocale = document.documentElement.lang;
+    let currentLocale = supported.includes(htmlLocale) ? htmlLocale : 'zh-CN';
 
     function storedLocale() {
       try { return localStorage.getItem(storageKey); }

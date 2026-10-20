@@ -106,9 +106,3 @@ export function resolveIcon(value: string | undefined | null, context?: string):
   if (byName) return byName;
   return 'circle';
 }
-
-/** True when the value is a glyph we could map (useful for tests / audits). */
-export function isMappedIcon(value: string): boolean {
-  const raw = String(value ?? '').trim();
-  return Boolean(BY_GLYPH[raw] || BY_NAME[raw.toLowerCase()]);
-}

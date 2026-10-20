@@ -1,4 +1,4 @@
-import type { Product, SiteContent, StaticPageForSlug, StaticPageSlug } from './types';
+import type { SiteContent, StaticPageForSlug, StaticPageSlug } from './types';
 import { DEFAULT_LOCALE, type SiteLocale } from './i18n';
 
 // CONTENT_API_URL 仅供静态构建进程访问内网后台，避免把容器内部地址注入浏览器代码。
@@ -101,8 +101,8 @@ async function requestContent(locale: SiteLocale): Promise<SiteContent> {
     throw new Error(`Content API request failed: ${response.status}`);
   }
   const payload = await response.json();
-  if (!payload?.data?.site || !payload?.data?.home) throw new Error('Content API returned an invalid payload');
-  return payload.data as SiteContent;
+  if (!isSiteContent(payload?.data)) throw new Error('Content API returned an invalid payload');
+  return payload.data;
 }
 
 /** Load the content model for one locale; en/ar surface 409 as TranslationNotReadyError. */

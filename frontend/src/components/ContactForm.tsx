@@ -32,7 +32,7 @@ export default function ContactForm({ form }: { form: FormCopy }) {
     return base ? `${String(base).replace(/\/$/, '')}/site-admin-api/leads` : '/site-admin-api/leads';
   }, []);
 
-  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function onSubmit(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
     if (!endpoint) {

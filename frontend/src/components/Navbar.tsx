@@ -26,14 +26,12 @@ function injectedLocales(): string[] {
   return known.length ? known : LANGUAGE_ORDER.map((item) => item.locale);
 }
 
-function LanguageSwitcher({ site }: { site: SiteSettings }) {
-  const [locale, setLocale] = useState(() => {
-    if (typeof document === 'undefined') return 'zh-CN';
-    const documentLocale = document.documentElement.lang;
-    return LANGUAGE_ORDER.some((item) => item.locale === documentLocale) ? documentLocale : 'zh-CN';
-  });
+function LanguageSwitcher({ site, locale: initialLocale }: { site: SiteSettings; locale: SiteLocale }) {
+  // Deterministic initial state so the server render and the first client render
+  // match; the real browser values are filled in by the effects below.
+  const [locale, setLocale] = useState<string>(initialLocale);
   const [open, setOpen] = useState(false);
-  const [available, setAvailable] = useState<string[]>(() => injectedLocales());
+  const [available, setAvailable] = useState<string[]>(() => LANGUAGE_ORDER.map((item) => item.locale));
   const rootRef = useRef<HTMLDivElement>(null);
   const labels: Record<string, string> = {
     'zh-CN': site.localization.chineseLabel,
@@ -43,6 +41,8 @@ function LanguageSwitcher({ site }: { site: SiteSettings }) {
 
   useEffect(() => {
     setAvailable(injectedLocales());
+    const documentLocale = document.documentElement.lang;
+    if (LANGUAGE_ORDER.some((item) => item.locale === documentLocale)) setLocale(documentLocale);
   }, []);
 
   useEffect(() => {
@@ -273,7 +273,7 @@ export default function Navbar({ site, categories, products, currentPath, locale
         </div>
 
         <div className="flex items-center gap-3 md:gap-5">
-          <LanguageSwitcher site={site} />
+          <LanguageSwitcher site={site} locale={locale} />
 
         {phone && (
           <a href={`tel:${phone}`} className="hidden items-center gap-2.5 rounded-lg bg-brand-500 px-7 py-3 text-[17px] font-medium text-white shadow-lg shadow-blue-500/30 transition-colors hover:bg-brand-700 md:flex">

@@ -246,7 +246,7 @@ const isIndexable = !/noindex/i.test(robots);
     />
     <div class="min-h-screen bg-white font-sans selection:bg-blue-200 selection:text-blue-900">
       <Navbar
-        client:only="react"
+        client:load
         site={content.site}
         categories={content.categories}
         products={content.products}
@@ -319,7 +319,10 @@ const isIndexable = !/noindex/i.test(robots);
     <!-- Preline UI runtime: opens the navbar dropdowns, accordions, tabs and modals
          through data/hs-* attributes. Bundled by Vite, never a plain script src. -->
     <script>
-      import 'preline';
+      // Only the accordion plugin is used on the site. Importing the standalone
+      // package keeps the other 26 plugins out of the bundle; the umbrella
+      // `preline` package is still used for its theme/variants CSS.
+      import '@preline/accordion';
 
       // Reveal-on-scroll: one observer for the whole page, elements unobserved
       // after their first appearance so scrolling back never re-animates.

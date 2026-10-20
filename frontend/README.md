@@ -35,7 +35,7 @@ CMS 里存的是字符（`✓ ▶ 工 滴 盾 ? ☎ ✉ ← 层 ↓ ◇`），�
 ```
 src/
   components/          业务组件（Navbar / ChatWidget / CookieConsent / ContactForm / VideoModal / InnerPageHero）
-  components/ui/       版式与基础组件（Container / Section / SectionHeading / Button / Accordion / Icon）
+  components/ui/       版式与基础组件（Container / SectionHeading / Button / Accordion / Icon）
   layouts/BaseLayout   全站骨架：SEO、hreflang、JSON-LD、埋点、页脚、Preline 运行时
   lib/                 内容契约（types / content / i18n / seo / consent / tracking / video / icons）
   styles/global.css    Tailwind v4 入口 + Preline 三件套 + 富文本兜底
@@ -58,6 +58,7 @@ src/
 npm run dev:frontend        # 开发服务器 http://127.0.0.1:4321
 npm run build:frontend      # 契约校验 + 构建到 frontend/dist
 npm run preview:frontend    # 预览构建产物
+npm run typecheck           # astro check（.astro + TS 全量类型检查）
 npm run cms:contract        # 只跑内容契约校验
 ```
 
@@ -77,12 +78,20 @@ CONTENT_API_URL="http://127.0.0.1:$STUB_PORT" npm run build:frontend
    - 因此凡是「响应式字号 + 行高」的组合，都要显式补齐断点，例如 `text-5xl leading-tight md:text-6xl md:leading-none`、`text-base leading-8 md:text-lg md:leading-7`。
 3. **默认字体栈不同**：v4 的 `font-sans` 首项是 `-apple-system`，v3 是 `ui-sans-serif`。已通过 `--font-sans` 令牌统一。
 
+## 渲染与体积
+
+- **关键 UI 走 SSR**：`Navbar` 与 Hero 的 `VideoModal`（主 CTA 在它里面）用 `client:load`，导航和主按钮是服务端 HTML，爬虫和慢网都能拿到；`ChatWidget` / `CookieConsent` 仍用 `client:only`（它们依赖 `window` 且非关键路径）。
+- **Preline 按插件引入**：站点只用了手风琴，因此 `import '@preline/accordion'`，而不是整包 `preline`（后者会把 27 个插件全打进产物）。umbrella 包仍保留，只用于 `theme.css` / `variants.css`。
+- 构建产物（gzip）：JS 约 **75 KB**（其中 React 运行时占大头），CSS 约 **13 KB**。
+- 滚动揭示用原生 `IntersectionObserver`，无第三方动画库。
+
 ## 验收记录
 
 | 项目 | 结果 |
 | --- | --- |
 | 路由 | 67 个 HTML 页面（zh-CN 根路径 / en / ar） |
 | 布局回归 | 11 条主路由 × 1440 / 390 两档视口，横向溢出 0，控制台报错 0 |
+| 类型检查 | `npm run typecheck` → **0 errors / 0 warnings / 0 hints** |
 | 内容契约 | `cms:contract` 通过（页面内零硬编码中文/链接） |
 | 全量验证 | `bash scripts/verify-all.sh` → 11/11 PASS |
 | 发布链路 | 原子发布 + `current` symlink 切换通过 |

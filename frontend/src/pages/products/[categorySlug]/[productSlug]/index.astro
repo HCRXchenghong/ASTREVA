@@ -4,13 +4,16 @@ import { getContent } from '../../../../lib/content';
 
 export async function getStaticPaths() {
   const content = await getContent('zh-CN');
-  return content.products.map((product) => ({
-    params: { categorySlug: product.categorySlug, productSlug: product.slug },
-    props: {
-      product,
-      category: content.categories.find((item) => item.slug === product.categorySlug)
+  return content.products.map((product) => {
+    const category = content.categories.find((item) => item.slug === product.categorySlug);
+    if (!category) {
+      throw new Error(`Product ${product.slug} references a missing category ${product.categorySlug}`);
     }
-  }));
+    return {
+      params: { categorySlug: product.categorySlug, productSlug: product.slug },
+      props: { product, category }
+    };
+  });
 }
 
 const content = await getContent('zh-CN');

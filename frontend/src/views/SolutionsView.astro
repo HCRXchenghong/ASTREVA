@@ -28,7 +28,6 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
       eyebrow={page.hero.eyebrow}
       title={page.hero.title}
       description={page.hero.description}
-      subtitle={page.hero.subtitle}
       backgroundImage={page.hero.backgroundImage}
       backgroundVideo={page.hero.backgroundVideo}
     />
@@ -58,7 +57,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
                         class="h-full w-full border-0"
                         allow="autoplay; encrypted-media; picture-in-picture; web-share"
                         allowfullscreen
-                        referrerPolicy="strict-origin-when-cross-origin"
+                        referrerpolicy="strict-origin-when-cross-origin"
                       ></iframe>
                     ) : (
                       <video src={section.video.url} poster={section.videoImage || section.image} controls playsinline preload="metadata" class="h-full w-full object-cover"></video>
@@ -175,7 +174,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
   <script>
     const solutionNavLinks = Array.from(document.querySelectorAll('[data-solution-nav]'));
     const solutionContentSections = Array.from(document.querySelectorAll('section[id^="sol-sec-"]'));
-    const setActiveSolutionNav = (id) => {
+    const setActiveSolutionNav = (id: string) => {
       solutionNavLinks.forEach((link) => {
         link.classList.toggle('active', link.getAttribute('href') === `#${id}`);
       });
@@ -219,7 +218,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
       opacity: 0.12;
     }
     .section-number {
-      color: rgba(10, 77, 140, 0.05);
+      color: color-mix(in srgb, var(--color-brand-800) 5%, transparent);
       font-size: 8rem;
       font-weight: 800;
       left: -1rem;
@@ -235,7 +234,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
     .rail-card,
     .advisor-card {
       background: rgba(255, 255, 255, 0.96);
-      border: 1px solid #e4edf7;
+      border: 1px solid var(--color-line-100);
       border-radius: var(--radius-ui);
       box-shadow: 0 20px 45px rgba(15, 23, 42, 0.06);
     }
@@ -243,7 +242,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
       padding: 18px 14px;
     }
     .rail-eyebrow {
-      color: #94a3b8;
+      color: var(--color-ink-400);
       font-size: 12px;
       font-weight: 900;
       letter-spacing: 0.08em;
@@ -252,7 +251,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
     .rail-link {
       align-items: center;
       border-radius: var(--radius-ui);
-      color: #64748b;
+      color: var(--color-ink-500);
       display: grid;
       font-size: 14px;
       gap: 10px;
@@ -276,7 +275,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
       width: 3px;
     }
     .rail-link span {
-      color: #94a3b8;
+      color: var(--color-ink-400);
       font-size: 11px;
       font-weight: 900;
       letter-spacing: 0;
@@ -286,7 +285,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
     }
     .rail-link:hover,
     .rail-link.active {
-      background: #f0f7ff;
+      background: var(--color-brand-50);
       color: var(--color-brand-800);
       transform: translateX(2px);
     }
@@ -301,7 +300,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
       padding: 18px;
     }
     .advisor-title {
-      color: #0f172a;
+      color: var(--color-ink-900);
       font-size: 14px;
       font-weight: 900;
       margin-bottom: 14px;
@@ -321,7 +320,7 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
       background: var(--color-brand-500);
       color: #fff;
       margin-bottom: 10px;
-      box-shadow: 0 10px 20px rgba(10, 102, 194, 0.18);
+      box-shadow: 0 10px 20px color-mix(in srgb, var(--color-brand-500) 18%, transparent);
     }
     .advisor-primary:hover {
       background: var(--color-brand-700);
@@ -329,11 +328,11 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
     }
     .advisor-secondary {
       background: #fff;
-      border: 1px solid #d9e2ec;
-      color: #0f172a;
+      border: 1px solid var(--color-line-200);
+      color: var(--color-ink-900);
     }
     .advisor-secondary:hover {
-      border-color: rgba(10, 102, 194, 0.45);
+      border-color: color-mix(in srgb, var(--color-brand-500) 45%, transparent);
       color: var(--color-brand-800);
     }
     .video-placeholder {

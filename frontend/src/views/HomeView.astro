@@ -70,7 +70,7 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
         </p>
         <div class="mt-8 md:mt-12">
           <VideoModal
-            client:only="react"
+            client:load
             primaryLabel={home.hero.primaryCta}
             primaryHref={localHref(home.hero.primaryHref)}
             secondaryLabel={home.hero.secondaryCta}

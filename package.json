@@ -32,7 +32,8 @@
     "build": "npm run build:frontend",
     "rebuild:webhook": "node scripts/rebuild-webhook.mjs",
     "servicebridge:backend": "cd servicebridge/backend && go run ./cmd/server",
-    "servicebridge:web": "cd servicebridge/apps/user-web && python3 -m http.server 5173"
+    "servicebridge:web": "cd servicebridge/apps/user-web && python3 -m http.server 5173",
+    "typecheck": "npm --workspace frontend run typecheck"
   },
   "devDependencies": {
     "playwright-core": "1.62.1"
