@@ -32,10 +32,16 @@ export default {
       meta: { title: 'AI 管理', locale: 'AI 管理', requiresAuth: true },
     },
     {
+      // 供应商与能力勾选已并入 AI 管理页签，这里只保留旧路径的重定向，不再占侧边栏。
       path: 'providers',
       name: 'AiProviders',
-      component: () => import('@/views/ai/providers.vue'),
-      meta: { title: '模型供应商', locale: '模型供应商', requiresAuth: true },
+      redirect: '/ai/manage?tab=providers',
+      meta: {
+        title: '模型供应商',
+        locale: '模型供应商',
+        requiresAuth: true,
+        hideInMenu: true,
+      },
     },
     {
       path: 'knowledge',

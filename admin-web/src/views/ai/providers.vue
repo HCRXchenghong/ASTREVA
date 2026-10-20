@@ -6,7 +6,9 @@
     </template>
     <a-alert class="tips" type="info">
       统一维护文本 / 生图模型的上游供应商，密钥加密入库、只回显末四位。
-      每项能力用哪个供应商由「AI 管理 → 能力绑定」页签决定。
+      <strong>直接在本页勾选每家供应商负责的能力</strong>：同一家可以同时勾选接待、翻译、SEO；
+      同一能力勾选另一家会切换过去。需要「同一能力多供应商按优先级故障转移」时，
+      再去「AI 管理 → 故障转移链」配置，本页的勾选会作为兜底。
     </a-alert>
     <a-table :data="providers" :loading="loading" :pagination="false" row-key="id">
       <template #columns>
@@ -44,6 +46,23 @@
             <a-tag :color="record.enabled ? 'green' : 'gray'">
               {{ record.enabled ? '启用' : '禁用' }}
             </a-tag>
+          </template>
+        </a-table-column>
+        <a-table-column title="负责能力" :width="330">
+          <template #cell="{ record }">
+            <a-spin :loading="capabilitySavingId === record.id" :size="14">
+              <a-checkbox-group
+                :model-value="capabilitiesOf(record.id)"
+                :options="capabilityOptions(record)"
+                @change="(value: any) => handleCapabilities(record, value)"
+              />
+            </a-spin>
+            <div v-if="record.enabled === false" class="field-hint">
+              供应商已禁用，勾选不会生效
+            </div>
+            <div v-else-if="chainHint(record.id)" class="field-hint">
+              {{ chainHint(record.id) }}
+            </div>
           </template>
         </a-table-column>
         <a-table-column title="操作" :width="260">
@@ -165,9 +184,12 @@
   import {
     createAiProvider,
     deleteAiProvider,
+    fetchAiBindingTargets,
+    fetchAiBindings,
     fetchAiProviderModels,
     fetchAiProviders,
     testAiProvider,
+    updateAiBindings,
     updateAiProvider,
   } from '@/api/admin';
 
@@ -188,7 +210,19 @@
     images: 'Images',
   };
 
+  // 能力顺序与服务端 domain.AICapabilities() 一致。
+  const CAPABILITIES = [
+    { capability: 'reception', label: '接待', kind: 'text' },
+    { capability: 'translation', label: '翻译', kind: 'text' },
+    { capability: 'detection', label: '检测', kind: 'text' },
+    { capability: 'seo', label: 'SEO', kind: 'text' },
+    { capability: 'image', label: '生图', kind: 'image' },
+  ] as const;
+
   const providers = ref<any[]>([]);
+  const bindings = ref<any[]>([]);
+  const bindingTargets = ref<any[]>([]);
+  const capabilitySavingId = ref('');
   const loading = ref(false);
   const saving = ref(false);
   const editorVisible = ref(false);
@@ -234,6 +268,77 @@
     Boolean(form.name.trim() && form.base_url.trim() && form.api_type)
   );
 
+  function capabilitiesOf(providerId: string): string[] {
+    return bindings.value
+      .filter((binding) => binding.provider_id && binding.provider_id === providerId)
+      .map((binding) => binding.capability);
+  }
+
+  // 类型不匹配的能力直接置灰：生图供应商只能负责生图，文本供应商不能负责生图。
+  function capabilityOptions(record: any) {
+    return CAPABILITIES.map((item) => ({
+      label: item.label,
+      value: item.capability,
+      disabled: item.kind !== (record?.kind || 'text'),
+    }));
+  }
+
+  // 该供应商参与的能力里，哪些已经配置了故障转移链（此时勾选只是兜底）。
+  function chainHint(providerId: string): string {
+    const chained = capabilitiesOf(providerId).filter((capability) =>
+      bindingTargets.value.some((target) => target.capability === capability)
+    );
+    if (!chained.length) return '';
+    const labels = chained.map(
+      (capability) =>
+        CAPABILITIES.find((item) => item.capability === capability)?.label || capability
+    );
+    return `已配置故障转移链：${labels.join('、')}（这里的勾选作为兜底）`;
+  }
+
+  async function handleCapabilities(record: any, values: any) {
+    if (!record?.id) return;
+    const selected = new Set<string>((values || []).map((value: any) => String(value)));
+    // 以「能力」为维度重建：勾选 = 指向本供应商；取消 = 显式写空 provider 解绑。
+    // 服务端 PUT 是 upsert 语义（只增不删），省略某项不会删除旧绑定，必须显式清空。
+    const next = CAPABILITIES.flatMap((item) => {
+      const existing = bindings.value.find(
+        (binding) => binding.capability === item.capability && binding.provider_id
+      );
+      if (selected.has(item.capability)) {
+        return [
+          {
+            capability: item.capability,
+            provider_id: record.id,
+            model: String(record.default_model || ''),
+          },
+        ];
+      }
+      if (existing && existing.provider_id === record.id) {
+        return [{ capability: item.capability, provider_id: '', model: '' }];
+      }
+      return existing ? [existing] : [];
+    });
+
+    capabilitySavingId.value = record.id;
+    try {
+      const result = await updateAiBindings(next);
+      bindings.value = result?.bindings || next;
+      Message.success('能力绑定已更新');
+      const chained = [...selected].filter((capability) =>
+        bindingTargets.value.some((target) => target.capability === capability)
+      );
+      if (chained.length) {
+        Message.info('该能力已配置故障转移链，当前勾选作为兜底供应商');
+      }
+    } catch (error: any) {
+      Message.error(`保存能力失败：${errorMessage(error)}`);
+      await load();
+    } finally {
+      capabilitySavingId.value = '';
+    }
+  }
+
   function kindLabel(kind: string) {
     return KIND_OPTIONS.find((item) => item.value === kind)?.label || kind || '-';
   }
@@ -244,10 +349,16 @@
   async function load() {
     loading.value = true;
     try {
-      const payload = await fetchAiProviders();
-      providers.value = [...(payload.providers || [])].sort(
+      const [providerPayload, bindingPayload, targetPayload] = await Promise.all([
+        fetchAiProviders(),
+        fetchAiBindings().catch(() => ({ bindings: [] })),
+        fetchAiBindingTargets().catch(() => ({ targets: [] })),
+      ]);
+      providers.value = [...(providerPayload.providers || [])].sort(
         (a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0)
       );
+      bindings.value = bindingPayload?.bindings || [];
+      bindingTargets.value = targetPayload?.targets || [];
     } finally {
       loading.value = false;
     }

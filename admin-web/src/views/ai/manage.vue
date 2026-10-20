@@ -3,11 +3,14 @@
     <template #title>AI 管理</template>
     <template #extra>
       <a-typography-text type="secondary" class="head-hint">
-        各能力的绑定与参数、故障转移候选链、限额都在下面的页签里；模型供应商与知识库见左侧子导航。
+        供应商与能力勾选、各能力参数、故障转移链、限额都在下面的页签里；知识库见左侧子导航。
       </a-typography-text>
     </template>
 
     <a-tabs v-model:active-key="activeTab" lazy-load type="line" size="large">
+      <a-tab-pane key="providers" title="供应商与能力">
+        <AiProvidersPanel />
+      </a-tab-pane>
       <a-tab-pane key="reception" title="接待 AI">
         <AiReceptionPanel />
       </a-tab-pane>
@@ -20,7 +23,7 @@
       <a-tab-pane key="image" title="AI 生图">
         <AiImagePanel />
       </a-tab-pane>
-      <a-tab-pane key="bindings" title="能力绑定">
+      <a-tab-pane key="bindings" title="故障转移链（高级）">
         <AiBindingsPanel />
       </a-tab-pane>
       <a-tab-pane key="limits" title="限额">
@@ -33,6 +36,7 @@
 <script lang="ts" setup>
   import { ref, watch } from 'vue';
   import { useRoute } from 'vue-router';
+  import AiProvidersPanel from './providers.vue';
   import AiReceptionPanel from './reception.vue';
   import AiTranslationPanel from './translation.vue';
   import AiSeoPanel from './seo.vue';
@@ -41,7 +45,7 @@
   import AiLimitsPanel from './limits.vue';
 
   // 页签顺序与左侧子导航一致；能力参数按「每个能力一份配置」组织。
-  const TAB_KEYS = ['reception', 'translation', 'seo', 'image', 'bindings', 'limits'];
+  const TAB_KEYS = ['providers', 'reception', 'translation', 'seo', 'image', 'bindings', 'limits'];
 
   const route = useRoute();
 
@@ -56,7 +60,7 @@
     return segment !== 'manage' && TAB_KEYS.includes(segment) ? segment : current;
   }
 
-  const activeTab = ref(tabFromRoute('reception'));
+  const activeTab = ref(tabFromRoute('providers'));
 
   watch(
     () => route.fullPath,
