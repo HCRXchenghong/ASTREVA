@@ -193,7 +193,7 @@ export default function ChatWidget({
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-[100] flex flex-col items-end">
+    <div data-chat-launcher className="fixed bottom-6 right-6 z-[100] flex flex-col items-end">
       {isOpen && (
         <div className="relative w-[360px] max-w-[calc(100vw-32px)] h-[620px] max-h-[calc(100vh-112px)] bg-white rounded-2xl shadow-2xl mb-4 overflow-hidden border border-gray-100">
           <iframe

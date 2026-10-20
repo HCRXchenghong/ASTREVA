@@ -152,3 +152,21 @@ body,
   color: var(--color-ink-700);
   line-height: 1.9;
 }
+
+/*
+ * Cookie 横幅是 z-120 的全宽固定条，会完全盖住 z-100 的客服入口。
+ * 横幅出现时把入口抬高（横幅消失后自动回到原位）。
+ */
+[data-chat-launcher] {
+  transition: bottom 0.25s ease;
+}
+
+body:has(#cookie-consent) [data-chat-launcher] {
+  bottom: 9rem;
+}
+
+@media (max-width: 767px) {
+  body:has(#cookie-consent) [data-chat-launcher] {
+    bottom: 15rem;
+  }
+}
