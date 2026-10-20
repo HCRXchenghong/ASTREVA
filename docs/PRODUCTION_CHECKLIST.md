@@ -74,6 +74,29 @@ SERVICEBRIDGE_CORS_ALLOWED_ORIGINS=http://127.0.0.1:4321,http://127.0.0.1:5173,h
 `Access to fetch at http://localhost:8080/api/visitor/conversations ... blocked by CORS`。
 修改 `.env` 后需要**重启 ServiceBridge 后端**才生效。
 
+## 客服后端的数据库指向
+
+`servicebridge/backend` 读取的是 `DATABASE_URL`，不是 `SERVICEBRIDGE_DATABASE_URL`。
+`scripts/run-local-stack.sh` 已经用引擎库覆盖了它，但**手动启动时**如果直接
+`source .env`，`DATABASE_URL` 指向的是 CMS 库（`astreva_cms`），后端会在那里建一套
+引擎表——表现就是「AI 供应商、历史会话全都消失了」。
+
+手动启动请显式指定：
+
+```bash
+DATABASE_URL="postgres://…/astreva_engine?sslmode=disable" go run ./cmd/server
+```
+
+## AI 能力接入（客服接待）
+
+1. 后台创建/更新供应商：`base_url`、`api_key`、模型列表、默认模型。
+2. 把 `reception` 能力绑定到该供应商（同一能力可挂多个供应商，按优先级故障转移）。
+3. 推理类模型（如 MiMo v2.6）会先消耗 reasoning token，必须把
+   `max_output_tokens` 提到 **≥800**、`timeout_seconds` 提到 **≥60**，
+   否则会出现「回复为空」或「请求超时」。
+4. 联调：`POST /api/admin/ai-settings/test` 用当前配置发一条真实请求；
+   `GET /api/admin/ai-providers/health` 看熔断状态与连续失败次数。
+
 ## 已知限制（非阻塞）
 
 - `npm ci` 在 macOS 上仍可能因 npm 可选依赖 bug 漏装 rolldown 绑定；postinstall 会自动补装，失败时会打印手动命令。
