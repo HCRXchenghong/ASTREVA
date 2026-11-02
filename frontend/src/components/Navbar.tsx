@@ -3,7 +3,6 @@ import {
   ArrowRight,
   ArrowUpRight,
   BookOpen,
-  Box,
   ChevronDown,
   ChevronRight,
   FileText,
@@ -13,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { Category, Product, SiteSettings } from '../lib/types';
 import { DEFAULT_LOCALE, isSiteLocale, localizeHref, type SiteLocale } from '../lib/i18n';
+import { productImage } from '../lib/default-images';
 
 type Props = {
   site: SiteSettings;
@@ -20,6 +20,7 @@ type Props = {
   products: Product[];
   currentPath: string;
   locale?: SiteLocale;
+  availableLocales: SiteLocale[];
 };
 
 const LANGUAGE_ORDER = [
@@ -28,21 +29,12 @@ const LANGUAGE_ORDER = [
   { locale: 'zh-CN' as const, flag: '/flags/cn.svg' }
 ];
 
-/** Locales that actually have built routes, injected by BaseLayout. */
-function injectedLocales(): string[] {
-  if (typeof window === 'undefined') return LANGUAGE_ORDER.map((item) => item.locale);
-  const injected = (window as unknown as { __ASTREVA_LOCALES__?: unknown }).__ASTREVA_LOCALES__;
-  if (!Array.isArray(injected)) return LANGUAGE_ORDER.map((item) => item.locale);
-  const known = injected.filter((item): item is string => typeof item === 'string');
-  return known.length ? known : LANGUAGE_ORDER.map((item) => item.locale);
-}
-
-function LanguageSwitcher({ site, locale: initialLocale }: { site: SiteSettings; locale: SiteLocale }) {
+function LanguageSwitcher({ site, locale: initialLocale, initialAvailable }: { site: SiteSettings; locale: SiteLocale; initialAvailable: SiteLocale[] }) {
   // Deterministic initial state so the server render and the first client render
   // match; the real browser values are filled in by the effects below.
   const [locale, setLocale] = useState<string>(initialLocale);
   const [open, setOpen] = useState(false);
-  const [available, setAvailable] = useState<string[]>(() => LANGUAGE_ORDER.map((item) => item.locale));
+  const [available, setAvailable] = useState<SiteLocale[]>(initialAvailable);
   const rootRef = useRef<HTMLDivElement>(null);
   const labels: Record<string, string> = {
     'zh-CN': site.localization.chineseLabel,
@@ -51,10 +43,42 @@ function LanguageSwitcher({ site, locale: initialLocale }: { site: SiteSettings;
   };
 
   useEffect(() => {
-    setAvailable(injectedLocales());
     const documentLocale = document.documentElement.lang;
     if (LANGUAGE_ORDER.some((item) => item.locale === documentLocale)) setLocale(documentLocale);
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch(`/language-availability.json?updated=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok) return;
+        const payload: unknown = await response.json();
+        if (!payload || typeof payload !== 'object' || !('locales' in payload)) return;
+        const locales = (payload as { locales: unknown }).locales;
+        if (!Array.isArray(locales)) return;
+        const next = LANGUAGE_ORDER.map((item) => item.locale).filter((item) => locales.includes(item));
+        if (mounted && next.includes('zh-CN')) {
+          if (!next.includes(initialLocale)) {
+            const basePath = window.location.pathname.replace(/^\/(?:en|ar)(?=\/|$)/, '') || '/';
+            window.location.replace(basePath);
+            return;
+          }
+          setAvailable(next);
+        }
+      } catch {
+        // Keep the availability baked into this page while the site is unreachable.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 5000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [initialLocale]);
 
   useEffect(() => {
     const onLocale = (event: Event) => setLocale(String((event as CustomEvent).detail || 'zh-CN'));
@@ -84,20 +108,24 @@ function LanguageSwitcher({ site, locale: initialLocale }: { site: SiteSettings;
   const current = options.find((item) => item.locale === locale) || options[options.length - 1] || LANGUAGE_ORDER[2];
   const others = options.filter((item) => item.locale !== current.locale);
 
+  useEffect(() => {
+    if (!others.length) setOpen(false);
+  }, [others.length]);
+
   return (
     <div ref={rootRef} className="relative" data-lang-switch-root>
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => { if (others.length) setOpen((value) => !value); }}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={labels[current.locale]}
         className="flex h-11 items-center gap-1.5 rounded-xl bg-white px-2.5 shadow-[0_4px_14px_rgba(15,23,42,0.14)] transition-transform hover:scale-105"
       >
         <img src={current.flag} alt="" className="h-6 w-8 rounded-[3px]" />
-        <ChevronDown size={15} className={'text-brand-500 transition-transform ' + (open ? 'rotate-180' : '')} />
+        {others.length > 0 && <ChevronDown size={15} className={'text-brand-500 transition-transform ' + (open ? 'rotate-180' : '')} />}
       </button>
-      {open && (
+      {open && others.length > 0 && (
         <div className="absolute right-0 top-[52px] z-50 flex flex-col gap-1.5 rounded-xl border border-gray-200 bg-white p-2 shadow-[0_12px_32px_rgba(15,23,42,0.16)]">
           {others.map((item) => (
             <button
@@ -105,11 +133,11 @@ function LanguageSwitcher({ site, locale: initialLocale }: { site: SiteSettings;
               type="button"
               title={labels[item.locale]}
               aria-label={labels[item.locale]}
-              onClick={() => {
-                setOpen(false);
-                const api = (window as unknown as { AstrevaLanguage?: { switch?: (locale: string) => void } })
+              onClick={async () => {
+                const api = (window as unknown as { AstrevaLanguage?: { switch?: (locale: string) => Promise<boolean> } })
                   .AstrevaLanguage;
-                if (api && api.switch) api.switch(item.locale);
+                const switched = await api?.switch?.(item.locale);
+                if (switched) setOpen(false);
               }}
               className="grid h-10 w-12 place-items-center rounded-lg transition-colors hover:bg-gray-100"
             >
@@ -122,7 +150,7 @@ function LanguageSwitcher({ site, locale: initialLocale }: { site: SiteSettings;
   );
 }
 
-export default function Navbar({ site, categories, products, currentPath, locale: localeProp }: Props) {
+export default function Navbar({ site, categories, products, currentPath, locale: localeProp, availableLocales }: Props) {
   const locale: SiteLocale = isSiteLocale(localeProp) ? localeProp : DEFAULT_LOCALE;
   // An empty site.phone must not render a tel: CTA: it would show a blank blue
   // button in the header (and another one in the mobile menu).
@@ -289,20 +317,11 @@ export default function Navbar({ site, categories, products, currentPath, locale
                           href={localHref(`/products/${product.categorySlug}/${product.slug}/`)}
                           className="group flex min-w-0 items-center gap-4 px-4 py-4 first:pl-0 last:pr-0"
                         >
-                          {product.coverImage ? (
-                            <img
-                              src={product.coverImage}
-                              alt=""
-                              className="h-16 w-20 shrink-0 rounded-lg object-cover"
-                            />
-                          ) : (
-                            <span
-                              aria-hidden="true"
-                              className="grid h-16 w-20 shrink-0 place-items-center rounded-lg bg-linear-to-br from-slate-100 to-slate-300 text-slate-400"
-                            >
-                              <Box size={22} strokeWidth={1.4} />
-                            </span>
-                          )}
+                          <img
+                            src={productImage(product)}
+                            alt=""
+                            className="h-16 w-20 shrink-0 rounded-lg object-cover"
+                          />
                           <span className="min-w-0 flex-1 text-[15px] font-black leading-6 text-ink-700 transition-colors group-hover:text-brand-600">
                             {product.name}
                           </span>
@@ -343,7 +362,7 @@ export default function Navbar({ site, categories, products, currentPath, locale
         </nav>
 
         <div className="flex items-center gap-3 md:gap-5">
-          <LanguageSwitcher site={site} locale={locale} />
+          <LanguageSwitcher site={site} locale={locale} initialAvailable={availableLocales} />
 
           {phone && (
             <a

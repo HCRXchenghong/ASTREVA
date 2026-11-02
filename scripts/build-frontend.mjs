@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import { createServer } from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveSiteOrigin } from './site-origin.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_FALLBACK_URL = 'http://127.0.0.1:1337/site-admin-api/public-fallback-content';
@@ -44,7 +46,7 @@ export async function verifyActiveFallbackVersion() {
     const payload = await response.json();
     if (!isSiteContent(payload?.data?.content)) throw new Error('响应中没有有效的站点内容');
     console.log(`[build] 将使用降级版本构建官网：${payload.data.version?.name || payload.data.version?.id || '未命名版本'}`);
-    return payload.data;
+    return { ...payload.data, siteOrigin: payload.meta?.siteOrigin || '' };
   } catch (error) {
     throw new Error(`无法读取当前降级版本：${error.message}`);
   } finally {
@@ -66,7 +68,7 @@ export async function readCurrentContent() {
     const payload = await response.json();
     if (!isSiteContent(payload?.data)) throw new Error('响应中没有有效的站点内容');
     console.log('[build] 将使用当前已保存内容构建官网。');
-    return { content: payload.data, version: { id: 'current', name: '当前内容' } };
+    return { content: payload.data, version: { id: 'current', name: '当前内容' }, siteOrigin: payload.meta?.siteOrigin || '' };
   } catch (error) {
     throw new Error(`无法读取当前内容：${error.message}`);
   } finally {
@@ -157,12 +159,19 @@ async function publishBuild(distDir, publishDir) {
   console.log(`[build] 已原子发布官网静态文件：${releaseName}`);
 }
 
-/** 把草稿预览产物写入 publishDir/preview，不影响 current 正式发布。 */
+/**
+ * 把草稿预览产物写入 publishDir/preview/<随机 token>/，不影响 current 正式发布。
+ * 固定 `/__preview/` 路径会让未发布草稿被任意人猜中；每次构建使用不可预测的 token。
+ */
 async function publishPreview(distDir, publishDir) {
-  const previewDir = path.join(publishDir, 'preview');
-  await fs.rm(previewDir, { recursive: true, force: true });
+  const previewRoot = path.join(publishDir, 'preview');
+  const token = crypto.randomBytes(16).toString('hex');
+  const previewDir = path.join(previewRoot, token);
+  await fs.rm(previewRoot, { recursive: true, force: true });
+  await fs.mkdir(previewRoot, { recursive: true });
   await fs.cp(distDir, previewDir, { recursive: true });
-  console.log('[build] 已生成草稿预览产物：preview/');
+  console.log(`[build] 已生成草稿预览产物：preview/${token}/`);
+  return token;
 }
 
 export async function buildFrontend(options = {}) {
@@ -171,6 +180,10 @@ export async function buildFrontend(options = {}) {
   const snapshot = options.snapshotContent
     ? { content: options.snapshotContent, version: { id: 'draft-preview', name: '草稿预览' } }
     : await resolveBuildSnapshot(source);
+  const savedSiteOrigin = snapshot.siteOrigin || (isPreview ? (await readCurrentContent()).siteOrigin : '');
+  const siteOrigin = savedSiteOrigin
+    ? resolveSiteOrigin({ SITE_ORIGIN_OVERRIDE: savedSiteOrigin })
+    : resolveSiteOrigin(process.env);
   let apiBase = process.env.CONTENT_API_URL || '';
   if (!apiBase && process.env.CURRENT_CONTENT_URL) {
     try {
@@ -183,6 +196,8 @@ export async function buildFrontend(options = {}) {
   await withSnapshotContentApi(snapshot, (contentApiUrl) => run('npm', ['run', 'build:frontend'], {
     env: {
       ...process.env,
+      SITE_ORIGIN_OVERRIDE: siteOrigin,
+      PUBLIC_SITE_URL: siteOrigin,
       CONTENT_API_URL: contentApiUrl,
       // PUBLIC_ADMIN_URL 会被烘进页面（埋点、语言推荐）。缺失时绝不能退回快照地址：
       // 那是一个构建结束就消失的随机端口，线上埋点会 100% 丢失。
@@ -190,11 +205,15 @@ export async function buildFrontend(options = {}) {
     }
   }), { apiBase });
   const publishDir = process.env.PUBLISH_DIR || '';
-  if (!publishDir) return;
+  if (!publishDir) return {};
   const resolvedPublishDir = path.resolve(publishDir);
   const distDir = path.join(ROOT, 'frontend', 'dist');
-  if (isPreview) await publishPreview(distDir, resolvedPublishDir);
-  else await publishBuild(distDir, resolvedPublishDir);
+  if (isPreview) {
+    const previewToken = await publishPreview(distDir, resolvedPublishDir);
+    return { previewToken };
+  }
+  await publishBuild(distDir, resolvedPublishDir);
+  return {};
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

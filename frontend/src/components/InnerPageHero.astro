@@ -1,5 +1,12 @@
 ---
+import MediaCarousel from './MediaCarousel';
+import { DEFAULT_PAGE_HERO_IMAGES, DEFAULT_SCENE_IMAGES, pageHeroImages, resolveImage } from '../lib/default-images';
+import { mediaItemsFor } from '../lib/media';
+import type { MediaItem } from '../lib/types';
+import type { SiteLocale } from '../lib/i18n';
+
 type Props = {
+  locale: SiteLocale;
   id: string;
   eyebrow?: string;
   title: string;
@@ -7,48 +14,34 @@ type Props = {
   subtitle?: string;
   backgroundImage?: string;
   backgroundVideo?: string;
+  mediaItems?: MediaItem[];
+  defaultImages?: string[];
 };
 
-const { id, eyebrow, title, description, subtitle, backgroundImage, backgroundVideo } = Astro.props;
+const { locale, id, eyebrow, title, description, subtitle, backgroundImage, backgroundVideo, mediaItems, defaultImages } = Astro.props;
 const titleLines = String(title || '').split('\n');
-const hasMedia = Boolean(backgroundVideo || backgroundImage);
+const page = id.replace(/-hero$/, '');
+const heroImage = resolveImage(backgroundImage, DEFAULT_PAGE_HERO_IMAGES[page] || DEFAULT_SCENE_IMAGES.homeHero);
+const heroMedia = mediaItemsFor(mediaItems, { image: backgroundImage, video: backgroundVideo }, defaultImages || pageHeroImages(page), title, 'muted-autoplay');
+const hasMedia = heroMedia.length > 0;
 ---
 
 <section
   id={id}
   class="relative flex min-h-[360px] items-end overflow-hidden bg-navy-950 text-white scroll-mt-24 md:min-h-[440px]"
 >
-  {
-    backgroundVideo ? (
-      <video
-        class="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-80"
-        autoplay
-        muted
-        loop
-        playsinline
-        preload="auto"
-        aria-hidden="true"
-      >
-        <source src={backgroundVideo} type="video/mp4" />
-      </video>
-    ) : backgroundImage ? (
-      <div
-        class="absolute inset-0 bg-cover bg-center opacity-60"
-        style={`background-image:url('${backgroundImage}')`}
-      />
-    ) : null
-  }
+  <MediaCarousel locale={locale} client:load items={heroMedia} alt={title} background priority fallbackImage={heroImage} className="opacity-80" />
   <div
     class:list={[
-      'absolute inset-0',
+      'pointer-events-none absolute inset-0',
       hasMedia
         ? 'bg-linear-to-r from-brand-950/95 via-brand-950/70 to-navy-950/30'
         : 'bg-linear-to-br from-navy-950 via-brand-900 to-navy-900'
     ]}
   >
   </div>
-  <div class="absolute inset-0 bg-navy-950/35"></div>
-  <div class="blueprint-grid absolute inset-0" aria-hidden="true"></div>
+  <div class="pointer-events-none absolute inset-0 bg-navy-950/35"></div>
+  <div class="blueprint-grid pointer-events-none absolute inset-0" aria-hidden="true"></div>
   <div class="absolute inset-x-0 bottom-0 h-px bg-white/15"></div>
 
   <div class="relative z-10 mx-auto w-full max-w-7xl px-6 pb-14 pt-12 md:pb-16 md:pt-16">

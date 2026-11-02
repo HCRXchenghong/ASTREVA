@@ -151,8 +151,8 @@
               <template #title>AI SEO 生成</template>
               <p class="hint">
                 根据当前已保存的网站内容，为全站、首页、产品中心、服务页、全部品类、产品和静态页生成中文
-                SEO，并自动排队生成英文与阿拉伯语版本。现有分享图会保留，空白分享图自动使用页面主图或
-                ASTREVA Logo。
+                SEO；英文和阿拉伯语正文翻译完成后，会由 SEO AI 按各自语言独立生成 SEO。所有版本生成成功后自动构建前台。
+                现有分享图会保留，空白分享图自动使用页面主图或 ASTREVA Logo。
               </p>
               <a-space direction="vertical">
                 <a-button
@@ -161,7 +161,7 @@
                   :disabled="dirty || saving"
                   @click="runSeo"
                 >
-                  一键 AI 生成三语 SEO
+                  一键 AI 生成三语独立 SEO
                 </a-button>
                 <a-typography-text v-if="dirty" type="warning">
                   当前还有未保存修改，请先保存后再生成 SEO。
@@ -240,6 +240,7 @@
     fetchContentBootstrap,
     fetchSiteStatus,
     generateSeo,
+    grantPreviewAccess,
     requestDraftPreview,
     requestPublish,
     saveContentSection,
@@ -635,7 +636,7 @@
 
   function openPublished() {
     const path = MODULE_PREVIEW_PATHS[activeModule.value] || '/';
-    window.open(buildPublishedUrl(path), '_blank');
+    window.open(buildPublishedUrl(path), '_blank', 'noopener,noreferrer');
   }
 
   async function previewDraft() {
@@ -645,7 +646,10 @@
       await requestDraftPreview(cloneDeep(content.value));
       const finalStatus = await waitForBuild();
       const draftUrl = finalStatus?.preview?.draftUrl || status.value?.preview?.draftUrl || '';
-      if (draftUrl) window.open(draftUrl, '_blank');
+      if (draftUrl) {
+        await grantPreviewAccess();
+        window.open(draftUrl, '_blank', 'noopener,noreferrer');
+      }
       Message.success('草稿预览构建完成，已在新窗口打开');
     } catch (error: any) {
       showBuildFailure(error?.message || '草稿预览构建失败');
@@ -673,7 +677,7 @@
           const payload = await generateSeo(revision.value);
           applyBootstrap(payload);
           const count = Number(payload.meta?.generatedCount || 0);
-          seoMessage.value = `已生成并保存 ${count} 个页面的中文 SEO；英文和阿拉伯语已进入自动翻译队列。`;
+          seoMessage.value = `已保存 ${count} 个页面的中文 SEO；英文和阿拉伯语正在翻译正文，完成后会分别生成本语言 SEO 并自动构建前台。`;
           lastSavedAt.value = new Date().toISOString();
           Message.success(`AI SEO 生成完成，共 ${count} 个页面`);
         } catch (error: any) {

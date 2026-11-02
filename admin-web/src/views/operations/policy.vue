@@ -165,7 +165,7 @@
             style="width: 200px"
           />
           <template #extra>
-            访客与客服双方静默达到该分钟数后自动结束会话；超期的会话会从排队与告警中移除。0 表示不自动结束。
+            会话达到该静默时长且没有新消息后自动结束，包括等待分配的会话。0 表示不自动结束。
           </template>
         </a-form-item>
       </a-form>
@@ -350,7 +350,7 @@
     sla_first_response_seconds: 0,
     sla_idle_minutes: 0,
     sla_idle_action: 'ai',
-    auto_close_idle_minutes: 0,
+    auto_close_idle_minutes: 30,
     ai_keyword_priority: 'keyword_first',
     unattended_enabled: true,
     unattended_reply: '',

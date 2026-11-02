@@ -144,8 +144,13 @@ function ipv6Hextets(address) {
 }
 
 /** 当日轮换的盐：以统计日（看板时区）为输入对根密钥做一次 HMAC，跨天自然失效。 */
-export function dailyAnonymousSalt(day, { secret = ANONYMOUS_SALT_SECRET } = {}) {
-  return crypto.createHmac('sha256', secret).update(`${ANONYMOUS_SALT_NAMESPACE}:${day}`).digest();
+export function dailyAnonymousSalt(day, { secret } = {}) {
+  // 在调用时读取环境变量：server.mjs 的 .env 加载发生在模块导入之后，
+  // 若在模块顶层固化，本地会把公开常量当成密钥。
+  const rootSecret = secret || process.env.ADMIN_ANALYTICS_ANON_SALT ||
+    process.env.ADMIN_2FA_SESSION_SECRET || process.env.CMS_DATA_ENCRYPTION_KEY ||
+    process.env.DATA_ENCRYPTION_KEY || ANONYMOUS_SALT_SECRET;
+  return crypto.createHmac('sha256', rootSecret).update(`${ANONYMOUS_SALT_NAMESPACE}:${day}`).digest();
 }
 
 /**
@@ -209,7 +214,7 @@ export function createEngineDashboardClient({
     return {
       base: String(apiUrl || process.env.SERVICEBRIDGE_API_URL || 'http://127.0.0.1:8080').trim().replace(/\/+$/, ''),
       account: String(adminAccount || process.env.SERVICEBRIDGE_ADMIN_ACCOUNT || 'superadmin').trim(),
-      password: String(adminPassword || process.env.SERVICEBRIDGE_ADMIN_PASSWORD || '123456'),
+      password: String(adminPassword || process.env.SERVICEBRIDGE_ADMIN_PASSWORD || ''),
       internalToken: String(internalToken || process.env.INTERNAL_API_TOKEN || '').trim()
     };
   }
@@ -406,6 +411,9 @@ export function createAnalyticsRouter({
   applyPublicCors,
   resolveClient,
   countryFromRequest,
+  regionFromRequest,
+  cityFromRequest,
+  visitorTimezoneFromRequest,
   timezoneFromRequest,
   visitorActivityForwarder = null,
   engineDashboard = null
@@ -477,6 +485,9 @@ export function createAnalyticsRouter({
         ip: ipInfo.ip,
         ipSource: ipInfo.source,
         country: countryFromRequest(req),
+        region: clean(regionFromRequest?.(req), 120),
+        city: clean(cityFromRequest?.(req), 120),
+        timezone: clean(payload.timezone || visitorTimezoneFromRequest?.(req), 80),
         userAgent,
         browser: parsed.browser,
         browserVersion: parsed.browserVersion,

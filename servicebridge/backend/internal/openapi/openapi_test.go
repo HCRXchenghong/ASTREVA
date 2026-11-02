@@ -27,7 +27,7 @@ type testEnv struct {
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
-	memoryStore := store.NewMemoryStore(store.Options{})
+	memoryStore := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	hub := realtime.NewHub()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	service := app.NewService(memoryStore, hub, logger)

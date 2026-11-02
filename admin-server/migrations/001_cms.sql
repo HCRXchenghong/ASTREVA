@@ -141,6 +141,9 @@ CREATE TABLE IF NOT EXISTS site_analytics_visits (
   ip TEXT NOT NULL DEFAULT '',
   ip_source TEXT NOT NULL DEFAULT '',
   country TEXT NOT NULL DEFAULT '',
+  region TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  timezone TEXT NOT NULL DEFAULT '',
   user_agent TEXT NOT NULL DEFAULT '',
   browser TEXT NOT NULL DEFAULT '',
   browser_version TEXT NOT NULL DEFAULT '',
@@ -156,6 +159,9 @@ CREATE TABLE IF NOT EXISTS site_analytics_visits (
 
 -- 老库补齐匿名标记列（迁移可重复执行）。
 ALTER TABLE site_analytics_visits ADD COLUMN IF NOT EXISTS anonymous BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE site_analytics_visits ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT '';
+ALTER TABLE site_analytics_visits ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';
+ALTER TABLE site_analytics_visits ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_site_analytics_visits_time ON site_analytics_visits(occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_site_analytics_visits_visitor ON site_analytics_visits(visitor_id, occurred_at DESC);

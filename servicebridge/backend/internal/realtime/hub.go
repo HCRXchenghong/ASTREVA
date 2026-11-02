@@ -51,6 +51,10 @@ type Client struct {
 	Role           ClientRole
 	AccountID      string
 	ConversationID string
+	// APIAppID 用于开放 API 的 WebSocket，管理员重置/停用应用时可定向断开。
+	APIAppID string
+	// ExpiresAt 是握手时解析出的会话/令牌过期时间；0 表示不按过期时间断开。
+	ExpiresAt time.Time
 
 	conn    *websocket.Conn
 	hub     *Hub
@@ -68,8 +72,11 @@ type Hub struct {
 	agents   map[string]map[*Client]struct{}
 	admins   map[*Client]struct{}
 
-	nodeID    string
-	publisher Publisher
+	nodeID        string
+	publisher     Publisher
+	maxClients    int
+	maxPerAccount int
+	totalClients  int
 }
 
 type HubStats struct {
@@ -84,10 +91,43 @@ func NewHub() *Hub {
 
 func NewHubWithNodeID(nodeID string) *Hub {
 	return &Hub{
-		visitors: map[string]map[*Client]struct{}{},
-		agents:   map[string]map[*Client]struct{}{},
-		admins:   map[*Client]struct{}{},
-		nodeID:   nodeID,
+		visitors:      map[string]map[*Client]struct{}{},
+		agents:        map[string]map[*Client]struct{}{},
+		admins:        map[*Client]struct{}{},
+		nodeID:        nodeID,
+		maxClients:    5000,
+		maxPerAccount: 10,
+	}
+}
+
+// SetLimits 设置全局连接上限与单账号（访客为单会话）连接上限。
+func (h *Hub) SetLimits(maxClients, maxPerAccount int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if maxClients > 0 {
+		h.maxClients = maxClients
+	}
+	if maxPerAccount > 0 {
+		h.maxPerAccount = maxPerAccount
+	}
+}
+
+func (h *Hub) accountCountLocked(client *Client) int {
+	switch client.Role {
+	case RoleVisitor:
+		return len(h.visitors[client.ConversationID])
+	case RoleAgent:
+		return len(h.agents[client.AccountID])
+	case RoleAdmin:
+		count := 0
+		for existing := range h.admins {
+			if existing.AccountID == client.AccountID {
+				count++
+			}
+		}
+		return count
+	default:
+		return 0
 	}
 }
 
@@ -124,10 +164,16 @@ func NewClient(role ClientRole, accountID, conversationID string, conn *websocke
 	}
 }
 
-func (h *Hub) Register(client *Client) {
+func (h *Hub) Register(client *Client) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
+	if h.maxClients > 0 && h.totalClients >= h.maxClients {
+		return false
+	}
+	if h.maxPerAccount > 0 && h.accountCountLocked(client) >= h.maxPerAccount {
+		return false
+	}
+	h.totalClients++
 	switch client.Role {
 	case RoleVisitor:
 		if h.visitors[client.ConversationID] == nil {
@@ -142,6 +188,7 @@ func (h *Hub) Register(client *Client) {
 	case RoleAdmin:
 		h.admins[client] = struct{}{}
 	}
+	return true
 }
 
 func (h *Hub) Unregister(client *Client) {
@@ -162,7 +209,44 @@ func (h *Hub) Unregister(client *Client) {
 	case RoleAdmin:
 		delete(h.admins, client)
 	}
+	if h.totalClients > 0 {
+		h.totalClients--
+	}
 	client.closeSend()
+}
+
+// DisconnectAPIApp 在 API Key 被重置/停用/删除后断开该应用的订阅连接。
+func (h *Hub) DisconnectAPIApp(appID string) {
+	if appID == "" {
+		return
+	}
+	h.mu.Lock()
+	var targets []*Client
+	for _, clients := range h.visitors {
+		for client := range clients {
+			if client.APIAppID == appID {
+				targets = append(targets, client)
+			}
+		}
+	}
+	h.mu.Unlock()
+	for _, client := range targets {
+		client.Send(Event{Event: "session.revoked", Data: map[string]string{"reason": "api_key_reset"}})
+		_ = client.conn.Close()
+	}
+}
+
+func (h *Hub) DisconnectConversation(conversationID string) {
+	h.mu.Lock()
+	var targets []*Client
+	for client := range h.visitors[conversationID] {
+		targets = append(targets, client)
+	}
+	h.mu.Unlock()
+	for _, client := range targets {
+		client.Send(Event{Event: "session.revoked", Data: map[string]string{"reason": "conversation_closed"}})
+		_ = client.conn.Close()
+	}
 }
 
 func (h *Hub) SendToVisitor(conversationID string, event Event) {
@@ -328,11 +412,34 @@ func (c *Client) closeSend() {
 }
 
 func (c *Client) Run() {
-	c.hub.Register(c)
+	if !c.hub.Register(c) {
+		if c.conn != nil {
+			_ = c.conn.WriteJSON(Event{Event: "error", Data: map[string]string{"message": "too many connections"}})
+			_ = c.conn.Close()
+		}
+		return
+	}
 	defer func() {
 		c.hub.Unregister(c)
-		_ = c.conn.Close()
+		if c.conn != nil {
+			_ = c.conn.Close()
+		}
 	}()
+	if c.conn == nil {
+		return
+	}
+	// 会话令牌过期或连接超过最大生命周期时主动断开，客户端可用新令牌重连。
+	lifetime := 24 * time.Hour
+	if !c.ExpiresAt.IsZero() {
+		if remaining := time.Until(c.ExpiresAt); remaining > 0 && remaining < lifetime {
+			lifetime = remaining
+		}
+	}
+	closeTimer := time.AfterFunc(lifetime, func() {
+		c.Send(Event{Event: "session.revoked", Data: map[string]string{"reason": "session_expired"}})
+		_ = c.conn.Close()
+	})
+	defer closeTimer.Stop()
 
 	go c.writeLoop()
 	c.Send(Event{Event: "connected", Data: map[string]any{

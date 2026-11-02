@@ -5,15 +5,16 @@ export const openWindow = (
   opts?: { target?: TargetContext; [key: string]: any }
 ) => {
   const { target = '_blank', ...others } = opts || {};
+  const features = Object.entries(others)
+    .reduce((preValue: string[], curValue) => {
+      const [key, value] = curValue;
+      return [...preValue, `${key}=${value}`];
+    }, [])
+    .join(',');
   window.open(
     url,
     target,
-    Object.entries(others)
-      .reduce((preValue: string[], curValue) => {
-        const [key, value] = curValue;
-        return [...preValue, `${key}=${value}`];
-      }, [])
-      .join(',')
+    [target === '_blank' ? 'noopener,noreferrer' : '', features].filter(Boolean).join(',')
   );
 };
 

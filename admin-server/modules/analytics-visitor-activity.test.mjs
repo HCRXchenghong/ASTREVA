@@ -62,7 +62,7 @@ async function readBody(req) {
 }
 
 /** 直接驱动 analytics router 的 handleBeacon，不依赖完整 admin-server。 */
-function createBeaconHarness({ payload, forwarder = null }) {
+function createBeaconHarness({ payload, forwarder = null, geo = {}, headers = {} }) {
   const visits = [];
   const response = { statusCode: 0, body: null };
   const router = createAnalyticsRouter({
@@ -79,14 +79,17 @@ function createBeaconHarness({ payload, forwarder = null }) {
     verifySession: () => true,
     applyPublicCors: () => true,
     resolveClient: () => ({ ip: '203.0.113.9', source: 'direct' }),
-    countryFromRequest: () => 'CN',
+    countryFromRequest: geo.countryFromRequest || (() => 'CN'),
+    regionFromRequest: geo.regionFromRequest,
+    cityFromRequest: geo.cityFromRequest,
+    visitorTimezoneFromRequest: geo.visitorTimezoneFromRequest,
     timezoneFromRequest: () => 'Asia/Shanghai',
     visitorActivityForwarder: forwarder
   });
   const req = {
     method: 'POST',
     url: '/site-admin-api/analytics/visit',
-    headers: { 'user-agent': 'Mozilla/5.0 Chrome/126.0.0.0', host: 'www.example.com' }
+    headers: { 'user-agent': 'Mozilla/5.0 Chrome/126.0.0.0', host: 'www.example.com', ...headers }
   };
   return { router, req, response, visits };
 }
@@ -94,6 +97,40 @@ function createBeaconHarness({ payload, forwarder = null }) {
 function silentLogger(logs) {
   return { debug: (message) => logs.push(message) };
 }
+
+test('官网访问：可信代理地区信息写入访问记录并保留浏览器解析', async () => {
+  const { router, req, response, visits } = createBeaconHarness({
+    payload: { path: '/products/', visitor_id: 'vis_geo_1', timezone: '' },
+    geo: {
+      countryFromRequest: () => 'US',
+      regionFromRequest: () => 'California',
+      cityFromRequest: () => 'San Francisco',
+      visitorTimezoneFromRequest: () => 'America/Los_Angeles'
+    }
+  });
+  await router.handleBeacon(req, response);
+  assert.equal(response.statusCode, 202);
+  assert.deepEqual(
+    {
+      country: visits[0].country,
+      region: visits[0].region,
+      city: visits[0].city,
+      timezone: visits[0].timezone,
+      browser: visits[0].browser,
+      os: visits[0].os,
+      device: visits[0].device
+    },
+    {
+      country: 'US',
+      region: 'California',
+      city: 'San Francisco',
+      timezone: 'America/Los_Angeles',
+      browser: 'Chrome',
+      os: '',
+      device: 'desktop'
+    }
+  );
+});
 
 test('访客活跃转发：配置 token 时把 visitor_id 与 path 原样发给客服引擎', async () => {
   const recorder = createRecorder();

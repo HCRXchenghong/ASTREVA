@@ -38,7 +38,7 @@ func newChatCompletionStub(t *testing.T, reply string) (*httptest.Server, *int32
 
 func newAIProviderService(t *testing.T, globalURL string) (*Service, store.Store) {
 	t.Helper()
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	if _, err := st.UpdateAISettings(domain.AISettings{
 		Enabled:        true,
 		Mode:           domain.AIModeHumanFirst,

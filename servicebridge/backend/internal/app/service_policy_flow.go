@@ -52,6 +52,23 @@ func (w *watchRegistry) remove(agentID, conversationID string) {
 	}
 }
 
+func (w *watchRegistry) removeConversation(conversationID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for agentID, conversations := range w.byAgent {
+		delete(conversations, conversationID)
+		if len(conversations) == 0 {
+			delete(w.byAgent, agentID)
+		}
+	}
+}
+
+func (w *watchRegistry) removeAgent(agentID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.byAgent, agentID)
+}
+
 func (w *watchRegistry) has(agentID, conversationID string) bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -88,11 +105,41 @@ func (s *Service) StartWatching(agentID, conversationID string) (domain.Conversa
 	if conversation.Status == domain.ConversationClosed {
 		return domain.Conversation{}, store.ErrForbidden
 	}
+	agentID = strings.TrimSpace(agentID)
+	// 默认只允许围观未分配会话、自己负责的会话或本组队列中的会话。
+	// 需要“任意客服围观任意会话”时，由后台“安全策略”把围观范围改为 all。
+	allowAll := s.store.ServicePolicy().AgentWatchScope == domain.AgentWatchScopeAll
+	var agent domain.Agent
+	for _, item := range s.store.AllAgents() {
+		if item.ID == agentID {
+			agent = item
+			break
+		}
+	}
+	allowed := allowAll || conversation.AssignedAgentID == "" ||
+		conversation.AssignedAgentID == agentID ||
+		(agent.ID != "" && conversation.QueueGroup != "" && agent.Group == conversation.QueueGroup)
+	if !allowed {
+		return domain.Conversation{}, store.ErrForbidden
+	}
 	if s.watching == nil {
 		s.watching = newWatchRegistry()
 	}
 	s.watching.add(agentID, conversationID)
 	return conversation, nil
+}
+
+// ClearWatchers 在会话转接/结束/删除或客服停用后清理围观登记，避免旧权限继续读消息。
+func (s *Service) ClearWatchers(conversationID string) {
+	if s.watching != nil {
+		s.watching.removeConversation(conversationID)
+	}
+}
+
+func (s *Service) ClearAgentWatchers(agentID string) {
+	if s.watching != nil {
+		s.watching.removeAgent(agentID)
+	}
 }
 
 // StopWatching 退出只读围观；会话已删除时返回 ErrNotFound。
@@ -126,10 +173,8 @@ func (s *Service) TakeoverConversation(agentID, conversationID string) (domain.C
 	if err != nil {
 		return domain.Conversation{}, err
 	}
-	// 已经正式负责该会话，围观登记不再需要（否则后续已读会被误跳过）。
-	if s.watching != nil {
-		s.watching.remove(agentID, conversationID)
-	}
+	// 接管后所有围观者都失去读权限（包括原围观者），避免越权继续读消息。
+	s.ClearWatchers(conversationID)
 	agentID = strings.TrimSpace(agentID)
 	s.hub.SendToAgent(agentID, realtime.Event{Event: "conversation.assigned", Data: conversation})
 	// 该客服也需要 status_changed（App 用它刷新会话状态与 AI 接待标记）。

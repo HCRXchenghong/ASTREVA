@@ -19,7 +19,7 @@ import (
 // newInternalRouter 构造带服务间令牌的路由，并返回底层存储用于准备画像数据。
 func newInternalRouter(t *testing.T, internalToken string) (http.Handler, store.Store) {
 	t.Helper()
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	_, _ = st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false})
 	service := app.NewService(st, realtime.NewHub(), slog.Default())
 	return NewRouter(config.Config{Env: "test", InternalAPIToken: internalToken}, slog.Default(), service), st

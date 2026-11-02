@@ -35,7 +35,7 @@ function safePath(urlPath) {
   const decoded = decodeURIComponent(urlPath.split('?')[0]);
   const normalized = path.normalize(decoded).replace(/^(\.\.[/\\])+/, '');
   const absolute = path.join(distDir, normalized);
-  if (!absolute.startsWith(distDir)) return null;
+  if (absolute !== distDir && !absolute.startsWith(distDir + path.sep)) return null;
   return absolute;
 }
 

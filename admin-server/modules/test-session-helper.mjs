@@ -54,14 +54,14 @@ export async function createAdminSession(base, options = {}) {
   const setupStart = await fetch(`${base}/site-admin-auth/setup/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ email, password, setupToken: process.env.ADMIN_SETUP_TOKEN || 'test-setup-token' })
   });
   if (setupStart.ok) {
     const challenge = await setupStart.json();
     const verify = await fetch(`${base}/site-admin-auth/setup/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ challengeId: challenge.challengeId, code: totpCode(challenge.secret) })
+      body: JSON.stringify({ challengeId: challenge.challengeId, code: totpCode(challenge.secret), setupToken: process.env.ADMIN_SETUP_TOKEN || 'test-setup-token' })
     });
     if (!verify.ok) throw new Error(`2FA 绑定失败：${verify.status} ${await verify.text()}`);
     const cookieValue = cookieValueFromResponse(verify);
@@ -76,7 +76,7 @@ export async function createAdminSession(base, options = {}) {
   const loginStart = await fetch(`${base}/site-admin-auth/login/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ email, password, setupToken: process.env.ADMIN_SETUP_TOKEN || 'test-setup-token' })
   });
   if (!loginStart.ok) throw new Error(`登录失败：${loginStart.status} ${await loginStart.text()}`);
   const challenge = await loginStart.json();

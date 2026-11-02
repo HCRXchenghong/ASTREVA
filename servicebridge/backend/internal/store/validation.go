@@ -412,14 +412,16 @@ func validatePushSettings(next domain.PushSettings) error {
 }
 
 func isSafePublicURL(value string) bool {
-	if strings.HasPrefix(value, "/uploads/") {
-		return true
-	}
-	parsed, err := url.Parse(value)
-	if err != nil {
+	// 图片/语音消息只允许客服引擎自己托管的 /uploads/ 相对路径。
+	// 这样管理端浏览器不会因为访客可控的 URL 去请求任意内网/第三方地址，
+	// 同时也避免开放 API 调用方把外部图片注入会话。
+	if !strings.HasPrefix(value, "/uploads/") {
 		return false
 	}
-	return (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+	if strings.Contains(value, "..") || strings.ContainsAny(value, "\r\n\x00") {
+		return false
+	}
+	return true
 }
 
 const (

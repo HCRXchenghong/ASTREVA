@@ -10,8 +10,16 @@
       </div>
 
       <a-form v-if="step === 1" :model="form" layout="vertical" @submit-success="submitCredentials">
+        <a-form-item
+          v-if="isSetup"
+          field="setupToken"
+          label="初始化令牌"
+          :rules="[{ required: true, message: '请输入服务器启动日志中的初始化令牌' }]"
+        >
+          <a-input-password v-model="form.setupToken" placeholder="查看 admin-server 启动日志中的一次性令牌" />
+        </a-form-item>
         <a-form-item field="email" label="邮箱" :rules="[{ required: true, message: '请输入邮箱' }]">
-          <a-input v-model="form.email" placeholder="admin@example.com" allow-clear />
+          <a-input v-model="form.email" placeholder="请输入管理员邮箱" allow-clear />
         </a-form-item>
         <a-form-item field="password" label="密码" :rules="[{ required: true, message: '请输入密码' }]">
           <a-input-password v-model="form.password" placeholder="请输入密码" />
@@ -74,7 +82,7 @@
   const challenge = reactive<{ challengeId: string; qr?: string; secret?: string }>({
     challengeId: '',
   });
-  const form = reactive({ email: '', password: '', confirm: '', code: '' });
+  const form = reactive({ email: '', password: '', confirm: '', code: '', setupToken: '' });
 
   onMounted(async () => {
     try {
@@ -94,14 +102,14 @@
       error.value = '两次输入的密码不一致。';
       return;
     }
-    if (isSetup.value && form.password.length < 8) {
-      error.value = '密码至少 8 位。';
+    if (isSetup.value && form.password.length < 12) {
+      error.value = '密码至少 12 位。';
       return;
     }
     loading.value = true;
     try {
       const result = isSetup.value
-        ? await startSetup(form.email, form.password)
+        ? await startSetup(form.email, form.password, form.setupToken)
         : await startLogin(form.email, form.password);
       challenge.challengeId = result.challengeId;
       challenge.qr = result.qr;
@@ -119,7 +127,7 @@
     loading.value = true;
     try {
       if (isSetup.value) {
-        await verifySetup(challenge.challengeId, form.code);
+        await verifySetup(challenge.challengeId, form.code, form.setupToken);
       } else {
         await verifyLogin(challenge.challengeId, form.code);
       }

@@ -188,8 +188,12 @@ need_var TRUSTED_PROXY_CIDRS
 need_var REBUILD_WEBHOOK_SECRET
 need_var ADMIN_2FA_SESSION_SECRET
 need_var METRICS_BEARER_TOKEN
+need_var INTERNAL_API_TOKEN
 need_var MINIO_ROOT_USER
 need_var MINIO_ROOT_PASSWORD
+# 首次初始化令牌不写日志：未配置时本次运行生成一个随机值并注入 compose。
+ADMIN_SETUP_TOKEN="${ADMIN_SETUP_TOKEN:-$(openssl rand -base64 36 | tr -d '\n')}"
+export ADMIN_SETUP_TOKEN
 
 if [[ "${CORS_ALLOWED_ORIGINS}" == "*" || "${TRUSTED_PROXY_CIDRS}" == "*" ]]; then
   echo "CORS_ALLOWED_ORIGINS / TRUSTED_PROXY_CIDRS 不能使用 *，请配置具体网段/域名" >&2
@@ -202,19 +206,33 @@ validate_secret AGENT_BOOTSTRAP_PASSWORD 12
 validate_secret REBUILD_WEBHOOK_SECRET 16
 validate_secret ADMIN_2FA_SESSION_SECRET 24
 validate_secret METRICS_BEARER_TOKEN 24
+validate_secret INTERNAL_API_TOKEN 32
+validate_secret POSTGRES_PASSWORD 16
+if [[ -n "${GRAFANA_ADMIN_PASSWORD:-}" ]]; then
+  validate_secret GRAFANA_ADMIN_PASSWORD 16
+fi
 validate_secret MINIO_ROOT_PASSWORD 16
 
 ADMIN_MEDIA_DRIVER="${ADMIN_MEDIA_DRIVER:-s3}"
-if [[ "$ADMIN_MEDIA_DRIVER" != "s3" ]]; then
-  echo "生产环境 ADMIN_MEDIA_DRIVER 必须是 s3" >&2
-  exit 1
-fi
-need_var S3_BUCKET
-need_var S3_PUBLIC_BASE_URL
-if looks_like_placeholder "$S3_BUCKET" || looks_like_placeholder "$S3_PUBLIC_BASE_URL"; then
-  echo "S3_BUCKET / S3_PUBLIC_BASE_URL 仍然是示例占位值" >&2
-  exit 1
-fi
+case "$ADMIN_MEDIA_DRIVER" in
+  s3)
+    need_var S3_BUCKET
+    need_var S3_PUBLIC_BASE_URL
+    if looks_like_placeholder "$S3_BUCKET" || looks_like_placeholder "$S3_PUBLIC_BASE_URL"; then
+      echo "S3_BUCKET / S3_PUBLIC_BASE_URL 仍然是示例占位值" >&2
+      exit 1
+    fi
+    ;;
+  local)
+    # 单机一键部署默认使用本地卷；后续可在后台切换到 R2/S3。
+    ADMIN_ALLOW_LOCAL_MEDIA="${ADMIN_ALLOW_LOCAL_MEDIA:-true}"
+    export ADMIN_ALLOW_LOCAL_MEDIA
+    ;;
+  *)
+    echo "ADMIN_MEDIA_DRIVER 只支持 s3 或 local" >&2
+    exit 1
+    ;;
+esac
 
 POSTGRES_DB="${POSTGRES_DB:-customer_service}"
 POSTGRES_USER="${POSTGRES_USER:-customer_service}"
@@ -267,6 +285,7 @@ export RATE_LIMIT_ENABLED
 export RATE_LIMIT_RPS
 export RATE_LIMIT_BURST
 export METRICS_BEARER_TOKEN
+export INTERNAL_API_TOKEN
 export OPENAI_API_KEY
 export OPENAI_BASE_URL
 export OPENAI_MODEL
@@ -289,10 +308,13 @@ export ADMIN_2FA_SESSION_SECRET
 export ADMIN_2FA_ISSUER
 export ADMIN_2FA_SESSION_TTL_MS
 
-# Caddy 直接监听 80/443 并自动签发证书，先确认端口未被其它服务占用（如宿主机 nginx/apache）。
+# Caddy 直接监听 80/443 并自动签发证书。升级时端口由本 stack 的 caddy 占用是正常的；
+# 只有“非本 stack 进程”占用才拒绝，避免升级脚本误判。
 if command -v ss >/dev/null 2>&1; then
+  caddy_running="$(compose_action ps -q caddy 2>/dev/null || true)"
   for port in 80 443; do
-    if ss -ltn "sport = :$port" 2>/dev/null | tail -n +2 | grep -q .; then
+    listeners="$(ss -ltn "sport = :$port" 2>/dev/null | tail -n +2 || true)"
+    if [[ -n "$listeners" && -z "$caddy_running" ]]; then
       echo "端口 $port 已被占用；Caddy 需要独占 80/443，请先停掉占用进程" >&2
       exit 1
     fi
@@ -308,6 +330,7 @@ wait_for_https "$SERVICE_DOMAIN" "/readyz"
 wait_for_https "$SERVICE_DOMAIN" "/?embed=1"
 
 echo "启动完成"
+echo "首次初始化令牌（若管理员尚未创建，登录页会要求填写）：$ADMIN_SETUP_TOKEN"
 echo "主站: $SITE_ORIGIN"
 echo "后台: $ADMIN_ORIGIN/site-admin/"
 echo "客服: $SERVICE_ORIGIN/?embed=1"

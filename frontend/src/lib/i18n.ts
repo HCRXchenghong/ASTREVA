@@ -42,10 +42,22 @@ export function stripLocalePrefix(path: string): { locale: SiteLocale; path: str
   return { locale: match[1] as SiteLocale, path: rest ? (rest.startsWith('/') ? rest : `/${rest}`) : '/' };
 }
 
+/** Only allow navigation-safe URLs; javascript:/data:/vbscript: and //host are rejected. */
+export function safeHref(href: string | undefined): string | undefined {
+  if (!href) return undefined;
+  const value = String(href).trim();
+  if (!value || value.startsWith('//')) return undefined;
+  if (/^(?:javascript|vbscript|data|file|blob):/i.test(value)) return undefined;
+  if (/^(?:https?:|mailto:|tel:)/i.test(value)) return value;
+  if (value.startsWith('/') || value.startsWith('#')) return value;
+  return undefined;
+}
+
 /** Localize a root-relative href coming from the content model. */
 export function localizeHref(locale: SiteLocale, href: string | undefined): string | undefined {
-  if (!href || !href.startsWith('/') || href.startsWith('//')) return href;
-  return localePath(locale, stripLocalePrefix(href).path);
+  const safe = safeHref(href);
+  if (!safe || !safe.startsWith('/')) return safe;
+  return localePath(locale, stripLocalePrefix(safe).path);
 }
 
 /**

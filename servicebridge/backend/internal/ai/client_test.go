@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -177,13 +178,13 @@ func TestModelsUsesProtocolHeadersAndDeduplicates(t *testing.T) {
 	}
 }
 
-func TestFallbackReplyWithoutAPIKey(t *testing.T) {
+func TestReplyWithoutAPIKeyReturnsError(t *testing.T) {
 	reply, err := NewClient().Reply(context.Background(), domain.AISettings{}, domain.ContactSettings{Telephone: "400-123"}, nil, "电话是多少", LangZh, "")
-	if err != nil {
-		t.Fatalf("reply: %v", err)
+	if !errors.Is(err, ErrNoAPIKey) {
+		t.Fatalf("未配置 API Key 必须返回 ErrNoAPIKey，got reply=%q err=%v", reply, err)
 	}
-	if reply != "客服电话：400-123，您可以点击下方电话联系按钮直接拨打。" {
-		t.Fatalf("unexpected fallback reply: %q", reply)
+	if reply != "" {
+		t.Fatalf("未配置 API Key 不能返回伪造回复：%q", reply)
 	}
 }
 

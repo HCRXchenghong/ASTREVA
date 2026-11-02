@@ -21,7 +21,7 @@ import (
 const (
 	servicePolicyColumns = `queue_enabled, max_wait_seconds, sla_first_response_seconds, sla_idle_minutes,
 		sla_idle_action, auto_close_idle_minutes, ai_keyword_priority, unattended_enabled, unattended_reply,
-		takeover_popup_enabled, updated_at`
+		takeover_popup_enabled, open_api_enabled, agent_watch_scope, updated_at`
 	queuedConversationColumns = `conversation_id, group_name, priority, enqueued_at, reason`
 	blacklistColumns          = `id, kind, value, reason, created_by, expires_at, created_at`
 	alertChannelColumns       = `id, agent_id, kind, config_ciphertext, enabled, created_at, updated_at`
@@ -43,6 +43,8 @@ func scanServicePolicy(row scanTarget) (domain.ServicePolicy, error) {
 		&out.UnattendedEnabled,
 		&out.UnattendedReply,
 		&out.TakeoverPopupEnabled,
+		&out.OpenAPIEnabled,
+		&out.AgentWatchScope,
 		&updatedAt,
 	); err != nil {
 		return domain.ServicePolicy{}, err
@@ -78,8 +80,9 @@ func (s *PostgresStore) UpdateServicePolicy(next domain.ServicePolicy) (domain.S
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO service_policy (id, queue_enabled, max_wait_seconds, sla_first_response_seconds,
 			sla_idle_minutes, sla_idle_action, auto_close_idle_minutes, ai_keyword_priority,
-			unattended_enabled, unattended_reply, takeover_popup_enabled, updated_at)
-		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			unattended_enabled, unattended_reply, takeover_popup_enabled, open_api_enabled,
+			agent_watch_scope, updated_at)
+		VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (id) DO UPDATE
 		SET queue_enabled=EXCLUDED.queue_enabled,
 		    max_wait_seconds=EXCLUDED.max_wait_seconds,
@@ -91,6 +94,8 @@ func (s *PostgresStore) UpdateServicePolicy(next domain.ServicePolicy) (domain.S
 		    unattended_enabled=EXCLUDED.unattended_enabled,
 		    unattended_reply=EXCLUDED.unattended_reply,
 		    takeover_popup_enabled=EXCLUDED.takeover_popup_enabled,
+		    open_api_enabled=EXCLUDED.open_api_enabled,
+		    agent_watch_scope=EXCLUDED.agent_watch_scope,
 		    updated_at=EXCLUDED.updated_at
 		RETURNING `+servicePolicyColumns,
 		normalized.QueueEnabled,
@@ -103,6 +108,8 @@ func (s *PostgresStore) UpdateServicePolicy(next domain.ServicePolicy) (domain.S
 		normalized.UnattendedEnabled,
 		normalized.UnattendedReply,
 		normalized.TakeoverPopupEnabled,
+		normalized.OpenAPIEnabled,
+		normalized.AgentWatchScope,
 		dbNow(),
 	)
 	return scanServicePolicy(row)

@@ -69,28 +69,12 @@ Authorization: Bearer <token>
 | GET | `/api/admin/ratings` | 最近评价，query: `limit` |
 | GET | `/api/admin/audit-events` | 最近审计，query: `limit` |
 | GET | `/api/admin/audit-events/export.csv` | 审计 CSV |
-| GET/POST | `/api/admin/api-apps` | 列表/新增第三方平台 API 授权（完整 Key 仅返回一次） |
-| PATCH/DELETE | `/api/admin/api-apps/{id}` | 修改/删除 API 授权 |
-| POST | `/api/admin/api-apps/{id}/reset-key` | 重置 API Key，旧 Key 立即失效 |
 
 管理员可访问全部会话。账号、配置、转接、关闭和导出等关键操作会写审计记录。
 
-## 开放接口（第三方平台接入）
+## 开放接口（默认关闭，后台可开启）
 
-面向外部平台的 Open API，用 `ast_live_` 前缀的 API Key 鉴权（`Authorization: Bearer`、`X-API-Key` 或 WebSocket query `key`），Key 只保存 SHA-256 哈希。会话按应用隔离（来源标记 `api:<app_id>`），默认每应用每分钟 300 次请求（可按应用配置，超限 429）。`OPEN_API_ENABLED=false` 可整体关闭。
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/open/v1/me` | 连通性测试 |
-| POST | `/open/v1/conversations` | 创建会话，body: `external_user_id`、`lang(zh/en/ar)` |
-| GET | `/open/v1/conversations` | 本应用会话列表（≤200 条） |
-| GET | `/open/v1/conversations/{id}` | 查询会话 |
-| GET | `/open/v1/conversations/{id}/messages` | 历史消息（访客视角本地化），query: `limit`、`before` |
-| POST | `/open/v1/conversations/{id}/messages` | 代访客发消息：`content`、`message_type(text/emoji/image)`、`client_msg_id` |
-| POST | `/open/v1/conversations/{id}/close` | 结束会话 |
-| GET | `/open/v1/ws?conversation_id={id}` | WebSocket 只读订阅该会话事件，事件与访客端一致 |
-
-完整接入指南见仓库根 `docs/API_INTEGRATION.md`。
+开放 API 默认关闭，由后台「系统设置 → 安全策略 → 开放 API」控制；关闭时 `/open/v1/*` 返回 503。开启后仍需 `ast_live_` API Key 与 scope。完整接入说明见控制台「API 管理 → 接入说明」。
 
 ## 核心结构
 
@@ -109,10 +93,14 @@ AI 配置写入字段包括 `enabled`、`mode`、`base_url`、`api_key`、`model
 连接：
 
 ```text
-ws://127.0.0.1:8080/ws?role=visitor&token=<visitor_token>&conversation_id=<conversation_id>
-ws://127.0.0.1:8080/ws?role=agent&token=<agent_token>
-ws://127.0.0.1:8080/ws?role=admin&token=<admin_token>
+wss://service.example.com/ws?role=visitor&token=<visitor_token>&conversation_id=<conversation_id>
+wss://service.example.com/ws?role=agent&token=<agent_token>
+wss://service.example.com/ws?role=admin&token=<admin_token>
 ```
+
+> 安全说明：浏览器 WebSocket 无法自定义 `Authorization` 头，因此这里保留 query token 兼容；
+> 生产必须使用 `wss://`，并在反向代理关闭/脱敏含 `token` 的访问日志。服务端已限制单账号/全局
+> 连接数、单连接消息大小（64 KiB）和最大生命周期；令牌过期或账号被重置/停用时连接会被主动断开。
 
 客户端发送：
 

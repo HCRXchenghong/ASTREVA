@@ -49,7 +49,7 @@ bash scripts/run-local-stack.sh
 
 开发控制台时可以用热更新：`npm run dev:admin-web`（Vite 起在 `5174`，把 `/site-admin-api` 与 `/site-admin-auth` 代理到 `1337`）。
 
-首次进入控制台时，由站点管理员创建自己的邮箱、密码并绑定 2FA。客服账号在「客服管理 → 客服账号」中新建，随后用于登录「在线客服」App。本地脚本默认使用内存客服仓库，并让客服 API 监听 `0.0.0.0:8080` 供同一局域网的真机访问；重启后本地客服账号和会话会清空，生产 Compose 使用 PostgreSQL。
+首次进入控制台时，由站点管理员创建自己的邮箱、密码并绑定 2FA。**首次初始化必须填写 `ADMIN_SETUP_TOKEN`**：生产环境必须显式配置（`scripts/ubuntu-one-click.sh` 会自动生成并在终端打印一次；直接 `docker compose` 时需自行设置），本地未配置时启动日志会生成一次性随机令牌。初始化接口还会再次确认“仍无管理员”，旧挑战不能覆盖已建账号。客服账号在「客服管理 → 客服账号」中新建，随后用于登录「在线客服」App。本地脚本默认使用内存客服仓库，客服 API 默认只绑 `127.0.0.1:8080`；需要同一局域网真机访问时显式设置 `ASTREVA_ALLOW_LAN=1`（会监听 `0.0.0.0:8080`，仅限可信网络）。重启后本地客服账号和会话会清空，生产 Compose 使用 PostgreSQL。
 
 ## 内容、翻译与客服
 
@@ -57,7 +57,7 @@ bash scripts/run-local-stack.sh
 
 官网以中文 `zh-CN` 为唯一源内容。控制台「网站翻译」可配置 Chat Completions / Responses / Anthropic Messages 上游，API Key 使用主密钥加密存入 PostgreSQL。中文内容每次保存后，英语和阿拉伯语按同一修订号进入翻译队列；过时、失败或未配置的译文不会伪装成成功。
 
-控制台「内容管理 → 官网内容」里可以保存草稿并发布，也可以点击「预览草稿」把当前未保存内容构建到官网的 `/__preview/` 路径下核对，不影响线上。
+控制台「内容管理 → 官网内容」里可以保存草稿并发布，也可以点击「预览草稿」把当前未保存内容构建到官网的 `/__preview/<随机 token>/` 路径下核对，不影响线上。预览路径每次构建随机生成，Caddy 会向 admin-server 同时校验构建 token 和后台领取的短时预览 Cookie 后才允许访问，并带 `X-Robots-Tag: noindex`，不会暴露固定草稿入口。
 
 统一后台通过服务端代理访问客服引擎，浏览器不会保存客服引擎管理员密码。相关变量：
 
@@ -65,6 +65,9 @@ bash scripts/run-local-stack.sh
 - `SERVICEBRIDGE_ADMIN_ACCOUNT`、`SERVICEBRIDGE_ADMIN_PASSWORD`：控制台代理使用的客服引擎管理员凭证。
 - `PUBLIC_SERVICEBRIDGE_URL`：官网访客聊天公开地址。
 - `ADMIN_2FA_SESSION_SECRET`：控制台登录会话签名密钥。
+- `ADMIN_SETUP_TOKEN`：首次初始化令牌；生产必须显式设置（一键脚本会生成并打印一次），本地未设置时启动日志会生成随机值。
+- `ADMIN_WRITE_ALLOWED_ORIGINS`：可选的后台写接口额外 Origin 白名单；默认只允许后台同源。
+- `INTERNAL_API_TOKEN`：admin-server 与 Go 引擎的服务间令牌（AI 供应商明文配置、访客画像转发）。
 - `SERVICEBRIDGE_CORS_ALLOWED_ORIGINS`：客服 API/WebSocket 允许来源。
 
 生产环境必须使用强随机密码和密钥，不能沿用 `.env.example` 的本地示例值。内容闭环见 [docs/CMS_CLOSED_LOOP.md](docs/CMS_CLOSED_LOOP.md)，客服与 App 说明见 [servicebridge/README.md](servicebridge/README.md)。
@@ -87,3 +90,15 @@ cd ../apps/agent-mobile && dart analyze && flutter test
 ```
 
 商业上线前仍需完成真机推送验证、正式签名发布、浏览器/真机端到端自动化、备份恢复演练和容量验收；统一记录在 [功能完善任务.md](功能完善任务.md)。
+
+## 快速部署
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HCRXchenghong/ASTREVA/main/scripts/install.sh \
+  | sudo bash -s -- \
+      --repo https://github.com/HCRXchenghong/ASTREVA.git \
+      --domain www.example.com \
+      --email ops@example.com
+```
+
+详见 [一键部署文档](docs/ONE_CLICK_DEPLOY.md)。

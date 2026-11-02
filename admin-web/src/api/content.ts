@@ -116,6 +116,10 @@ export const requestDraftPreview = (content: unknown) =>
     .post('/site-admin-api/preview', { content })
     .then((r) => r.data);
 
+// 预览文件在官网域名下由 Caddy forward_auth 校验；先领取一个短时 HttpOnly 预览 Cookie。
+export const grantPreviewAccess = () =>
+  client.get('/site-admin-api/preview-grant').then((r) => r.data);
+
 // ---------- 降级版本 ----------
 /** GET /site-admin-api/fallback-versions */
 export const fetchFallbackVersions = () =>

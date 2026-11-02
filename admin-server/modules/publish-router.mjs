@@ -1,3 +1,5 @@
+import { sanitizeCmsContent } from './html-sanitize.mjs';
+
 /** 发布队列、构建状态与审计记录的 HTTP 边界。 */
 export function createPublishRouter({ platformStore, publishService, verifySession, auditEvent, json, publicOrigin }) {
   return async function handlePublish(req, res, pathname) {
@@ -42,11 +44,14 @@ export function createPublishRouter({ platformStore, publishService, verifySessi
     if (pathname === '/site-admin-api/preview' && req.method === 'POST') {
       try {
         const payload = await bodyJson(req, 8 * 1024 * 1024);
-        const content = payload?.content;
-        if (!content || typeof content !== 'object' || !content.site || !content.home) {
+        const rawContent = payload?.content;
+        if (!rawContent || typeof rawContent !== 'object' || !rawContent.site || !rawContent.home) {
           json(res, 400, { error: { message: '预览内容无效：缺少 site/home 节点。' } });
           return true;
         }
+        // 预览产物会被浏览器以源码方式渲染：先走与正式保存相同的富文本/链接消毒，
+        // 避免“未保存草稿”成为绕过写入消毒的 XSS 通道。
+        const content = sanitizeCmsContent(rawContent);
         const rebuild = await publishService.requestPreview(content);
         await auditEvent(req, 'publish.preview-requested', 'site-content', 'preview', {});
         json(res, 202, { data: { ok: true, rebuild } });

@@ -77,6 +77,7 @@ func TestAdminAIProviderLifecycleAndSecret(t *testing.T) {
 	// 服务间 /secret：仅管理员可读，返回解密后的配置。
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/ai-providers/"+providerID+"/secret", nil)
 	req.Header.Set("Authorization", "Bearer "+adminToken)
+	req.Header.Set("X-Internal-Token", "test-internal-token")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -95,10 +96,20 @@ func TestAdminAIProviderLifecycleAndSecret(t *testing.T) {
 	if secret["base_url"] != "https://api.openai.com/v1" || secret["allowed_hosts"] != "api.openai.com" {
 		t.Fatalf("/secret 配置不完整：%#v", secret)
 	}
-	doJSON(t, router, http.MethodGet, "/api/admin/ai-providers/"+providerID+"/secret", "", nil, http.StatusForbidden)
+	doJSON(t, router, http.MethodGet, "/api/admin/ai-providers/"+providerID+"/secret", "", nil, http.StatusUnauthorized)
 
-	// /resolve 是服务间同一实现的兼容路径。
-	resolved := doJSON(t, router, http.MethodGet, "/api/admin/ai-providers/"+providerID+"/resolve", adminToken, nil, http.StatusOK)
+	// /resolve 是服务间同一实现的兼容路径，同样只认内部令牌。
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/ai-providers/"+providerID+"/resolve", nil)
+	req.Header.Set("X-Internal-Token", "test-internal-token")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/resolve status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resolved map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resolved); err != nil {
+		t.Fatalf("decode /resolve: %v", err)
+	}
 	if resolved["api_key"] != "sk-new-key-abcdefgh" {
 		t.Fatalf("/resolve api_key = %v", resolved["api_key"])
 	}

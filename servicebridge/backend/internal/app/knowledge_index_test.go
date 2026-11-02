@@ -72,7 +72,7 @@ func seedIndexedCorpus(t *testing.T, st store.Store) (domain.KnowledgeBase, doma
 // 倒排索引取候选 + 候选打分，结果必须与"取全量语料再做 BM25"在顺序与分数上完全一致
 // （含限定单个知识库、以及应用阈值后的检索结果）。
 func TestKnowledgeIndexMatchesFullTableBM25(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	baseA, baseB := seedIndexedCorpus(t, st)
 	service := newIndexedKnowledgeService(t, st)
 
@@ -125,7 +125,7 @@ func TestKnowledgeIndexMatchesFullTableBM25(t *testing.T) {
 // 索引预热后，再次检索不应再调用 KnowledgeEntriesForBases（全量条目读取）；
 // 查询词无候选时同样不读存储，直接返回空。
 func TestKnowledgeIndexAvoidsFullEntryReads(t *testing.T) {
-	counting := &countingKnowledgeStore{Store: store.NewMemoryStore(store.Options{})}
+	counting := &countingKnowledgeStore{Store: store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})}
 	base, _ := seedIndexedCorpus(t, counting)
 	service := newIndexedKnowledgeService(t, counting)
 
@@ -166,7 +166,7 @@ func TestKnowledgeIndexAvoidsFullEntryReads(t *testing.T) {
 // TestKnowledgeIndexRefreshesAfterWrites：
 // 条目/知识库增删改（含导入所用的创建路径）后，索引必须刷新并对检索可见。
 func TestKnowledgeIndexRefreshesAfterWrites(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	base, _ := seedIndexedCorpus(t, st)
 	service := newIndexedKnowledgeService(t, st)
 
@@ -241,7 +241,7 @@ func TestKnowledgeIndexRefreshesAfterWrites(t *testing.T) {
 // TestKnowledgeIndexTenThousandEntriesLatency：
 // 1 万条条目的语料上，索引预热后的选择性检索应在 200ms 内返回（放宽阈值避免 CI 抖动）。
 func TestKnowledgeIndexTenThousandEntriesLatency(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	base, err := st.CreateKnowledgeBase(domain.KnowledgeBase{Name: "大库", Enabled: true})
 	if err != nil {
 		t.Fatalf("create base: %v", err)
@@ -292,7 +292,7 @@ func TestKnowledgeIndexTenThousandEntriesLatency(t *testing.T) {
 // TestKnowledgeIndexFallsBackWhenBaseExceedsCap：
 // 单库条目数超过索引内存上限时不做缓存，回退为全表 BM25，结果仍与暴力检索一致。
 func TestKnowledgeIndexFallsBackWhenBaseExceedsCap(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	seedIndexedCorpus(t, st)
 	service := newIndexedKnowledgeService(t, st)
 	service.knowledgeIndex.maxEntries = 2 // 语料多于 2 条：无法缓存
@@ -315,7 +315,7 @@ func TestKnowledgeIndexFallsBackWhenBaseExceedsCap(t *testing.T) {
 // TestKnowledgeIndexConcurrentSearchAndInvalidate：
 // 并发检索 + 并发增删条目（触发索引失效）不应死锁/竞态，且最终写入对检索可见。
 func TestKnowledgeIndexConcurrentSearchAndInvalidate(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	base, _ := seedIndexedCorpus(t, st)
 	service := newIndexedKnowledgeService(t, st)
 

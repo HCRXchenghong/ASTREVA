@@ -80,13 +80,36 @@ export default function ChatWidget({
   };
 
   const iframeUrl = useMemo(() => {
-    const base = normalizeBridgeUrl(serviceBridgeUrl) || normalizeBridgeUrl(envBridgeUrl) || window.location.origin;
+    const envBase = normalizeBridgeUrl(envBridgeUrl);
+    const contentBase = normalizeBridgeUrl(serviceBridgeUrl);
+    const isLocal = (value: string) => {
+      try {
+        const host = new URL(value).hostname;
+        return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+      } catch {
+        return false;
+      }
+    };
+    // The CMS serviceBridgeUrl may only point at the configured bridge host
+    // (or a local dev address); otherwise a tampered CMS could exfiltrate visitor tokens.
+    let base = contentBase || envBase || window.location.origin;
+    if (envBase && contentBase && !isLocal(contentBase)) {
+      try {
+        if (new URL(contentBase).hostname !== new URL(envBase).hostname) base = envBase;
+      } catch {
+        base = envBase;
+      }
+    }
     try {
       const url = new URL(base);
       if (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1') {
         url.hostname = window.location.hostname;
       }
       url.searchParams.set('embed', '1');
+      // The support page is served separately from the website bundle. Give each
+      // website load a fresh iframe URL so an already cached support document
+      // cannot keep running an older conversation flow after a local update.
+      url.searchParams.set('v', String(Date.now()));
       const lang = String(siteLocale || '')
         .toLowerCase()
         .startsWith('ar')
@@ -193,7 +216,7 @@ export default function ChatWidget({
   };
 
   return (
-    <div data-chat-launcher className="fixed bottom-6 right-6 z-[100] flex flex-col items-end">
+    <div data-chat-launcher className="fixed right-6 z-[100] flex flex-col items-end">
       {isOpen && (
         <div
           data-chat-panel

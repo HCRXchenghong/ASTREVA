@@ -4,6 +4,7 @@
  * `variant` maps to brand tokens; no caller should write hex values again.
  */
 import Icon from './Icon.astro';
+import { safeHref } from '../../lib/i18n';
 import type { IconName } from '../../lib/icons';
 
 type Props = {
@@ -40,6 +41,8 @@ const sizes = {
   lg: 'px-8 py-4 text-base'
 };
 
+const safeLink = href ? safeHref(href) : undefined;
+
 const classes = [
   'inline-flex items-center justify-center gap-2 rounded-lg font-bold transition-colors',
   variants[variant],
@@ -49,9 +52,9 @@ const classes = [
 ---
 
 {
-  href ? (
+  safeLink ? (
     <a
-      href={href}
+      href={safeLink}
       class:list={classes}
       aria-label={ariaLabel}
       {...(target ? { target, rel: 'noopener noreferrer' } : {})}

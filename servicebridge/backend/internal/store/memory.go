@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net"
 	"sort"
 	"strings"
@@ -78,6 +79,8 @@ type MemoryStore struct {
 }
 
 type Options struct {
+	// Logger 仅用于本地未配置 bootstrap 口令时提示一次性随机口令。
+	Logger                 *slog.Logger
 	OpenAIAPIKey           string
 	OpenAIBaseURL          string
 	OpenAIModel            string
@@ -159,7 +162,7 @@ func NewMemoryStore(options Options) *MemoryStore {
 		ID:       "admin_super",
 		Account:  "superadmin",
 		Name:     "超级管理员",
-		Password: nonEmpty(options.BootstrapAdminPassword, "123456"),
+		Password: effectiveBootstrapPassword(options.BootstrapAdminPassword, "admin", options.Logger),
 		Created:  now,
 	}
 	s.adminsByAccount[admin.Account] = admin
@@ -169,7 +172,7 @@ func NewMemoryStore(options Options) *MemoryStore {
 		Account:          "admin",
 		Name:             "客服-李雪",
 		Group:            "售前组",
-		Password:         nonEmpty(options.BootstrapAgentPassword, "123456"),
+		Password:         effectiveBootstrapPassword(options.BootstrapAgentPassword, "agent", options.Logger),
 		Status:           domain.AgentOffline,
 		MaxConversations: 10,
 		Created:          now,

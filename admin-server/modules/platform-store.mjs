@@ -785,6 +785,9 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
       ip: String(visit.ip || '').slice(0, 64),
       ipSource: String(visit.ipSource || '').slice(0, 32),
       country: String(visit.country || '').slice(0, 8),
+      region: String(visit.region || '').slice(0, 120),
+      city: String(visit.city || '').slice(0, 120),
+      timezone: String(visit.timezone || '').slice(0, 80),
       userAgent: String(visit.userAgent || '').slice(0, 512),
       browser: String(visit.browser || '').slice(0, 64),
       browserVersion: String(visit.browserVersion || '').slice(0, 32),
@@ -804,9 +807,9 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     }
     await query(
       `INSERT INTO site_analytics_visits
-        (path, host, referrer, ip, ip_source, country, user_agent, browser, browser_version, os, device, visitor_id, session_id, anonymous, event_type, is_bot)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-      [row.path, row.host, row.referrer, row.ip, row.ipSource, row.country, row.userAgent, row.browser,
+        (path, host, referrer, ip, ip_source, country, region, city, timezone, user_agent, browser, browser_version, os, device, visitor_id, session_id, anonymous, event_type, is_bot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+      [row.path, row.host, row.referrer, row.ip, row.ipSource, row.country, row.region, row.city, row.timezone, row.userAgent, row.browser,
         row.browserVersion, row.os, row.device, row.visitorId, row.sessionId, row.anonymous, row.eventType, row.isBot]
     );
   }
@@ -831,7 +834,7 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     params.push(limit);
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const result = await query(
-      `SELECT id, occurred_at, path, host, referrer, ip, ip_source, country, user_agent, browser, browser_version,
+      `SELECT id, occurred_at, path, host, referrer, ip, ip_source, country, region, city, timezone, user_agent, browser, browser_version,
               os, device, visitor_id, session_id, anonymous, event_type, is_bot
        FROM site_analytics_visits ${where} ORDER BY occurred_at DESC LIMIT $${params.length}`,
       params
@@ -845,6 +848,9 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
       ip: row.ip,
       ipSource: row.ip_source,
       country: row.country,
+      region: row.region,
+      city: row.city,
+      timezone: row.timezone,
       userAgent: row.user_agent,
       browser: row.browser,
       browserVersion: row.browser_version,
@@ -863,7 +869,7 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     if (!Number.isFinite(numeric)) return null;
     if (!usePostgres) return memoryVisits.find((item) => Number(item.id) === numeric) || null;
     const result = await query(
-      `SELECT id, occurred_at, path, host, referrer, ip, ip_source, country, user_agent, browser, browser_version,
+      `SELECT id, occurred_at, path, host, referrer, ip, ip_source, country, region, city, timezone, user_agent, browser, browser_version,
               os, device, visitor_id, session_id, anonymous, event_type, is_bot
        FROM site_analytics_visits WHERE id = $1`,
       [numeric]
@@ -872,7 +878,7 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     if (!row) return null;
     return {
       id: Number(row.id), occurredAt: toIso(row.occurred_at), path: row.path, host: row.host, referrer: row.referrer,
-      ip: row.ip, ipSource: row.ip_source, country: row.country, userAgent: row.user_agent, browser: row.browser,
+      ip: row.ip, ipSource: row.ip_source, country: row.country, region: row.region, city: row.city, timezone: row.timezone, userAgent: row.user_agent, browser: row.browser,
       browserVersion: row.browser_version, os: row.os, device: row.device, visitorId: row.visitor_id,
       sessionId: row.session_id, anonymous: Boolean(row.anonymous), eventType: row.event_type, isBot: row.is_bot
     };
@@ -1081,7 +1087,7 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
   }
 
   async function purgeSystemEvents(options = {}) {
-    const eventDays = Math.max(Number(options.eventDays) || 180, 7);
+    const eventDays = Math.max(Number(options.eventDays) || 180, 180);
     const visitDays = Math.max(Number(options.visitDays) || 30, 1);
     if (!usePostgres) {
       const now = Date.now();
@@ -1182,6 +1188,18 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     return result.rowCount || 0;
   }
 
+  async function revokeAllAdminSessions() {
+    if (!usePostgres) {
+      let count = 0;
+      for (const row of memorySessions.values()) {
+        if (!row.revokedAt) { row.revokedAt = new Date().toISOString(); count += 1; }
+      }
+      return count;
+    }
+    const result = await query('UPDATE site_admin_sessions SET revoked_at = now() WHERE revoked_at IS NULL');
+    return result.rowCount || 0;
+  }
+
   async function pruneAdminSessions() {
     if (!usePostgres) {
       const now = Date.now();
@@ -1253,6 +1271,7 @@ export function createPlatformStore({ driver = 'json', databaseUrl = '', encrypt
     isAdminSessionActive,
     revokeAdminSession,
     revokeAdminSessionsForUser,
+    revokeAllAdminSessions,
     pruneAdminSessions,
     listAdminSessions,
     migrateLegacyJson,

@@ -92,6 +92,7 @@
   import { computed, onMounted, reactive, ref } from 'vue';
   import { Message } from '@arco-design/web-vue';
   import { fetchBootstrap, updateLead } from '@/api/admin';
+  import { csvCell as cell } from '@/utils/csv';
 
   const leads = ref<any[]>([]);
   const loading = ref(false);
@@ -175,7 +176,6 @@
       '优先级',
       '内部备注',
     ];
-    const cell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
     const rows = filtered.value.map((item) => [
       item.submittedAt,
       item.name,

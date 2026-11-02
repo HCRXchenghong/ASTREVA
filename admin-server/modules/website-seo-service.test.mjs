@@ -65,3 +65,37 @@ test('AI SEO 拒绝缺项和重复 ID', async () => {
   };
   await assert.rejects(() => createWebsiteSeoService({ aiService }).generate(sampleContent()), /预期 7 项/);
 });
+
+test('英文和阿拉伯语 SEO 使用本语言页面内容独立生成', async () => {
+  const calls = [];
+  const aiService = {
+    async generateJson(prompt, options) {
+      const locale = options.capability === 'seo'
+        ? (prompt.match(/当前目标语言是 ([^；]+)/)?.[1] || '')
+        : '';
+      calls.push(locale);
+      const input = JSON.parse(prompt.slice(prompt.lastIndexOf('\n') + 1));
+      const words = locale === 'ar'
+        ? ['حلول تصريف ASTREVA', 'تعرّف على منتجات وحلول ASTREVA لتصريف المياه الصناعية والمباني وخدماتها المهنية ومعلومات التطبيق.', 'تصريف المياه,ASTREVA,الصرف الصناعي']
+        : ['ASTREVA Drainage Solutions', 'Explore ASTREVA drainage products, applications and professional services for industrial and building projects.', 'drainage systems,ASTREVA,industrial drainage'];
+      return input.map((item) => ({ id: item.id, title: words[0], description: words[1], keywords: words[2] }));
+    }
+  };
+  const source = sampleContent();
+  const service = createWebsiteSeoService({ aiService });
+  const englishContent = structuredClone(source);
+  englishContent.site.brandName = 'ASTREVA';
+  englishContent.home.hero.title = 'Industrial drainage systems';
+  const english = await service.generateLocale(englishContent, 'en');
+  const arabicContent = structuredClone(source);
+  arabicContent.site.brandName = 'ASTREVA';
+  arabicContent.home.hero.title = 'أنظمة تصريف صناعية';
+  const arabic = await service.generateLocale(arabicContent, 'ar');
+
+  assert.deepEqual(calls, ['en', 'ar']);
+  assert.equal(english.locale, 'en');
+  assert.equal(arabic.locale, 'ar');
+  assert.equal(english.content.home.seo.title, 'ASTREVA Drainage Solutions');
+  assert.equal(arabic.content.home.seo.title, 'حلول تصريف ASTREVA');
+  assert.equal(source.home.seo.title, '旧首页标题');
+});

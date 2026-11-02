@@ -41,7 +41,7 @@ func newKnowledgeUpstream(t *testing.T, reply string) (*httptest.Server, *int32)
 // newKnowledgeRouter 构建可访问底层 store 的测试路由（关闭营业时间限制）。
 func newKnowledgeRouter(t *testing.T) (http.Handler, store.Store) {
 	t.Helper()
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	_, _ = st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false})
 	service := app.NewService(st, realtime.NewHub(), slog.Default())
 	return NewRouter(config.Config{Env: "test"}, slog.Default(), service), st

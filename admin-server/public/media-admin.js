@@ -67,8 +67,16 @@
     toastTimer = setTimeout(() => { element.className = 'toast'; }, 3800);
   }
 
+  function csrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)astreva_admin_csrf=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+
   async function request(url, options = {}) {
-    const response = await fetch(url, options);
+    const method = String(options.method || 'GET').toUpperCase();
+    const headers = { ...(options.headers || {}) };
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken()) headers['X-CSRF-Token'] = csrfToken();
+    const response = await fetch(url, { ...options, headers });
     const payload = await response.json().catch(() => ({}));
     if (response.status === 401) {
       location.href = `/admin-2fa?returnTo=${encodeURIComponent(location.pathname + location.search + location.hash)}`;
@@ -628,7 +636,7 @@
     if (close) closeModal(close.dataset.closeModal);
   });
   $('#refreshAll').addEventListener('click', refreshCurrent);
-  $('#logout').addEventListener('click', async () => { await fetch('/site-admin-auth/logout', { method: 'POST' }); location.href = '/admin-2fa'; });
+  $('#logout').addEventListener('click', async () => { await fetch('/site-admin-auth/logout', { method: 'POST', headers: { 'X-CSRF-Token': csrfToken() } }); location.href = '/admin-2fa'; });
 
   $('#openUpload').addEventListener('click', () => { state.uploadQueue = []; renderUploadQueue(); $('#uploadProgress').textContent = ''; setUploadMode('smart'); openModal('upload'); });
   $('#openCategories').addEventListener('click', () => openModal('category'));

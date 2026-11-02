@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
@@ -59,10 +60,95 @@ func findAgentByID(agents []domain.Agent, id string) (domain.Agent, bool) {
 	return domain.Agent{}, false
 }
 
+type uploadQuotaEntry struct {
+	bytes   int64
+	files   int
+	resetAt time.Time
+}
+
+type uploadQuotaTracker struct {
+	mu      sync.Mutex
+	entries map[string]*uploadQuotaEntry
+}
+
+func newUploadQuotaTracker() *uploadQuotaTracker {
+	return &uploadQuotaTracker{entries: map[string]*uploadQuotaEntry{}}
+}
+
+func (q *uploadQuotaTracker) check(key string, size int64, maxBytes int64, maxFiles int) (bool, string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	now := time.Now()
+	entry := q.entries[key]
+	if entry == nil || !entry.resetAt.After(now) {
+		entry = &uploadQuotaEntry{resetAt: now.Add(24 * time.Hour)}
+		q.entries[key] = entry
+	}
+	if entry.files >= maxFiles {
+		return false, "今天上传的文件数量已达上限"
+	}
+	if size > 0 && entry.bytes+size > maxBytes {
+		return false, "今天上传的总流量已达上限"
+	}
+	// 防止长期运行 map 膨胀。
+	if len(q.entries) > 10000 {
+		for entryKey, value := range q.entries {
+			if !value.resetAt.After(now) {
+				delete(q.entries, entryKey)
+			}
+		}
+	}
+	return true, ""
+}
+
+func (q *uploadQuotaTracker) record(key string, size int64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	entry := q.entries[key]
+	if entry == nil || !entry.resetAt.After(time.Now()) {
+		entry = &uploadQuotaEntry{resetAt: time.Now().Add(24 * time.Hour)}
+		q.entries[key] = entry
+	}
+	entry.files++
+	if size > 0 {
+		entry.bytes += size
+	}
+}
+
+func envInt64Value(key string, fallback int64) int64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envIntValue(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
 func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) http.Handler {
 	mux := http.NewServeMux()
 	trustedProxies := parseTrustedProxyCIDRs(cfg.TrustedProxyCIDRs)
+	// 会话创建是公开接口，单独限速：0.02/s + burst 8，约 72 个/小时/IP。
+	var conversationLimiter *rateLimiter
+	if cfg.RateLimitEnabled {
+		conversationLimiter = newRateLimiter(0.02, 8)
+	}
 	service.SetWebSocketAllowedOrigins(parseAllowedOrigins(cfg.CORSAllowedOrigins))
+	service.Hub().SetLimits(envIntValue("WS_MAX_CLIENTS", 5000), envIntValue("WS_MAX_PER_ACCOUNT", 10))
 	// 提醒渠道正文里的会话链接前缀（可为空；为空时不下发链接）。
 	service.SetAlertLinkHint(cfg.PublicAdminURL)
 	if !strings.EqualFold(strings.TrimSpace(cfg.UploadDriver), "s3") {
@@ -131,6 +217,14 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 	})
 
 	mux.HandleFunc("POST /api/visitor/conversations", func(w http.ResponseWriter, r *http.Request) {
+		if conversationLimiter != nil && !conversationLimiter.allow("conv:"+clientIP(r, trustedProxies), time.Now()) {
+			w.Header().Set("Retry-After", "60")
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{
+				"error":   "rate_limited",
+				"message": "创建会话过于频繁，请稍后再试",
+			})
+			return
+		}
 		var req createConversationRequest
 		if !decodeOptionalJSON(w, r, &req) {
 			return
@@ -172,9 +266,34 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 
 	mux.Handle("GET /uploads/", upload.LocalFileHandler(cfg))
 
+	uploadQuota := newUploadQuotaTracker()
+	maxUploadQuotaBytes := envInt64Value("UPLOAD_DAILY_BYTES_PER_VISITOR", 100*1024*1024)
+	maxUploadQuotaFiles := envIntValue("UPLOAD_DAILY_FILES_PER_VISITOR", 100)
+	// 全局上限防止攻击者用大量 visitor token 绕过单访客配额打满磁盘。
+	maxUploadGlobalBytes := envInt64Value("UPLOAD_DAILY_BYTES_GLOBAL", 5*1024*1024*1024)
+	maxUploadGlobalFiles := envIntValue("UPLOAD_DAILY_FILES_GLOBAL", 5000)
+
 	mux.HandleFunc("POST /api/uploads", func(w http.ResponseWriter, r *http.Request) {
 		if !canUpload(service, r) {
 			writeError(w, store.ErrForbidden)
+			return
+		}
+		quotaKey := "ip:" + clientIP(r, trustedProxies)
+		if visitor, err := service.AuthVisitorFromRequest(r); err == nil {
+			quotaKey = "visitor:" + visitor.AccountID
+		}
+		if ok, message := uploadQuota.check(quotaKey, r.ContentLength, maxUploadQuotaBytes, maxUploadQuotaFiles); !ok {
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{
+				"error":   "upload_quota_exceeded",
+				"message": message,
+			})
+			return
+		}
+		if ok, message := uploadQuota.check("global", r.ContentLength, maxUploadGlobalBytes, maxUploadGlobalFiles); !ok {
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{
+				"error":   "upload_quota_exceeded",
+				"message": message,
+			})
 			return
 		}
 		uploaded, err := upload.SaveHTTP(w, r, cfg)
@@ -182,6 +301,8 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 			writeError(w, err)
 			return
 		}
+		uploadQuota.record(quotaKey, int64(uploaded.Size))
+		uploadQuota.record("global", int64(uploaded.Size))
 		writeJSON(w, http.StatusCreated, uploaded)
 	})
 
@@ -1505,8 +1626,8 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 	// 【服务间接口】仅限管理员会话调用，供 admin-server 读取供应商明文配置（下轮接入）。
 	// 普通后台列表/详情永远不会返回 api_key 明文；此接口必须限制在内网调用。
 	// /resolve 与 /secret 指向同一实现，兼容服务间既有叫法。
-	mux.HandleFunc("GET /api/admin/ai-providers/{id}/secret", handleAIProviderSecret(service, trustedProxies))
-	mux.HandleFunc("GET /api/admin/ai-providers/{id}/resolve", handleAIProviderSecret(service, trustedProxies))
+	mux.HandleFunc("GET /api/admin/ai-providers/{id}/secret", handleAIProviderSecret(service, cfg, trustedProxies))
+	mux.HandleFunc("GET /api/admin/ai-providers/{id}/resolve", handleAIProviderSecret(service, cfg, trustedProxies))
 
 	mux.HandleFunc("GET /api/admin/ai-bindings", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdmin(service, r) {
@@ -2201,7 +2322,8 @@ func NewRouter(cfg config.Config, logger *slog.Logger, service *app.Service) htt
 		Store:            service.Store(),
 		App:              service,
 		Logger:           logger,
-		Enabled:          cfg.OpenAPIEnabled,
+		Enabled:          true,
+		PolicyControlled: true,
 		DefaultRateLimit: cfg.OpenAPIDefaultRateLimit,
 		ResolveIP: func(r *http.Request) (string, string) {
 			info := resolveClientIP(r, trustedProxies)
@@ -2510,10 +2632,20 @@ func resolveAgentKnowledgeBaseIDs(service *app.Service, ids []string) ([]string,
 
 // handleAIProviderSecret 实现服务间解密配置读取接口：
 // 仅管理员会话可访问，返回明文 api_key，响应头标记 X-Astreva-Service-Only。
-func handleAIProviderSecret(service *app.Service, proxies trustedProxySet) http.HandlerFunc {
+func handleAIProviderSecret(service *app.Service, cfg config.Config, proxies trustedProxySet) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(service, r) {
-			writeError(w, store.ErrForbidden)
+		// 服务间接口：只认 X-Internal-Token，不再接受管理员 Cookie/Token。
+		expected := strings.TrimSpace(cfg.InternalAPIToken)
+		if expected == "" {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error":   "internal_token_unconfigured",
+				"message": "服务间接口未配置 INTERNAL_API_TOKEN，已拒绝请求",
+			})
+			return
+		}
+		provided := strings.TrimSpace(r.Header.Get("X-Internal-Token"))
+		if provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+			writeError(w, store.ErrUnauthorized)
 			return
 		}
 		provider, ok := service.Store().AIProvider(r.PathValue("id"))
@@ -2525,9 +2657,10 @@ func handleAIProviderSecret(service *app.Service, proxies trustedProxySet) http.
 		if model == "" && len(provider.Models) > 0 {
 			model = strings.TrimSpace(provider.Models[0])
 		}
+		recordAudit(service, domain.AuthSession{Kind: domain.AccountAdmin, AccountID: "admin-server"}, r, proxies,
+			"ai_provider.secret_read", "ai_provider", provider.ID, "服务间读取 AI 供应商解密配置")
 		w.Header().Set("X-Astreva-Service-Only", "true")
 		w.Header().Set("Cache-Control", "no-store")
-		recordAuditFromRequest(service, r, proxies, "ai_provider.secret_read", "ai_provider", provider.ID, "服务间读取 AI 供应商解密配置")
 		writeJSON(w, http.StatusOK, map[string]any{
 			"service_only":  true,
 			"id":            provider.ID,
@@ -2665,7 +2798,7 @@ func writeConversationCSV(w http.ResponseWriter, conversations []domain.Conversa
 		"source", "last_message", "last_message_at", "unread_for_agent", "unread_for_visitor", "created_at", "updated_at",
 	}, func(writer *csv.Writer) {
 		for _, item := range conversations {
-			_ = writer.Write([]string{
+			writeCSVRow(writer,
 				item.ID,
 				item.VisitorID,
 				item.VisitorIP,
@@ -2679,7 +2812,7 @@ func writeConversationCSV(w http.ResponseWriter, conversations []domain.Conversa
 				strconv.Itoa(item.UnreadForVisitor),
 				formatTime(item.CreatedAt),
 				formatTime(item.UpdatedAt),
-			})
+			)
 		}
 	})
 }
@@ -2689,7 +2822,7 @@ func writeAuditEventCSV(w http.ResponseWriter, events []domain.AuditEvent) {
 		"id", "actor_kind", "actor_id", "action", "resource", "resource_id", "ip_address", "user_agent", "description", "created_at",
 	}, func(writer *csv.Writer) {
 		for _, item := range events {
-			_ = writer.Write([]string{
+			writeCSVRow(writer,
 				item.ID,
 				string(item.ActorKind),
 				item.ActorID,
@@ -2700,9 +2833,27 @@ func writeAuditEventCSV(w http.ResponseWriter, events []domain.AuditEvent) {
 				item.UserAgent,
 				item.Description,
 				formatTime(item.CreatedAt),
-			})
+			)
 		}
 	})
+}
+
+// csvSafe 阻止 Excel/LibreOffice 把访客可控字段当成公式执行（CSV injection）。
+func csvSafe(value string) string {
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	if value != "" && strings.ContainsRune("=+-@\t", rune(value[0])) {
+		return "'" + value
+	}
+	return value
+}
+
+func writeCSVRow(writer *csv.Writer, values ...string) {
+	safe := make([]string, len(values))
+	for index, value := range values {
+		safe[index] = csvSafe(value)
+	}
+	_ = writer.Write(safe)
 }
 
 func writeCSV(w http.ResponseWriter, filename string, header []string, writeRows func(*csv.Writer)) {

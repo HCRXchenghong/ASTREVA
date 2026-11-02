@@ -9,6 +9,7 @@ export type FieldType =
   | 'checkbox'
   | 'select'
   | 'media'
+  | 'mediaList'
   | 'listText'
   | 'pairList'
   | 'objectList'
@@ -25,6 +26,10 @@ export interface FieldDef {
   /** 媒体字段：上传 accept 与素材库过滤类型 */
   accept?: string;
   mediaType?: 'image' | 'video' | 'file';
+  legacyImageKey?: string;
+  legacyVideoKey?: string;
+  legacyExtraVideoKey?: string;
+  defaultImages?: string[];
   /** 下拉选项 */
   options?: { label: string; value: any }[];
   /** objectList 的子字段 */
@@ -65,6 +70,8 @@ export const CONTENT_MODULE_GROUPS: ContentModuleGroup[] = [
       'solutions',
       'support',
       'about',
+      'aboutManufacturing',
+      'aboutQuality',
       'warranty',
       'install',
       'faqPage',
@@ -137,6 +144,8 @@ export const MODULE_LABELS: Record<string, string> = {
   solutions: '解决方案',
   support: '服务支持',
   about: '关于我们',
+  aboutManufacturing: '关于我们 · 制造能力',
+  aboutQuality: '关于我们 · 工程与品质',
   warranty: '质保页面',
   install: '安装指南',
   faq: '常见问题',
@@ -169,6 +178,8 @@ export const MODULE_PREVIEW_PATHS: Record<string, string> = {
   solutions: '/solutions/#solutions-hero',
   support: '/support/#support-hero',
   about: '/about/#about-hero',
+  aboutManufacturing: '/about/manufacturing/#about-subpage-hero',
+  aboutQuality: '/about/quality/#about-subpage-hero',
   warranty: '/support/warranty/#warranty-content',
   install: '/support/install/#install-content',
   faq: '/support/faq/#faq-list',
@@ -203,6 +214,16 @@ const videoField = (key: string, label: string): FieldDef => ({
   mediaType: 'video',
 });
 
+const mediaListField = (key: string, label: string, legacyImageKey?: string, legacyVideoKey?: string, defaultImages?: string[]): FieldDef => ({
+  key, label, type: 'mediaList', full: true, legacyImageKey, legacyVideoKey, defaultImages,
+  hint: '可添加图片或视频并排序；多张图片在前台自动轮播。视频可选择点击播放或静音自动播放。列表为空时显示默认图片。',
+});
+
+const sceneDefaults = (name: string) => [
+  `/assets/placeholders/scenes/${name}.webp`,
+  `/assets/placeholders/scenes/${name}-alternate.webp`,
+];
+
 const seoFields = (prefix: string): FieldDef[] => [
   { key: `${prefix}.title`, label: 'SEO 标题' },
   { key: `${prefix}.description`, label: 'SEO 描述', type: 'textarea' },
@@ -215,12 +236,17 @@ const HOME_HERO_FIELDS: FieldDef[] = [
   { key: 'home.hero.title', label: '主标题' },
   { key: 'home.hero.trademark', label: '商标角标' },
   { key: 'home.hero.subtitle', label: '副标题', type: 'textarea' },
-  imageField('home.hero.backgroundImage', '背景图'),
-  videoField('home.hero.backgroundVideo', '背景视频'),
+  mediaListField('home.hero.mediaItems', '首屏背景媒体', 'home.hero.backgroundImage', 'home.hero.backgroundVideo', sceneDefaults('home-hero')),
   { key: 'home.hero.primaryCta', label: '主按钮文字' },
   { key: 'home.hero.primaryHref', label: '主按钮链接' },
   { key: 'home.hero.secondaryCta', label: '播放按钮文字' },
-  { key: 'home.hero.videoUrl', label: '播放视频链接' },
+  videoField('home.hero.videoUrl', '播放视频'),
+  mediaListField('home.hero.videoMediaItems', '播放弹窗媒体', undefined, 'home.hero.videoUrl', sceneDefaults('home-hero')),
+  imageField('home.hero.videoModalBackgroundImage', '视频弹窗背景图'),
+  mediaListField('home.hero.videoModalBackgroundMediaItems', '视频弹窗背景媒体', 'home.hero.videoModalBackgroundImage', undefined, sceneDefaults('home-hero')),
+  imageField('home.hero.videoPosterImage', '视频封面图'),
+  { key: 'home.hero.videoModalEyebrow', label: '视频弹窗眉标' },
+  { key: 'home.hero.videoModalDescription', label: '视频弹窗说明', type: 'textarea' },
   { key: 'home.hero.videoTitle', label: '视频弹窗标题' },
   { key: 'home.hero.videoPreviewLabel', label: '视频占位提示' },
   { key: 'home.hero.videoOpenExternalLabel', label: '外部打开按钮文字' },
@@ -235,7 +261,7 @@ const HOME_PRODUCTS_FIELDS: FieldDef[] = [
   { key: 'home.featuredProducts.linkIcon', label: '产品卡片链接图标' },
   { key: 'home.productIntro.title', label: '产品介绍标题' },
   { key: 'home.productIntro.description', label: '产品介绍描述', type: 'textarea', rows: 5 },
-  imageField('home.productIntro.image', '产品介绍图片'),
+  mediaListField('home.productIntro.mediaItems', '产品介绍媒体', 'home.productIntro.image', undefined, sceneDefaults('home-product-intro')),
   {
     key: 'home.productIntro.bullets',
     label: '产品介绍要点',
@@ -286,7 +312,7 @@ const HOME_CTA_FIELDS: FieldDef[] = [
   { key: 'home.cta.primaryHref', label: '主按钮链接' },
   { key: 'home.cta.secondaryLabel', label: '次按钮' },
   { key: 'home.cta.secondaryHref', label: '次按钮链接' },
-  imageField('home.cta.backgroundImage', '背景图'),
+  mediaListField('home.cta.mediaItems', '行动区背景媒体', 'home.cta.backgroundImage', undefined, sceneDefaults('home-hero')),
   {
     key: 'home.partners',
     label: '合作伙伴名单',
@@ -314,8 +340,7 @@ const HOME_CTA_FIELDS: FieldDef[] = [
 
 const PRODUCT_CENTER_FIELDS: FieldDef[] = [
   { key: 'productCenter.hero.title', label: '首屏标题' },
-  imageField('productCenter.hero.backgroundImage', '首屏背景图'),
-  videoField('productCenter.hero.backgroundVideo', '首屏背景视频'),
+  mediaListField('productCenter.hero.mediaItems', '首屏背景媒体', 'productCenter.hero.backgroundImage', 'productCenter.hero.backgroundVideo', sceneDefaults('municipal')),
   { key: 'productCenter.catalog.eyebrow', label: '产品页眉标' },
   { key: 'productCenter.catalog.description', label: '产品页描述', type: 'textarea' },
   { key: 'productCenter.catalog.categoriesEyebrow', label: '分类区眉标' },
@@ -329,6 +354,7 @@ const PRODUCT_CENTER_FIELDS: FieldDef[] = [
   { key: 'productCenter.categoryPage.backLabel', label: '返回按钮文字' },
   { key: 'productCenter.categoryPage.backIcon', label: '返回按钮图标' },
   { key: 'productCenter.categoryPage.productHoverLabel', label: '产品悬浮按钮文字' },
+  { key: 'productCenter.categoryPage.placeholderImageLabel', label: '产品卡片示意图文字' },
   { key: 'productCenter.detailPage.breadcrumbSeparator', label: '面包屑分隔符' },
   { key: 'productCenter.detailPage.badgeLabel', label: '详情页徽标' },
   { key: 'productCenter.detailPage.badgeIcon', label: '详情页徽标图标' },
@@ -344,14 +370,15 @@ const PRODUCT_CENTER_FIELDS: FieldDef[] = [
   { key: 'productCenter.detailPage.descriptionTitle', label: '说明右侧标题' },
   { key: 'productCenter.detailPage.galleryTitle', label: '图库标题' },
   { key: 'productCenter.detailPage.videoTitle', label: '视频标题' },
+  { key: 'productCenter.detailPage.specsEmptyMessage', label: '空规格提示' },
+  { key: 'productCenter.detailPage.placeholderImageLabel', label: '产品详情示意图文字' },
   ...seoFields('productCenter.seo'),
 ];
 
 const SUPPORT_FIELDS: FieldDef[] = [
   { key: 'support.hero.title', label: '首屏标题' },
   { key: 'support.hero.description', label: '首屏描述', type: 'textarea' },
-  imageField('support.hero.backgroundImage', '首屏背景图'),
-  videoField('support.hero.backgroundVideo', '首屏背景视频'),
+  mediaListField('support.hero.mediaItems', '首屏背景媒体', 'support.hero.backgroundImage', 'support.hero.backgroundVideo', sceneDefaults('industrial')),
   {
     key: 'support.services',
     label: '服务卡片',
@@ -534,18 +561,20 @@ const SEO_FIELDS: FieldDef[] = [
 ];
 
 const STATIC_PAGE_COMMON: FieldDef[] = [
+  { key: 'enabled', label: '启用页面', type: 'checkbox', hint: '关闭后不生成该页面，也不在关于我们页展示入口。' },
   { key: 'title', label: '页面标题' },
   { key: 'hero.eyebrow', label: '首屏眉标' },
   { key: 'hero.title', label: '首屏标题' },
   { key: 'hero.subtitle', label: '首屏副标题', type: 'textarea' },
   { key: 'hero.description', label: '首屏描述', type: 'textarea' },
-  imageField('hero.backgroundImage', '首屏背景图'),
-  videoField('hero.backgroundVideo', '首屏背景视频'),
+  mediaListField('hero.mediaItems', '首屏背景媒体', 'hero.backgroundImage', 'hero.backgroundVideo'),
 ];
 
 const ABOUT_EXTRA: FieldDef[] = [
   { key: 'sections.introIcon', label: '正文图标' },
   { key: 'sections.partnersTitle', label: '合作伙伴标题' },
+  { key: 'sections.companyPagesTitle', label: '关于我们子页区标题' },
+  { key: 'sections.imagePlaceholderLabel', label: '关于我们图片占位文字' },
 ];
 
 const SOLUTION_EXTRA: FieldDef[] = [
@@ -573,9 +602,10 @@ const SOLUTION_EXTRA: FieldDef[] = [
       { key: 'navLabel', label: '导航标签' },
       { key: 'title', label: '标题' },
       { key: 'description', label: '场景说明', type: 'textarea' },
-      imageField('image', '图片 URL'),
+      mediaListField('mediaItems', '场景图片与视频', 'image'),
       imageField('videoImage', '视频封面 URL'),
       videoField('videoUrl', '视频 URL'),
+      mediaListField('videoMediaItems', '视频区域媒体', 'videoImage', 'videoUrl'),
       { key: 'videoCaption', label: '视频说明' },
       { key: 'focusTitle', label: '重点标题' },
       { key: 'focusDescription', label: '重点说明', type: 'textarea' },
@@ -606,6 +636,18 @@ const STATIC_PAGE_SEO: FieldDef[] = [
 
 const STATIC_PAGE_EXTRAS: Record<string, FieldDef[]> = {
   about: ABOUT_EXTRA,
+  'about-manufacturing': [
+    { key: 'sections.cardLinkLabel', label: '关于我们入口按钮文字' },
+    { key: 'sections.backLabel', label: '返回关于我们按钮文字' },
+    { key: 'sections.contactLabel', label: '联系按钮文字' },
+    { key: 'sections.imagePlaceholderLabel', label: '关于我们图片占位文字' },
+  ],
+  'about-quality': [
+    { key: 'sections.cardLinkLabel', label: '关于我们入口按钮文字' },
+    { key: 'sections.backLabel', label: '返回关于我们按钮文字' },
+    { key: 'sections.contactLabel', label: '联系按钮文字' },
+    { key: 'sections.imagePlaceholderLabel', label: '关于我们图片占位文字' },
+  ],
   solutions: SOLUTION_EXTRA,
   warranty: ICON_EXTRA,
   install: ICON_EXTRA,
@@ -626,8 +668,7 @@ export const CATEGORY_FIELDS: FieldDef[] = [
   { key: 'name', label: '名称' },
   { key: 'slug', label: 'Slug' },
   { key: 'description', label: '简介', type: 'textarea' },
-  imageField('coverImage', '封面图'),
-  videoField('heroVideo', '首屏背景视频'),
+  mediaListField('mediaItems', '品类封面与首屏媒体', 'coverImage', 'heroVideo'),
   { key: 'sortOrder', label: '排序', type: 'number' },
   ...seoFields('seo'),
 ];
@@ -646,7 +687,9 @@ export function productFields(categories: Record<string, any>[] = []): FieldDef[
         value: category.slug,
       })),
     },
-    imageField('coverImage', '封面图'),
+    mediaListField('mediaItems', '产品封面与首屏媒体', 'coverImage'),
+    mediaListField('galleryMediaItems', '产品图库轮播', 'galleryImages'),
+    { ...mediaListField('videoMediaItems', '产品视频轮播', undefined, 'videoUrl'), legacyExtraVideoKey: 'galleryVideos' },
     {
       key: 'galleryImages',
       label: '图库图片',
@@ -654,6 +697,15 @@ export function productFields(categories: Record<string, any>[] = []): FieldDef[
       hint: '每行一个图片 URL，也可以上传多张图片自动追加。',
       appendUpload: true,
       appendAccept: 'image/*',
+      full: true,
+    },
+    {
+      key: 'galleryVideos',
+      label: '图库视频',
+      type: 'listText',
+      hint: '每行一个视频 URL，可上传多个视频；删除某行即可移除该视频。',
+      appendUpload: true,
+      appendAccept: 'video/*',
       full: true,
     },
     { key: 'videoUrl', label: '产品视频', type: 'media', accept: 'video/*', mediaType: 'video', hint: '可填 YouTube/Bilibili iframe 地址，也可上传 mp4/webm。' },
@@ -735,6 +787,8 @@ export function pageFieldsForModule(moduleId: string): FieldDef[] {
 /** 静态页模块 id → staticPage slug。 */
 export const STATIC_MODULE_SLUGS: Record<string, string> = {
   about: 'about',
+  aboutManufacturing: 'about-manufacturing',
+  aboutQuality: 'about-quality',
   solutions: 'solutions',
   warranty: 'warranty',
   install: 'install',
@@ -745,6 +799,8 @@ export const STATIC_MODULE_SLUGS: Record<string, string> = {
 
 export const STATIC_PAGE_OPTIONS = [
   { label: '关于我们', value: 'about' },
+  { label: '制造能力', value: 'about-manufacturing' },
+  { label: '工程与品质', value: 'about-quality' },
   { label: '解决方案', value: 'solutions' },
   { label: '质保页面', value: 'warranty' },
   { label: '安装指南', value: 'install' },

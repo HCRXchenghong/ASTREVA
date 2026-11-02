@@ -97,6 +97,15 @@ export function resolveVideoSource(input: string | undefined | null): VideoEmbed
   const originalUrl = String(input ?? '').trim();
   if (!originalUrl) return { ...EMPTY_VIDEO };
 
+  // Untrusted CMS links must never become arbitrary iframe origins or script URLs.
+  if (!originalUrl.startsWith('/') || originalUrl.startsWith('//')) {
+    try {
+      if (!['https:', 'http:'].includes(new URL(originalUrl).protocol)) return { ...EMPTY_VIDEO };
+    } catch {
+      return { ...EMPTY_VIDEO };
+    }
+  }
+
   if (isMediaFileUrl(originalUrl)) {
     return { url: originalUrl, isShorts: false, originalUrl, isFile: true, isYouTube: false };
   }
@@ -112,5 +121,5 @@ export function resolveVideoSource(input: string | undefined | null): VideoEmbed
     };
   }
 
-  return { url: originalUrl, isShorts: false, originalUrl, isFile: false, isYouTube: false };
+  return { ...EMPTY_VIDEO };
 }

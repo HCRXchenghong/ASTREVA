@@ -16,7 +16,7 @@ import (
 // newPolicyFlowRouter 构造带 app.Service 句柄的测试路由（接管/围观用例需要直接造消息）。
 func newPolicyFlowRouter(t *testing.T) (http.Handler, *store.MemoryStore, *app.Service) {
 	t.Helper()
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	// 关闭营业时间限制，避免用例依赖运行时刻。
 	_, _ = st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false})
 	service := app.NewService(st, realtime.NewHub(), slog.Default())
@@ -91,12 +91,12 @@ func TestHTTPAgentTakeoverAndWatch(t *testing.T) {
 		t.Fatal("访客消息应产生未读")
 	}
 
-	// 围观者可读消息（只读围观），但不能把会话标记已读。
-	doJSON(t, server, http.MethodGet, "/api/conversations/"+conversationID+"/messages", tokenA, nil, http.StatusOK)
-	doJSON(t, server, http.MethodPost, "/api/conversations/"+conversationID+"/read", tokenA, nil, http.StatusOK)
-	if got := flowConversationByID(t, st, conversationID).UnreadForAgent; got != unread {
-		t.Fatalf("围观期间不得标记已读：before=%d after=%d", unread, got)
+	// B 接管后，A 的围观权限必须被清理，不能再读消息或标记已读。
+	if service.IsWatching(agentAID, conversationID) {
+		t.Fatal("会话被接管后应清理围观登记")
 	}
+	doJSON(t, server, http.MethodGet, "/api/conversations/"+conversationID+"/messages", tokenA, nil, http.StatusForbidden)
+	doJSON(t, server, http.MethodPost, "/api/conversations/"+conversationID+"/read", tokenA, nil, http.StatusForbidden)
 	// 与围观无关的第三个客服仍不可读。
 	doJSON(t, server, http.MethodGet, "/api/conversations/"+conversationID+"/messages", tokenC, nil, http.StatusForbidden)
 	// 负责客服 B 可以正常已读。

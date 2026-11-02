@@ -1,0 +1,21 @@
+---
+import CompanySubpageView from '../../views/CompanySubpageView.astro';
+import { getContent } from '../../lib/content';
+import type { CompanyInfoPage } from '../../lib/types';
+
+export async function getStaticPaths() {
+  const aboutRoutes = {
+    manufacturing: 'about-manufacturing',
+    quality: 'about-quality',
+  } as const;
+  const content = await getContent('zh-CN');
+  return Object.entries(aboutRoutes)
+    .filter(([, slug]) => content.staticPages.some((page) => page.slug === slug && page.enabled !== false))
+    .map(([aboutSubpage, slug]) => ({ params: { aboutSubpage }, props: { slug } }));
+}
+
+const { slug } = Astro.props as { slug: CompanyInfoPage['slug'] };
+const content = await getContent('zh-CN');
+---
+
+<CompanySubpageView content={content} locale="zh-CN" slug={slug} />

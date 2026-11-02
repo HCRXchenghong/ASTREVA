@@ -11,7 +11,7 @@ import (
 
 // TestMemoryAgentPreferencesDefaults：未设置过的客服偏好按默认值返回。
 func TestMemoryAgentPreferencesDefaults(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	agent, err := s.CreateAgent(domain.Agent{Account: "pref_default", Name: "偏好客服", Status: domain.AgentOffline}, "AgentPass-123456")
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
@@ -40,7 +40,7 @@ func TestMemoryAgentPreferencesDefaults(t *testing.T) {
 // TestMemoryAgentPreferencesUpdateAndNormalize：
 // 更新后可读回；非法 DialectMode 归一为 standard。
 func TestMemoryAgentPreferencesUpdateAndNormalize(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	agent, err := s.CreateAgent(domain.Agent{Account: "pref_update", Name: "偏好客服", Status: domain.AgentOffline}, "AgentPass-123456")
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
@@ -87,7 +87,7 @@ func TestMemoryAgentPreferencesUpdateAndNormalize(t *testing.T) {
 
 // TestMemoryAgentPreferencesUnknownAgent：不存在的客服返回 ErrNotFound。
 func TestMemoryAgentPreferencesUnknownAgent(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	if _, err := s.AgentPreferences("missing"); err == nil {
 		t.Fatal("expected error for missing agent")
 	}

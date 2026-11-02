@@ -11,7 +11,7 @@ import (
 
 // TestMemoryVisitorProfileSettings 覆盖画像配置的默认值、局部更新与密钥掩码语义。
 func TestMemoryVisitorProfileSettings(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	defaults := st.VisitorProfileSettings()
 	if !defaults.Enabled || !defaults.ShowFullIP || !defaults.AISummaryEnabled {
@@ -102,7 +102,7 @@ func TestMemoryVisitorProfileSettings(t *testing.T) {
 
 // TestMemoryVisitorProfileRoundTrip 覆盖画像创建/更新/读取与 JSONB 字段往返。
 func TestMemoryVisitorProfileRoundTrip(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	visitorID := "vis_round_trip"
 
 	if _, ok := st.VisitorProfile(visitorID); ok {
@@ -185,7 +185,7 @@ func TestMemoryVisitorProfileRoundTrip(t *testing.T) {
 
 // TestMemoryVisitorProfileConcurrentMutate 覆盖同访客并发更新不丢计数（存储层串行化）。
 func TestMemoryVisitorProfileConcurrentMutate(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	visitorID := "vis_concurrent"
 	const workers = 20
 	var wait sync.WaitGroup
@@ -215,7 +215,7 @@ func TestMemoryVisitorProfileConcurrentMutate(t *testing.T) {
 
 // TestMemoryVisitorProfilesFilterAndPaging 覆盖列表筛选与分页。
 func TestMemoryVisitorProfilesFilterAndPaging(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	seed := []struct {
 		id        string
 		country   string
@@ -297,7 +297,7 @@ func TestMemoryVisitorProfilesFilterAndPaging(t *testing.T) {
 
 // TestMemoryVisitorProfileCleanup 覆盖显式删除与"会话清空后随访客数据清理"。
 func TestMemoryVisitorProfileCleanup(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	session, err := st.CreateVisitorConversation("1.2.3.4", "web", "es", "direct", "")
 	if err != nil {
 		t.Fatalf("创建会话失败：%v", err)
@@ -345,7 +345,7 @@ func TestMemoryVisitorProfileCleanup(t *testing.T) {
 
 // TestMemoryVisitorProfileRetentionSettings 覆盖「访客画像保留天数」的默认值、校验与区间。
 func TestMemoryVisitorProfileRetentionSettings(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	// 默认 180 天（后台给的可选项之一）。
 	if got := st.VisitorProfileSettings().RetentionDays; got != domain.DefaultVisitorProfileRetentionDays {
@@ -403,7 +403,7 @@ func TestMemoryVisitorProfileRetentionSettings(t *testing.T) {
 
 // TestMemoryPurgeExpiredVisitorProfiles 验证按保留天数清理：只删超期的，未超期与空时间不动。
 func TestMemoryPurgeExpiredVisitorProfiles(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	now := time.Now().UTC()
 
 	stale, err := st.CreateVisitorConversation("1.1.1.1", "web", "zh", "direct", "")

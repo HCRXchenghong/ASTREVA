@@ -121,7 +121,8 @@ export function createLeadsModule({ readLeads, saveLeads, bodyJson, json, verify
           return Date.now() - createdAt <= DUPLICATE_WINDOW_MS && leadFingerprint(item) === fingerprint;
         });
         if (duplicate) {
-          json(res, 200, { data: duplicate, meta: { duplicate: true } });
+          // 只确认重复，不回传已有咨询单内容（避免内部备注/PII 被重复提交者读取）。
+          json(res, 200, { ok: true, data: { id: duplicate.id, status: duplicate.status }, meta: { duplicate: true } });
           return true;
         }
         const now = new Date().toISOString();

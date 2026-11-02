@@ -72,6 +72,9 @@ type Provider struct {
 	fcmEndpointTemplate string
 	apnsEndpoints       map[string]string
 
+	// allowPrivate 仅用于本地/测试；生产环境禁止 Bark 等自定义地址访问私网。
+	allowPrivate bool
+
 	// 提醒渠道（批次 4）：端点与重试间隔允许测试替换；sendMail 抽象便于用假 SMTP 交互测试。
 	telegramEndpointTemplate string
 	barkEndpointTemplate     string
@@ -107,10 +110,17 @@ func NewProvider(logger *slog.Logger) *Provider {
 		},
 		telegramEndpointTemplate: "https://api.telegram.org/bot%s/sendMessage",
 		barkEndpointTemplate:     "%s/%s/%s/%s",
+		allowPrivate:             true,
 		retryDelays:              []time.Duration{200 * time.Millisecond, 600 * time.Millisecond},
 		sendMail:                 smtpSendMail,
 		tokens:                   map[string]cachedToken{},
 	}
+}
+
+// SetAllowPrivate 控制是否允许提醒渠道访问 loopback/私网地址。
+// 生产环境必须为 false，避免客服配置的 Bark server 变成内网 SSRF。
+func (p *Provider) SetAllowPrivate(allow bool) {
+	p.allowPrivate = allow
 }
 
 // Notify 按设备平台选择通道；未配置任何通道时只记录日志，不影响聊天主流程。

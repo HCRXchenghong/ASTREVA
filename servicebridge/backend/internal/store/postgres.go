@@ -243,11 +243,16 @@ func (s *PostgresStore) ensureCoreTables(ctx context.Context) error {
 			unattended_enabled BOOLEAN NOT NULL DEFAULT true,
 			unattended_reply TEXT NOT NULL DEFAULT '',
 			takeover_popup_enabled BOOLEAN NOT NULL DEFAULT true,
+			open_api_enabled BOOLEAN NOT NULL DEFAULT false,
+			agent_watch_scope TEXT NOT NULL DEFAULT 'own_group',
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			CONSTRAINT service_policy_singleton CHECK (id=1),
 			CONSTRAINT service_policy_sla_idle_action_check CHECK (sla_idle_action IN ('ai','reassign')),
-			CONSTRAINT service_policy_ai_keyword_priority_check CHECK (ai_keyword_priority IN ('keyword_first','ai_first','keyword_only','ai_only'))
+			CONSTRAINT service_policy_ai_keyword_priority_check CHECK (ai_keyword_priority IN ('keyword_first','ai_first','keyword_only','ai_only')),
+			CONSTRAINT service_policy_agent_watch_scope_check CHECK (agent_watch_scope IN ('own_group','all'))
 		)`,
+		`ALTER TABLE service_policy ADD COLUMN IF NOT EXISTS open_api_enabled BOOLEAN NOT NULL DEFAULT false`,
+		`ALTER TABLE service_policy ADD COLUMN IF NOT EXISTS agent_watch_scope TEXT NOT NULL DEFAULT 'own_group'`,
 		// 排队队列：会话删除时级联清理，避免悬挂排队记录。
 		`CREATE TABLE IF NOT EXISTS conversation_queue (
 			conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
@@ -3204,11 +3209,13 @@ func (s *PostgresStore) businessHoursTx(ctx context.Context, exec dbTx) (domain.
 }
 
 func (s *PostgresStore) seedDefaults(ctx context.Context) error {
-	adminHash, err := hashPassword(nonEmpty(s.options.BootstrapAdminPassword, "123456"))
+	adminPassword := effectiveBootstrapPassword(s.options.BootstrapAdminPassword, "admin", s.options.Logger)
+	agentPassword := effectiveBootstrapPassword(s.options.BootstrapAgentPassword, "agent", s.options.Logger)
+	adminHash, err := hashPassword(adminPassword)
 	if err != nil {
 		return err
 	}
-	agentHash, err := hashPassword(nonEmpty(s.options.BootstrapAgentPassword, "123456"))
+	agentHash, err := hashPassword(agentPassword)
 	if err != nil {
 		return err
 	}

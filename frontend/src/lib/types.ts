@@ -5,6 +5,14 @@ export type SEO = {
   image?: string;
 };
 
+export type MediaItem = {
+  type: 'image' | 'video';
+  url: string;
+  alt?: string;
+  poster?: string;
+  playback?: 'click' | 'muted-autoplay';
+};
+
 export type NavigationLink = {
   label: string;
   href: string;
@@ -124,6 +132,7 @@ export type Category = {
   description: string;
   coverImage: string;
   heroVideo?: string;
+  mediaItems?: MediaItem[];
   sortOrder: number;
   seo: SEO;
 };
@@ -136,6 +145,10 @@ export type Product = {
   coverImage: string;
   galleryImages: string[];
   videoUrl?: string;
+  galleryVideos?: string[];
+  mediaItems?: MediaItem[];
+  galleryMediaItems?: MediaItem[];
+  videoMediaItems?: MediaItem[];
   summary: string;
   features: string[];
   specifications: Array<{ label: string; value: string }>;
@@ -152,6 +165,7 @@ export type ProductCenterPage = {
     title: string;
     backgroundImage: string;
     backgroundVideo?: string;
+    mediaItems?: MediaItem[];
   };
   catalog: {
     eyebrow: string;
@@ -169,6 +183,7 @@ export type ProductCenterPage = {
     backIcon: string;
     productHoverLabel: string;
     categoryCtaIcon: string;
+    placeholderImageLabel?: string;
   };
   detailPage: {
     badgeLabel: string;
@@ -186,6 +201,8 @@ export type ProductCenterPage = {
     descriptionTitle: string;
     galleryTitle: string;
     videoTitle: string;
+    specsEmptyMessage?: string;
+    placeholderImageLabel?: string;
   };
 };
 
@@ -198,6 +215,7 @@ export type HomePage = {
     subtitle: string;
     backgroundImage: string;
     backgroundVideo?: string;
+    mediaItems?: MediaItem[];
     primaryCta: string;
     primaryHref: string;
     secondaryCta: string;
@@ -206,6 +224,12 @@ export type HomePage = {
     videoPreviewLabel: string;
     videoOpenExternalLabel: string;
     videoCloseLabel: string;
+    videoModalEyebrow?: string;
+    videoModalDescription?: string;
+    videoModalBackgroundImage?: string;
+    videoModalBackgroundMediaItems?: MediaItem[];
+    videoPosterImage?: string;
+    videoMediaItems?: MediaItem[];
   };
   featuredProducts: {
     title: string;
@@ -222,6 +246,7 @@ export type HomePage = {
     title: string;
     description: string;
     image: string;
+    mediaItems?: MediaItem[];
     bullets: string[];
     bulletIcon: string;
     ctaLabel: string;
@@ -242,6 +267,7 @@ export type HomePage = {
     secondaryLabel: string;
     secondaryHref: string;
     backgroundImage: string;
+    mediaItems?: MediaItem[];
   };
 };
 
@@ -252,6 +278,7 @@ export type SupportPage = {
     description: string;
     backgroundImage: string;
     backgroundVideo?: string;
+    mediaItems?: MediaItem[];
   };
   services: Array<{ title: string; description: string; icon: string; href: string; cta: string }>;
   contact: {
@@ -290,10 +317,11 @@ export type FAQ = {
   enabled: boolean;
 };
 
-export type StaticPageSlug = 'about' | 'solutions' | 'faq' | 'warranty' | 'install' | 'privacy' | 'agreement';
+export type StaticPageSlug = 'about' | 'about-manufacturing' | 'about-quality' | 'solutions' | 'faq' | 'warranty' | 'install' | 'privacy' | 'agreement';
 
 type StaticPageBase<TSlug extends StaticPageSlug> = {
   slug: TSlug;
+  enabled?: boolean;
   title: string;
   hero: {
     eyebrow?: string;
@@ -301,6 +329,7 @@ type StaticPageBase<TSlug extends StaticPageSlug> = {
     description?: string;
     backgroundImage?: string;
     backgroundVideo?: string;
+    mediaItems?: MediaItem[];
   };
   body: string;
   seo: SEO;
@@ -310,8 +339,21 @@ export type AboutPage = StaticPageBase<'about'> & {
   sections: {
     introIcon: string;
     partnersTitle: string;
+    companyPagesTitle?: string;
+    imagePlaceholderLabel?: string;
   };
 };
+
+type CompanyInfoSections = {
+  cardLinkLabel?: string;
+  backLabel?: string;
+  contactLabel?: string;
+  imagePlaceholderLabel?: string;
+};
+
+export type CompanyInfoPage =
+  | (StaticPageBase<'about-manufacturing'> & { sections?: CompanyInfoSections })
+  | (StaticPageBase<'about-quality'> & { sections?: CompanyInfoSections });
 
 export type SolutionSection = {
   id: string;
@@ -322,6 +364,8 @@ export type SolutionSection = {
   image?: string;
   videoImage?: string;
   videoUrl?: string;
+  mediaItems?: MediaItem[];
+  videoMediaItems?: MediaItem[];
   videoCaption?: string;
   focusTitle: string;
   focusDescription: string;
@@ -367,7 +411,7 @@ export type InstallPage = StaticPageBase<'install'> & {
 export type PrivacyPage = StaticPageBase<'privacy'>;
 export type AgreementPage = StaticPageBase<'agreement'>;
 
-export type StaticPage = AboutPage | SolutionsPage | FaqPage | WarrantyPage | InstallPage | PrivacyPage | AgreementPage;
+export type StaticPage = AboutPage | CompanyInfoPage | SolutionsPage | FaqPage | WarrantyPage | InstallPage | PrivacyPage | AgreementPage;
 export type StaticPageForSlug<TSlug extends StaticPageSlug> = Extract<StaticPage, { slug: TSlug }>;
 
 export type SiteContent = {

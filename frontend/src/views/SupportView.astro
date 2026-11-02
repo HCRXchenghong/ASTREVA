@@ -27,12 +27,13 @@ const localHref = (target: string) => localizeHref(locale, target) as string;
   jsonLd={[contactPageJsonLd(content.site)]}
 >
   <div class="w-full pt-24">
-    <InnerPageHero
+    <InnerPageHero locale={locale}
       id="support-hero"
       title={support.hero.title}
       description={support.hero.description}
       backgroundImage={support.hero.backgroundImage}
       backgroundVideo={support.hero.backgroundVideo}
+      mediaItems={support.hero.mediaItems}
     />
     <div class="py-24 bg-white">
       <Container>

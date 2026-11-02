@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 
 export const GET: APIRoute = () => {
-  const site = (process.env.PUBLIC_SITE_URL || 'https://www.example.com').replace(/\/$/, '');
+  const site = (process.env.PUBLIC_SITE_URL || 'http://127.0.0.1:4321').replace(/\/$/, '');
   const agents = [
     '*',
     'Googlebot',
@@ -25,7 +25,8 @@ export const GET: APIRoute = () => {
     'YouBot',
     'meta-externalagent'
   ];
-  const rules = agents.map((agent) => `User-agent: ${agent}\nAllow: /`).join('\n\n');
+  // Draft preview must never be crawled, even if the URL leaks.
+  const rules = agents.map((agent) => `User-agent: ${agent}\nAllow: /\nDisallow: /__preview/`).join('\n\n');
   const host = new URL(site).host;
   return new Response(`${rules}\n\nHost: ${host}\nSitemap: ${site}/sitemap-index.xml\n`, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }

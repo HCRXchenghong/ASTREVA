@@ -14,6 +14,8 @@ cp deployments/ubuntu/.env.ubuntu.example deployments/ubuntu/.env.ubuntu
 
 所有 `change-me`、`example.com` 必须替换。三个域名要与 `CORS_ALLOWED_ORIGINS`、`FRAME_ANCESTORS` 和 `UPLOAD_PUBLIC_BASE_URL` 一致。`MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD` 也是必填项（即使使用外部对象存储，避免空口令容器）。
 
+`INTERNAL_API_TOKEN` 必须是 32 位以上随机值（admin-server 与 Go 引擎共用，用于 AI 供应商明文配置和访客画像转发）。`ADMIN_SETUP_TOKEN` 生产必须显式设置（`scripts/ubuntu-one-click.sh` 会自动生成并在终端打印一次）；首次进入控制台必须填写。不要把它写进容器日志或公开渠道。生产 compose 已为 admin-server 设置 `APP_ENV=production`，弱密钥/示例值会拒绝启动。草稿预览的短时 Cookie 默认写入 `ADMIN_DOMAIN`/`SITE_DOMAIN` 的公共父域；如两个域名不在同一注册域，需用 `PREVIEW_COOKIE_DOMAIN` 指定可共享的父域，否则预览会返回 401（这是有意的安全限制）。
+
 后台素材使用对象存储：`S3_ENDPOINT` 必须同时被服务器和管理员浏览器访问（预签名直传由浏览器直接 PUT），生产推荐 Cloudflare R2 / OSS / S3 等外部存储；仓库内置的 MinIO 只监听宿主机回环，仅适合本机验证。
 
 ## 操作
@@ -34,6 +36,8 @@ scripts/ubuntu-one-click.sh down
 - 客服：`https://SERVICE_DOMAIN/?embed=1`
 - 客服就绪：`https://SERVICE_DOMAIN/readyz`
 
+首次部署仍需在 `.env.ubuntu` 填写 `SITE_DOMAIN`，供 Caddy 配置 HTTPS 入口。部署后可以在后台「AI SEO → 官网正式域名」修改 SEO 使用的域名；设置保存在数据库并自动重建三语页面的 canonical、hreflang、robots.txt 和 sitemap。更换实际访问域名时，还需同步更新 DNS、Caddy 的 `SITE_DOMAIN` 与证书入口；构建会拒绝 `example.com` 示例域名。
+
 后台使用 `SERVICEBRIDGE_API_URL` 通过容器内网访问客服引擎，并以 `SERVICEBRIDGE_ADMIN_ACCOUNT` 和 `ADMIN_BOOTSTRAP_PASSWORD` 代理管理员操作；凭证不会发送到浏览器。`?embed=1` 会隐藏客服独立页外壳，供官网 iframe 使用。
 
 移动 App 生产构建应把 `SERVICEBRIDGE_URL` 指向 `https://SERVICE_DOMAIN`。上线后还要完成推送、数据库备份、对象存储、日志采集、监控告警和容量验收，详见 `servicebridge/docs/商业上线验收清单.md`。
@@ -47,3 +51,7 @@ docker compose --env-file deployments/ubuntu/.env.ubuntu --profile monitoring up
 ```
 
 启用前请在 `.env.ubuntu` 中设置 `GRAFANA_ADMIN_PASSWORD`（以及已有的 `METRICS_BEARER_TOKEN`）。指标含义、告警阈值、RPO/RTO 与恢复演练见 `docs/OPERATIONS.md`。备份与隔离恢复演练使用 `scripts/backup-production.sh` 与 `scripts/restore-production.sh`。
+
+## 一键部署
+
+全新安装或升级可执行仓库根目录的 `scripts/install.sh`，它会检查 Docker/Compose、测速选择下载渠道、询问域名、自动签发 SSL、备份数据库并做最终健康检查。详见 [一键部署文档](../../docs/ONE_CLICK_DEPLOY.md)。

@@ -1,10 +1,15 @@
 const proxyRoot = '/site-admin-api/servicebridge';
 
+function csrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)astreva_admin_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
 async function request(url, options = {}) {
-  const response = await fetch(url, {
-    ...options,
-    headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) }
-  });
+  const method = String(options.method || 'GET').toUpperCase();
+  const headers = { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) };
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken()) headers['X-CSRF-Token'] = csrfToken();
+  const response = await fetch(url, { ...options, headers });
   const text = await response.text();
   let payload = {};
   try { payload = text ? JSON.parse(text) : {}; } catch { payload = { message: text }; }

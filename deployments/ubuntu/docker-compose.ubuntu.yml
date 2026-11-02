@@ -82,6 +82,7 @@ services:
       RATE_LIMIT_RPS: ${RATE_LIMIT_RPS}
       RATE_LIMIT_BURST: ${RATE_LIMIT_BURST}
       METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL}
       OPENAI_MODEL: ${OPENAI_MODEL}
@@ -136,6 +137,7 @@ services:
       RATE_LIMIT_RPS: ${RATE_LIMIT_RPS}
       RATE_LIMIT_BURST: ${RATE_LIMIT_BURST}
       METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL}
       OPENAI_MODEL: ${OPENAI_MODEL}
@@ -199,6 +201,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     environment:
+      APP_ENV: "production"
       HOST: "0.0.0.0"
       PORT: "1337"
       PUBLIC_ADMIN_ORIGIN: "https://${ADMIN_DOMAIN}"
@@ -215,6 +218,7 @@ services:
       CMS_DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY}
       ADMIN_METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN}
       ADMIN_MEDIA_DRIVER: ${ADMIN_MEDIA_DRIVER:-s3}
+      ADMIN_ALLOW_LOCAL_MEDIA: ${ADMIN_ALLOW_LOCAL_MEDIA:-false}
       S3_ENDPOINT: ${S3_ENDPOINT}
       S3_REGION: ${S3_REGION}
       S3_BUCKET: ${S3_BUCKET}
@@ -240,6 +244,9 @@ services:
       ADMIN_2FA_ISSUER: ${ADMIN_2FA_ISSUER}
       ADMIN_2FA_SESSION_TTL_MS: ${ADMIN_2FA_SESSION_TTL_MS}
       REBUILD_WEBHOOK_SECRET: ${REBUILD_WEBHOOK_SECRET}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      ADMIN_SETUP_TOKEN: ${ADMIN_SETUP_TOKEN:-}
+      PREVIEW_COOKIE_DOMAIN: ${PREVIEW_COOKIE_DOMAIN:-}
     volumes:
       - admin-data:/app/data
       - admin-uploads:/app/uploads
@@ -267,7 +274,7 @@ services:
       PUBLIC_LEADS_ENDPOINT: "/site-admin-api/leads"
       CONTENT_API_URL: "http://admin-server:1337"
     volumes:
-      - rebuild-webhook-home:/root
+      - rebuild-webhook-home:/home/appuser
       - frontend-published:/published
     depends_on:
       admin-server:

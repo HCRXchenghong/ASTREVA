@@ -6,6 +6,7 @@ export function createContentRouter({
   auditEvent,
   readContent,
   readContentRecord,
+  readSiteOrigin,
   readContentTranslation,
   applyPublicCors = () => true,
   activeFallbackVersion,
@@ -49,7 +50,7 @@ export function createContentRouter({
         }
         const source = readContentRecord ? await readContentRecord() : { content: await readContent(), revision: 1, updatedAt: null };
         if (locale === 'zh-CN') {
-          json(res, 200, { data: source.content, meta: { locale, status: 'ready', sourceRevision: source.revision, generatedAt: new Date().toISOString() } });
+          json(res, 200, { data: source.content, meta: { locale, status: 'ready', sourceRevision: source.revision, siteOrigin: readSiteOrigin ? await readSiteOrigin() : undefined, generatedAt: new Date().toISOString() } });
           return true;
         }
         const translation = await readContentTranslation(locale);
@@ -68,7 +69,7 @@ export function createContentRouter({
       const version = await activeFallbackVersion();
       json(res, 200, {
         data: { content: version.content, version: fallbackVersionSummary(version, version.id) },
-        meta: { generatedAt: new Date().toISOString() }
+        meta: { siteOrigin: readSiteOrigin ? await readSiteOrigin() : undefined, generatedAt: new Date().toISOString() }
       });
       return true;
     }

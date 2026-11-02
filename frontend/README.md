@@ -66,12 +66,15 @@ npm run check               # typecheck + lint
 npm run cms:contract        # 只跑内容契约校验
 ```
 
-构建需要内容接口可达。没有后台时，用仓库自带的桩内容 API：
+构建需要内容接口可达。正常开发请直接连真实 admin-server：
 
 ```bash
-node scripts/verify-content-api-stub.mjs &          # 日志里会打印 STUB_PORT
-CONTENT_API_URL="http://127.0.0.1:$STUB_PORT" npm run build:frontend
+PUBLIC_ADMIN_URL=http://127.0.0.1:1337 \
+CONTENT_API_URL=http://127.0.0.1:1337 \
+npm run build:frontend
 ```
+
+`scripts/verify-all.sh` 在 `frontend/dist` 缺失时会临时启动真实 admin-server（JSON 存储 + seed），通过 `/site-admin-api/public-content` 构建。
 
 ## Tailwind v3 → v4 迁移踩过的坑（重要）
 

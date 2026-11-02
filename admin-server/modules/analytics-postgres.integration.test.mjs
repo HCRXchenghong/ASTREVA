@@ -44,6 +44,7 @@ test('数据看板在真实 PostgreSQL 分支下可用（访问趋势 SQL 回归
       CMS_DATA_ENCRYPTION_KEY: 'analytics-postgres-test-encryption-key-32',
       ADMIN_2FA_SESSION_SECRET: sessionSecret,
       ADMIN_SESSION_SECRET: sessionSecret,
+      ADMIN_SETUP_TOKEN: 'test-setup-token',
       ADMIN_CORS_ALLOWED_ORIGINS: 'https://www.example.com',
       SITE_CONTENT_SEED_FILE: path.join(root, 'admin-server', 'seed', 'site-content.json'),
       FRONTEND_REBUILD_WEBHOOK_URL: 'http://127.0.0.1:1/rebuild'

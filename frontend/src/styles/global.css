@@ -153,22 +153,29 @@ body,
   line-height: 1.9;
 }
 
-/*
- * Cookie 横幅是 z-120 的全宽固定条，会完全盖住 z-100 的客服入口。
- * 横幅出现时把入口抬高（横幅消失后自动回到原位）。
- */
-[data-chat-launcher] {
-  transition: bottom 0.25s ease;
+/* Cookie 提示出现时，首页卖点横排与客服入口一起上移；关闭后回到同一行。 */
+body {
+  --floating-controls-bottom: 1.5rem;
 }
 
-body:has(#cookie-consent) [data-chat-launcher] {
-  bottom: 9rem;
+body:has(#cookie-consent) {
+  --floating-controls-bottom: 9rem;
 }
 
 @media (max-width: 767px) {
-  body:has(#cookie-consent) [data-chat-launcher] {
-    bottom: 15rem;
+  body:has(#cookie-consent) {
+    --floating-controls-bottom: 15rem;
   }
+}
+
+[data-chat-launcher] {
+  bottom: var(--floating-controls-bottom);
+  transition: bottom 0.25s ease;
+}
+
+.home-hero-proof-bar {
+  padding-bottom: var(--floating-controls-bottom);
+  transition: padding-bottom 0.25s ease;
 }
 
 /*
@@ -187,3 +194,23 @@ body:has(#cookie-consent) [data-chat-panel] {
     max-height: calc(100vh - 26rem);
   }
 }
+
+/* 严格 CSP：用类替代内联 --reveal-delay 样式属性。 */
+.reveal-delay-0 { --reveal-delay: 0ms; }
+.reveal-delay-80 { --reveal-delay: 80ms; }
+.reveal-delay-90 { --reveal-delay: 90ms; }
+.reveal-delay-120 { --reveal-delay: 120ms; }
+.reveal-delay-160 { --reveal-delay: 160ms; }
+.reveal-delay-180 { --reveal-delay: 180ms; }
+.reveal-delay-240 { --reveal-delay: 240ms; }
+.reveal-delay-270 { --reveal-delay: 270ms; }
+.reveal-delay-320 { --reveal-delay: 320ms; }
+.reveal-delay-360 { --reveal-delay: 360ms; }
+.reveal-delay-400 { --reveal-delay: 400ms; }
+.reveal-delay-450 { --reveal-delay: 450ms; }
+.reveal-delay-480 { --reveal-delay: 480ms; }
+.reveal-delay-540 { --reveal-delay: 540ms; }
+.reveal-delay-560 { --reveal-delay: 560ms; }
+.reveal-delay-630 { --reveal-delay: 630ms; }
+.reveal-delay-640 { --reveal-delay: 640ms; }
+.reveal-delay-720 { --reveal-delay: 720ms; }

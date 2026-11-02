@@ -43,7 +43,7 @@ func newPromptCaptureService(t *testing.T) (*Service, store.Store, <-chan string
 	}))
 	t.Cleanup(server.Close)
 
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	if _, err := st.UpdateAISettings(domain.AISettings{
 		Enabled:        true,
 		Mode:           domain.AIModeHumanFirst,
@@ -93,7 +93,7 @@ func boolPtr(value bool) *bool { return &value }
 func newManualModeTranslationService(t *testing.T) (*Service, store.Store, *int32) {
 	t.Helper()
 	server, calls := newTranslationStub(t)
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	if _, err := st.UpdateAISettings(domain.AISettings{
 		Enabled:        true,
 		Mode:           domain.AIModeManualOnly,

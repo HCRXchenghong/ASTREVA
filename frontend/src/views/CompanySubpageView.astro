@@ -1,0 +1,53 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Container from '../components/ui/Container.astro';
+import InnerPageHero from '../components/InnerPageHero.astro';
+import { staticPage } from '../lib/content';
+import { localePath, localizeHref, type SiteLocale } from '../lib/i18n';
+import { pageHeroImages } from '../lib/default-images';
+import type { CompanyInfoPage, SiteContent } from '../lib/types';
+
+type Props = { content: SiteContent; locale: SiteLocale; slug: CompanyInfoPage['slug'] };
+
+const { content, locale, slug } = Astro.props;
+const page = staticPage(content, slug);
+const route = slug === 'about-quality' ? '/about/quality/' : '/about/manufacturing/';
+const aboutHref = localizeHref(locale, '/about/');
+const contactHref = localizeHref(locale, '/support/');
+---
+
+<BaseLayout content={content} seo={page.seo} path={localePath(locale, route)} locale={locale}>
+  <div class="w-full pt-24">
+    <InnerPageHero locale={locale}
+      id="about-subpage-hero"
+      eyebrow={page.hero.eyebrow}
+      title={page.hero.title}
+      description={page.hero.description}
+      backgroundImage={page.hero.backgroundImage}
+      backgroundVideo={page.hero.backgroundVideo}
+      mediaItems={page.hero.mediaItems}
+      defaultImages={pageHeroImages(slug)}
+    />
+    <section class="relative overflow-hidden bg-white py-16 md:py-24">
+      <div class="blueprint-grid-light pointer-events-none absolute inset-0 opacity-40" aria-hidden="true"></div>
+      <Container size="narrow" class="relative">
+        <nav class="mb-10 text-sm text-ink-500" aria-label={content.site.navigation.aboutLabel}>
+          <a href={localizeHref(locale, '/')} class="transition-colors hover:text-brand-600">{content.site.navigation.homeLabel}</a>
+          <span class="mx-2 text-ink-300" aria-hidden="true">/</span>
+          <a href={aboutHref} class="transition-colors hover:text-brand-600">{content.site.navigation.aboutLabel}</a>
+          <span class="mx-2 text-ink-300" aria-hidden="true">/</span>
+          <span class="font-semibold text-brand-950">{page.title}</span>
+        </nav>
+        <article class="prose-content rounded-2xl border border-line-200 bg-white p-7 shadow-sm md:p-12" set:html={page.body} />
+        <div class="mt-10 flex flex-col gap-3 border-t border-line-200 pt-8 sm:flex-row">
+          <a href={aboutHref} class="inline-flex items-center justify-center rounded-lg border border-brand-300 px-6 py-3 text-sm font-bold text-brand-700 transition-colors hover:bg-brand-50">
+            {page.sections?.backLabel || content.site.navigation.aboutLabel}
+          </a>
+          <a href={contactHref} class="inline-flex items-center justify-center rounded-lg bg-brand-600 px-6 py-3 text-sm font-bold text-white transition-colors hover:bg-brand-700">
+            {page.sections?.contactLabel || content.site.navigation.supportLabel}
+          </a>
+        </div>
+      </Container>
+    </section>
+  </div>
+</BaseLayout>

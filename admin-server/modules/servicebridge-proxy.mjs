@@ -30,7 +30,7 @@ export function normalizeUpstreamErrorBody(text, contentType) {
 }
 
 /** 客服引擎的服务端代理：浏览器不会接触客服管理员口令。 */
-export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, publicOrigin, bodyRaw, bodyJson, json, send, verifySession, onConfigChange = null }) {
+export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, internalToken = '', publicOrigin, bodyRaw, bodyJson, json, send, verifySession, onConfigChange = null }) {
   let adminSession = { token: '', expiresAt: 0 };
 
   function isAllowedPath(pathname) {
@@ -39,6 +39,12 @@ export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, 
       // 客服引擎上传的图片/语音：统一后台需要同源代理才能在消息里回显。
       pathname.startsWith('/uploads/') ||
       /^\/api\/conversations\/[^/]+\/(messages|read|remark|close)(?:\/[^/]+\/revoke)?$/.test(pathname);
+  }
+
+  // 供应商明文配置只允许服务间读取；浏览器侧代理必须拒绝，否则任何后台会话都能导出 Key。
+  function isBrowserAllowedPath(pathname) {
+    if (/^\/api\/admin\/ai-providers\/[^/]+\/(secret|resolve)$/.test(pathname)) return false;
+    return isAllowedPath(pathname);
   }
 
   // 控制台保存 AI 供应商/能力绑定后，立即让 admin-server 的供应商缓存失效。
@@ -70,6 +76,9 @@ export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, 
       method,
       headers: {
         Authorization: `Bearer ${await adminToken(forceRefresh, options.signal)}`,
+        ...(internalToken && /^\/api\/admin\/ai-providers\/[^/]+\/(secret|resolve)$/.test(targetPath)
+          ? { 'X-Internal-Token': internalToken }
+          : {}),
         ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(options.headers || {})
       },
@@ -97,7 +106,7 @@ export function createServiceBridgeProxy({ apiUrl, adminAccount, adminPassword, 
       return;
     }
     const targetPath = pathname.slice(prefix.length);
-    if (!isAllowedPath(targetPath)) {
+    if (!isBrowserAllowedPath(targetPath)) {
       json(res, 403, { error: { message: '该客服接口未开放给统一后台。' } });
       return;
     }

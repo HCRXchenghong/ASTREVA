@@ -1,11 +1,14 @@
 ---
 import InnerPageHero from '../components/InnerPageHero.astro';
+import MediaCarousel from '../components/MediaCarousel';
+import { mediaItemsFor } from '../lib/media';
 import Container from '../components/ui/Container.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Icon from '../components/ui/Icon.astro';
 import { productsForCategory } from '../lib/content';
 import { localePath, localizeHref, type SiteLocale } from '../lib/i18n';
 import { resolveIcon } from '../lib/icons';
+import { categoryImages, productImage, productImages } from '../lib/default-images';
 import { breadcrumbJsonLd } from '../lib/seo';
 import type { Category, SiteContent } from '../lib/types';
 
@@ -29,13 +32,15 @@ const jsonLd = [
 
 <BaseLayout content={content} seo={category.seo} path={path} locale={locale} jsonLd={jsonLd}>
   <div class="w-full pt-24">
-    <InnerPageHero
+    <InnerPageHero locale={locale}
       id="category-hero"
       eyebrow={content.site.navigation.productsLabel}
       title={category.name}
       description={category.description}
       backgroundImage={category.coverImage}
       backgroundVideo={category.heroVideo}
+      mediaItems={category.mediaItems}
+      defaultImages={categoryImages(category)}
     />
     <div id="category-products" class="py-24 bg-gray-50 min-h-[60vh] scroll-mt-24">
       <Container>
@@ -52,37 +57,22 @@ const jsonLd = [
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
           {
             products.map((item) => (
-              <a
-                href={localHref(`/products/${category.slug}/${item.slug}/`)}
+              <div
                 class="group bg-white rounded-3xl overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-300 border border-gray-100 flex flex-col"
               >
                 <div class="h-64 overflow-hidden relative">
-                  <div class="absolute inset-0 bg-brand-800/0 group-hover:bg-brand-800/20 transition-colors z-10 flex items-center justify-center">
-                    <span class="bg-white text-brand-800 px-6 py-2 rounded-lg font-bold opacity-0 group-hover:opacity-100 transform translate-y-4 group-hover:translate-y-0 transition-all">
-                      {productCenter.categoryPage.productHoverLabel}
+                  <MediaCarousel locale={locale} client:visible items={mediaItemsFor(item.mediaItems, { image: item.coverImage }, productImages(item), item.name)} alt={item.name} className="h-full w-full" fallbackImage={productImage(item)} />
+                  {!item.coverImage?.trim() && (
+                    <span class="absolute bottom-3 left-3 z-20 rounded-full border border-white/25 bg-brand-950/75 px-3 py-1 text-[10px] font-bold tracking-wide text-white backdrop-blur">
+                      {productCenter.categoryPage.placeholderImageLabel}
                     </span>
-                  </div>
-                  {item.coverImage ? (
-                    <img
-                      src={item.coverImage}
-                      alt={item.name}
-                      class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    />
-                  ) : (
-                    <div
-                      role="img"
-                      aria-label={item.name}
-                      class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-5xl font-black text-slate-400"
-                    >
-                      <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
-                    </div>
                   )}
                 </div>
                 <div class="p-8">
-                  <h3 class="text-2xl font-extrabold text-gray-800 mb-3">{item.name}</h3>
+                  <h3 class="text-2xl font-extrabold text-gray-800 mb-3"><a href={localHref(`/products/${category.slug}/${item.slug}/`)}>{item.name}</a></h3>
                   <p class="text-gray-500 leading-relaxed text-sm">{item.summary}</p>
                 </div>
-              </a>
+              </div>
             ))
           }
         </div>

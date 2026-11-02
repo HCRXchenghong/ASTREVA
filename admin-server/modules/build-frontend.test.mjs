@@ -12,8 +12,8 @@ test('官网构建可明确选择当前内容或已启用的降级版本', async
   fallback.home.hero.title = '降级版本标题';
   const server = createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json');
-    if (req.url === '/current') res.end(JSON.stringify({ data: current }));
-    else if (req.url === '/fallback') res.end(JSON.stringify({ data: { content: fallback, version: { id: 'fallback_test', name: '测试降级版本' } } }));
+    if (req.url === '/current') res.end(JSON.stringify({ data: current, meta: { siteOrigin: 'https://admin-set.astreva.com' } }));
+    else if (req.url === '/fallback') res.end(JSON.stringify({ data: { content: fallback, version: { id: 'fallback_test', name: '测试降级版本' } }, meta: { siteOrigin: 'https://admin-set.astreva.com' } }));
     else { res.statusCode = 503; res.end('{}'); }
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -23,8 +23,12 @@ test('官网构建可明确选择当前内容或已启用的降级版本', async
   try {
     process.env.CURRENT_CONTENT_URL = `http://127.0.0.1:${port}/current`;
     process.env.FALLBACK_CONTENT_URL = `http://127.0.0.1:${port}/fallback`;
-    assert.equal((await resolveBuildSnapshot('current')).content.home.hero.title, '当前内容标题');
-    assert.equal((await resolveBuildSnapshot('fallback')).content.home.hero.title, '降级版本标题');
+    const currentSnapshot = await resolveBuildSnapshot('current');
+    assert.equal(currentSnapshot.content.home.hero.title, '当前内容标题');
+    assert.equal(currentSnapshot.siteOrigin, 'https://admin-set.astreva.com');
+    const fallbackSnapshot = await resolveBuildSnapshot('fallback');
+    assert.equal(fallbackSnapshot.content.home.hero.title, '降级版本标题');
+    assert.equal(fallbackSnapshot.siteOrigin, 'https://admin-set.astreva.com');
     process.env.CURRENT_CONTENT_URL = `http://127.0.0.1:${port}/unavailable`;
     assert.equal((await resolveBuildSnapshot('auto')).content.home.hero.title, '降级版本标题');
     await assert.rejects(() => resolveBuildSnapshot('unknown'), /不支持的构建内容源/);

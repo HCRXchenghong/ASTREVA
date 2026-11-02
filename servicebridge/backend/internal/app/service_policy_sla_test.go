@@ -398,6 +398,35 @@ func TestPolicySweepAutoCloseOnceAndDisabled(t *testing.T) {
 	}
 }
 
+func TestPolicySweepAutoClosesUnassignedConversation(t *testing.T) {
+	service, st, _ := newFlowService(t)
+	setServicePolicy(t, st, func(policy *domain.ServicePolicy) {
+		policy.QueueEnabled = false
+		policy.SLAFirstResponseSeconds = 0
+		policy.SLAIdleMinutes = 0
+		policy.AutoCloseIdleMinutes = 5
+	})
+	session, err := service.CreateVisitorConversation("203.0.113.207", "web", "zh", "direct", "")
+	if err != nil {
+		t.Fatalf("创建会话失败：%v", err)
+	}
+	if session.Conversation.AssignedAgentID != "" {
+		t.Fatalf("此用例需要未分配会话，实际客服为 %q", session.Conversation.AssignedAgentID)
+	}
+	lastActivity := session.Conversation.LastMessageAt
+	if lastActivity == nil {
+		t.Fatal("会话应记录最后活动时间")
+	}
+
+	service.RunPolicySweep(lastActivity.Add(6 * time.Minute))
+	if got := flowConversation(t, st, session.Conversation.ID); got.Status != domain.ConversationClosed {
+		t.Fatalf("未分配会话超过静默阈值也应自动关闭，实际状态 %q", got.Status)
+	}
+	if got := countAuditAction(st, "conversation.auto_closed"); got != 1 {
+		t.Fatalf("自动关闭应写一条审计，实际 %d 条", got)
+	}
+}
+
 // countMessageContent 统计会话内指定内容的消息条数。
 func countMessageContent(st store.Store, conversationID, content string) int {
 	count := 0
@@ -438,7 +467,7 @@ func TestAIKeywordPriorityModes(t *testing.T) {
 				baseURL = stub.URL
 				calls = counter
 			}
-			st := store.NewMemoryStore(store.Options{})
+			st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 			if _, err := st.UpdateBusinessHours(domain.BusinessHours{Timezone: "UTC", Enabled: false}); err != nil {
 				t.Fatalf("更新营业时间失败：%v", err)
 			}
@@ -554,7 +583,7 @@ func TestPolicyLoopTickIntervalAndGracefulStop(t *testing.T) {
 		t.Fatalf("未配置应回落默认 %ds，实际 %v", DefaultPolicyTickSeconds, got)
 	}
 
-	counter := &sweepCounter{Store: store.NewMemoryStore(store.Options{})}
+	counter := &sweepCounter{Store: store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})}
 	service := NewService(counter, realtime.NewHub(), slog.Default())
 	// 用远小于默认值的间隔验证"多次巡检"（避免长时间 sleep）。
 	service.StartPolicyLoop(10 * time.Millisecond)

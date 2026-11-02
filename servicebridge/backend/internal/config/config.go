@@ -22,7 +22,6 @@ type Config struct {
 	RateLimitRPS            float64
 	RateLimitBurst          int
 	MetricsBearerToken      string
-	OpenAPIEnabled          bool
 	OpenAPIDefaultRateLimit int
 	FCMEndpoint             string
 	FCMAccessToken          string
@@ -75,7 +74,6 @@ func Load() Config {
 		RateLimitRPS:            envFloat64("RATE_LIMIT_RPS", 20),
 		RateLimitBurst:          envInt("RATE_LIMIT_BURST", 60),
 		MetricsBearerToken:      env("METRICS_BEARER_TOKEN", ""),
-		OpenAPIEnabled:          envBool("OPEN_API_ENABLED", true),
 		OpenAPIDefaultRateLimit: envInt("OPEN_API_DEFAULT_RATE_LIMIT", 300),
 		FCMEndpoint:             env("FCM_ENDPOINT", ""),
 		FCMAccessToken:          env("FCM_ACCESS_TOKEN", ""),
@@ -84,8 +82,8 @@ func Load() Config {
 		OpenAIModel:             env("OPENAI_MODEL", "gpt-4o-mini"),
 		OpenAIAPIType:           env("OPENAI_API_TYPE", "chat_completions"),
 		DataEncryptionKey:       firstNonEmptyEnv("DATA_ENCRYPTION_KEY", "CMS_DATA_ENCRYPTION_KEY"),
-		BootstrapAdminPassword:  env("ADMIN_BOOTSTRAP_PASSWORD", "123456"),
-		BootstrapAgentPassword:  env("AGENT_BOOTSTRAP_PASSWORD", "123456"),
+		BootstrapAdminPassword:  env("ADMIN_BOOTSTRAP_PASSWORD", ""),
+		BootstrapAgentPassword:  env("AGENT_BOOTSTRAP_PASSWORD", ""),
 		StoreDriver:             env("STORE_DRIVER", "memory"),
 		DatabaseURL:             env("DATABASE_URL", ""),
 		RedisAddr:               env("REDIS_ADDR", ""),

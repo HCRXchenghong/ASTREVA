@@ -12,7 +12,7 @@ import (
 // newServicePolicyTestStore 构造带一个客服与两个会话的内存存储。
 func newServicePolicyTestStore(t *testing.T) (*MemoryStore, domain.Agent, string, string) {
 	t.Helper()
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	agent, err := st.CreateAgent(domain.Agent{Account: "policy_agent", Name: "策略客服", Status: domain.AgentOnline}, "AgentPass-123456")
 	if err != nil {
 		t.Fatalf("创建客服失败：%v", err)
@@ -30,7 +30,7 @@ func newServicePolicyTestStore(t *testing.T) (*MemoryStore, domain.Agent, string
 
 // TestMemoryServicePolicyDefaultsAndNormalize 覆盖策略默认值与归一。
 func TestMemoryServicePolicyDefaultsAndNormalize(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	defaults := st.ServicePolicy()
 	want := domain.DefaultServicePolicy()
@@ -154,7 +154,7 @@ func TestMemoryConversationQueue(t *testing.T) {
 
 // TestMemoryBlacklist 覆盖三类命中、过期放行与清理、重复冲突、删除。
 func TestMemoryBlacklist(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	now := time.Now().UTC()
 
 	visitor, err := st.AddBlacklist(domain.BlacklistEntry{Kind: "visitor", Value: "vis_1", Reason: "刷屏", CreatedBy: "admin_1"})
@@ -346,7 +346,7 @@ func TestMemoryAlertChannelsLimitMaskPatchDelete(t *testing.T) {
 
 // TestMemoryAlertSMTPSettings 覆盖 SMTP 默认值、密码掩码与 password 语义。
 func TestMemoryAlertSMTPSettings(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	defaults := st.AlertSMTPSettings()
 	if defaults.Port != domain.DefaultAlertSMTPPort || defaults.PasswordMasked != "" {
@@ -411,7 +411,7 @@ func TestMemoryAlertSMTPSettings(t *testing.T) {
 
 // TestMemoryQueueCascadeOnConversationDelete 覆盖会话删除时排队记录被级联清理。
 func TestMemoryQueueCascadeOnConversationDelete(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	visitor, err := st.CreateVisitorConversation("203.0.113.12", "web", "zh", "direct", "")
 	if err != nil {
 		t.Fatalf("创建会话失败：%v", err)

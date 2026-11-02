@@ -316,8 +316,8 @@
   }
   function assetUrl(value: string) {
     if (!value) return '';
-    // 客服引擎上传的相对路径需要经后台同源代理回显；绝对地址直接使用。
-    return value.startsWith('/uploads/') ? `/site-admin-api/servicebridge${value}` : value;
+    // 只回显客服引擎托管的上传路径；不再直接加载访客给出的任意外部 URL。
+    return value.startsWith('/uploads/') ? `/site-admin-api/servicebridge${value}` : '';
   }
 
   // ---------- T1：策略告警（接管 / 排队 / SLA） ----------

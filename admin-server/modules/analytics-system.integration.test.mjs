@@ -128,7 +128,7 @@ test('访问埋点、数据汇总、系统日志与健康度', async () => {
     });
     assert.equal(invalidPurge.status, 200);
     const invalidBody = await invalidPurge.json();
-    assert.equal(invalidBody.data.eventDays, 30, '事件保留天数下限收敛到 30 天');
+    assert.equal(invalidBody.data.eventDays, 180, '事件保留天数下限为 180 天（等保 ≥6 个月）');
     assert.equal(invalidBody.data.visitDays, 365, '访问明细保留天数上限收敛到 365 天');
 
     const purge = await fetch(`${base}/site-admin-api/system/events/purge`, {

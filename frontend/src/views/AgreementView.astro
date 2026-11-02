@@ -14,13 +14,14 @@ const page = staticPage(content, 'agreement');
 
 <BaseLayout content={content} seo={page.seo} path={localePath(locale, '/agreement/')} locale={locale}>
   <div class="w-full pt-24">
-    <InnerPageHero
+    <InnerPageHero locale={locale}
       id="agreement-hero"
       eyebrow={page.hero.eyebrow}
       title={page.hero.title}
       description={page.hero.description}
       backgroundImage={page.hero.backgroundImage}
       backgroundVideo={page.hero.backgroundVideo}
+      mediaItems={page.hero.mediaItems}
     />
     <div id="agreement-content" class="py-24 bg-white min-h-[60vh] scroll-mt-24">
       <Container size="narrow">

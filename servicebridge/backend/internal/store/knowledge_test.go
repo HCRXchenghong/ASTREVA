@@ -9,7 +9,7 @@ import (
 
 // TestMemoryKnowledgeBaseAndEntryCRUD 覆盖知识库/条目的增删改查与级联删除。
 func TestMemoryKnowledgeBaseAndEntryCRUD(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	if bases := s.KnowledgeBases(); len(bases) != 0 {
 		t.Fatalf("初始知识库应为空：%+v", bases)
@@ -133,7 +133,7 @@ func TestMemoryKnowledgeBaseAndEntryCRUD(t *testing.T) {
 
 // TestMemoryKnowledgeEntriesForBasesRestriction 校验按客服限定知识库的检索范围。
 func TestMemoryKnowledgeEntriesForBasesRestriction(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	first, err := s.CreateKnowledgeBase(domain.KnowledgeBase{Name: "库一", Enabled: true})
 	if err != nil {
 		t.Fatalf("创建知识库失败：%v", err)
@@ -171,7 +171,7 @@ func TestMemoryKnowledgeEntriesForBasesRestriction(t *testing.T) {
 
 // TestMemoryKnowledgeSettingsDefaultsAndUpdate 校验配置默认值与非法取值拒绝。
 func TestMemoryKnowledgeSettingsDefaultsAndUpdate(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	settings := s.KnowledgeSettings()
 	if settings.UnknownAction != domain.KnowledgeUnknownHandoff {
 		t.Fatalf("默认库外处理应为 handoff，实际 %q", settings.UnknownAction)
@@ -213,7 +213,7 @@ func TestMemoryKnowledgeSettingsDefaultsAndUpdate(t *testing.T) {
 
 // TestMemoryRequestHumanHandoff 校验静默转人工：改状态 + 分配客服 + 不产生消息。
 func TestMemoryRequestHumanHandoff(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	openBusinessForTest(t, s)
 	_, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
@@ -249,7 +249,7 @@ func TestMemoryRequestHumanHandoff(t *testing.T) {
 
 // TestMemoryAddAIMessageWithKnowledge 校验 knowledge_entry_ids 的读写往返。
 func TestMemoryAddAIMessageWithKnowledge(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	if _, err := s.UpdateAISettings(domain.AISettings{Enabled: true, Mode: domain.AIModeAlwaysAI}); err != nil {
 		t.Fatalf("update ai settings: %v", err)
 	}

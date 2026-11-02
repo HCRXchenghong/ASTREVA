@@ -57,6 +57,10 @@ func normalizeHistory(history []HistoryTurn) []HistoryTurn {
 	return out
 }
 
+// ErrNoAPIKey 表示接待/翻译等 AI 能力尚未配置可用的 API Key。
+// 调用方必须把它当作真实失败处理（提示管理员或转人工），不能返回伪造的 AI 回复。
+var ErrNoAPIKey = errors.New("AI API Key 未配置")
+
 // Reply 根据访客语言生成 AI 客服回复。replyLang 为访客端看到的语言（zh/en/ar）。
 // history 为当前会话的历史对话轮次（按会话隔离传入，不得跨会话复用）。
 // cacheKey 为会话级缓存路由键（会话 ID），仅在支持缓存的上游生效。
@@ -67,7 +71,7 @@ func (c *Client) Reply(ctx context.Context, settings domain.AISettings, contacts
 	}
 	replyLang = NormalizeLang(replyLang, LangZh)
 	if strings.TrimSpace(settings.APIKey) == "" {
-		return fallbackReply(userText, contacts, replyLang), nil
+		return "", ErrNoAPIKey
 	}
 	return c.complete(ctx, settings, replyPrompt(settings.SystemPrompt, contacts, replyLang), normalizeHistory(history), userText, cacheKey)
 }
@@ -600,78 +604,4 @@ func (e *UpstreamError) Error() string {
 func responseError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	return &UpstreamError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
-}
-
-// fallbackReply 在未配置 AI API Key 时按访客语言返回兜底回复。
-func fallbackReply(text string, contacts domain.ContactSettings, lang string) string {
-	lowerText := strings.ToLower(text)
-	switch lang {
-	case LangEn:
-		switch {
-		case strings.Contains(lowerText, "phone") || strings.Contains(lowerText, "call"):
-			return "Support phone: " + contacts.Telephone + ". You can tap the call button to reach us directly."
-		case strings.Contains(lowerText, "whatsapp"):
-			return "Official WhatsApp: " + contacts.WhatsApp + ". You can copy the number and add us."
-		case strings.Contains(lowerText, "telegram"):
-			return "Official Telegram: " + contacts.Telegram + ". You can copy the ID and add us."
-		default:
-			return "I've received your question — feel free to add more details. Our support team will follow up with you shortly."
-		}
-	case LangAr:
-		switch {
-		case strings.Contains(lowerText, "هاتف") || strings.Contains(lowerText, "اتصال") || strings.Contains(lowerText, "phone"):
-			return "هاتف الدعم: " + contacts.Telephone + "، يمكنك الضغط على زر الاتصال للتواصل معنا مباشرة."
-		case strings.Contains(lowerText, "whatsapp") || strings.Contains(lowerText, "واتساب"):
-			return "واتساب الرسمي: " + contacts.WhatsApp + "، يمكنك نسخ الرقم وإضافته."
-		case strings.Contains(lowerText, "telegram") || strings.Contains(lowerText, "تيليجرام") || strings.Contains(lowerText, "تليجرام"):
-			return "تيليجرام الرسمي: " + contacts.Telegram + "، يمكنك نسخ المعرف وإضافته."
-		default:
-			return "استلمنا سؤالك، يمكنك إضافة المزيد من التفاصيل، وسيتابع فريق الدعم معك قريبًا."
-		}
-	case LangEs:
-		switch {
-		case strings.Contains(lowerText, "teléfono") || strings.Contains(lowerText, "telefono") || strings.Contains(lowerText, "llamar"):
-			return "Teléfono de soporte: " + contacts.Telephone + ". Puede pulsar el botón de llamada para contactarnos directamente."
-		default:
-			return "He recibido su consulta. Puede añadir más detalles y nuestro equipo de soporte le responderá lo antes posible."
-		}
-	case LangFr:
-		switch {
-		case strings.Contains(lowerText, "téléphone") || strings.Contains(lowerText, "telephone") || strings.Contains(lowerText, "appeler"):
-			return "Téléphone du support : " + contacts.Telephone + ". Vous pouvez appuyer sur le bouton d'appel pour nous joindre directement."
-		default:
-			return "J'ai bien reçu votre demande. N'hésitez pas à ajouter des détails, notre équipe vous répondra dès que possible."
-		}
-	case LangDe:
-		switch {
-		case strings.Contains(lowerText, "telefon") || strings.Contains(lowerText, "anrufen"):
-			return "Support-Telefon: " + contacts.Telephone + ". Sie können auf die Anruf-Schaltfläche tippen, um uns direkt zu erreichen."
-		default:
-			return "Ich habe Ihre Anfrage erhalten. Sie können gerne weitere Details ergänzen, unser Team meldet sich so bald wie möglich."
-		}
-	case LangPt:
-		switch {
-		case strings.Contains(lowerText, "telefone") || strings.Contains(lowerText, "ligar"):
-			return "Telefone de suporte: " + contacts.Telephone + ". Pode tocar no botão de chamada para nos contactar diretamente."
-		default:
-			return "Recebi a sua mensagem. Pode acrescentar mais detalhes e a nossa equipa responderá o mais breve possível."
-		}
-	case LangRu:
-		return "Я получил ваш вопрос. Вы можете добавить детали, и наша служба поддержки скоро свяжется с вами."
-	case LangJa:
-		return "お問い合わせを受け付けました。詳細を追加していただければ、サポート担当ができるだけ早くご連絡いたします。"
-	case LangKo:
-		return "문의를 접수했습니다. 추가로 자세한 내용을 남겨 주시면 지원팀이 최대한 빨리 연락드리겠습니다."
-	default:
-		switch {
-		case strings.Contains(text, "电话"):
-			return "客服电话：" + contacts.Telephone + "，您可以点击下方电话联系按钮直接拨打。"
-		case strings.Contains(lowerText, "whatsapp"):
-			return "官方 WhatsApp：" + contacts.WhatsApp + "，您可以长按复制添加。"
-		case strings.Contains(lowerText, "telegram"):
-			return "官方 Telegram：" + contacts.Telegram + "，您可以长按复制添加。"
-		default:
-			return "我已收到您的问题。您可以继续补充细节，人工客服会尽快为您跟进。"
-		}
-	}
 }

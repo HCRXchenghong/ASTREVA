@@ -32,7 +32,7 @@
  * Optional environment / .env overrides (read from the repo .env when present):
  *     ASTREVA_E2E_ENGINE_URL        Go engine base URL      (default http://127.0.0.1:8080)
  *     ASTREVA_E2E_ADMIN_ACCOUNT     admin account           (default superadmin)
- *     ASTREVA_E2E_ADMIN_PASSWORD    admin password          (default 123456)
+ *     ASTREVA_E2E_ADMIN_PASSWORD    admin password          (required; falls back to SERVICEBRIDGE_ADMIN_PASSWORD)
  *     ASTREVA_E2E_MIMO_API_KEY      real MiMo API key       (only needed when the provider is missing)
  *     ASTREVA_E2E_MIMO_BASE_URL     default https://api.xiaomimimo.com/v1
  *     ASTREVA_E2E_MIMO_MODEL        default mimo-v2.6-flash
@@ -94,8 +94,6 @@ const POLL_TIMEOUT_MS = 90_000;
 // Static local fallbacks that prove a reply did NOT come from a real provider.
 // These mirror the Go constants; when the Go sources are present the script
 // extracts them at runtime so the comparison stays tied to the real code.
-const FALLBACK_REPLY_ZH_FALLBACK =
-  '我已收到您的问题。您可以继续补充细节，人工客服会尽快为您跟进。'; // internal/ai/client.go fallbackReply (default/zh)
 const AI_BUSY_TEXT_ZH_FALLBACK =
   'AI 客服暂时繁忙，已为您记录问题，人工客服会尽快为您跟进。'; // internal/app/service.go aiBusyText (default/zh)
 
@@ -178,7 +176,7 @@ function snippet(value, max = 600) {
 const cfg = {
   engineUrl: (envValue('ASTREVA_E2E_ENGINE_URL', 'SERVICEBRIDGE_ENGINE_URL') || 'http://127.0.0.1:8080').replace(/\/+$/, ''),
   adminAccount: envValue('ASTREVA_E2E_ADMIN_ACCOUNT', 'SERVICEBRIDGE_ADMIN_ACCOUNT') || 'superadmin',
-  adminPassword: envValue('ASTREVA_E2E_ADMIN_PASSWORD', 'SERVICEBRIDGE_ADMIN_PASSWORD') || '123456',
+  adminPassword: envValue('ASTREVA_E2E_ADMIN_PASSWORD', 'SERVICEBRIDGE_ADMIN_PASSWORD') || '',
   mimoBaseUrl: (envValue('ASTREVA_E2E_MIMO_BASE_URL', 'MIMO_BASE_URL') || 'https://api.xiaomimimo.com/v1').replace(/\/+$/, ''),
   mimoModel: envValue('ASTREVA_E2E_MIMO_MODEL', 'MIMO_MODEL') || 'mimo-v2.6-flash',
   mimoKey: envValue('ASTREVA_E2E_MIMO_API_KEY', 'MIMO_API_KEY'),
@@ -478,13 +476,11 @@ function extractGoConst(relPath, constName) {
  */
 function collectFallbackStrings() {
   const set = new Set();
-  for (const s of extractGoFuncReturns('servicebridge/backend/internal/ai/client.go', 'fallbackReply')) set.add(s);
   for (const s of extractGoFuncReturns('servicebridge/backend/internal/app/service.go', 'aiBusyText')) set.add(s);
   const refuse = extractGoConst('servicebridge/backend/internal/domain/models.go', 'DefaultKnowledgeRefuseReply');
   if (refuse) set.add(refuse);
   const limit = extractGoConst('servicebridge/backend/internal/domain/ai_limits.go', 'DefaultAILimitExceedMessage');
   if (limit) set.add(limit);
-  set.add(FALLBACK_REPLY_ZH_FALLBACK);
   set.add(AI_BUSY_TEXT_ZH_FALLBACK);
   set.add(
     'Our AI assistant is temporarily busy. Your question has been recorded and our support team will follow up shortly.',
@@ -522,12 +518,15 @@ async function pollForAiReply(appKey, conversationId) {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  if (!cfg.adminPassword) {
+    throw new Error('缺少 ASTREVA_E2E_ADMIN_PASSWORD / SERVICEBRIDGE_ADMIN_PASSWORD：验收脚本不再使用默认 123456。');
+  }
   registerSecret(cfg.mimoKey);
   registerSecret(BROKEN_API_KEY);
 
   const fallbackStrings = collectFallbackStrings();
   log(`engine=${cfg.engineUrl} admin=${cfg.adminAccount} mimo_base_url=${cfg.mimoBaseUrl} mimo_model=${cfg.mimoModel} mimo_key=${maskKey(cfg.mimoKey)}`);
-  log(`loaded ${fallbackStrings.length} local fallback strings from the Go sources (fallbackReply/aiBusyText/refuse/limit)`);
+  log(`loaded ${fallbackStrings.length} local fallback strings from the Go sources (aiBusyText/refuse/limit)`);
 
   const state = {
     token: '',
@@ -588,8 +587,20 @@ async function main() {
       'GET service-policy',
     );
     state.previousPriority = policyRes.json.policy.ai_keyword_priority;
+    state.previousOpenAPIEnabled = policyRes.json.policy.open_api_enabled === true;
     log(`previous binding targets (${state.previousTargets.length}): ${snippet(state.previousTargets, 400)}`);
     log(`previous ai_keyword_priority=${state.previousPriority}`);
+
+    // 开放 API 默认关闭；验收脚本需要临时开启，finally 恢复。
+    if (!state.previousOpenAPIEnabled) {
+      expectStatus(
+        await request('PATCH', '/api/admin/service-policy', { token: state.token, body: { open_api_enabled: true } }),
+        200,
+        'PATCH service-policy open_api_enabled=true',
+      );
+      state.openAPIChanged = true;
+      log('enabled open_api_enabled for verification (will restore false)');
+    }
 
     // 3. Ensure the real MiMo provider + verify with the test endpoint.
     const providers = await listProviders(state.token);
@@ -936,6 +947,17 @@ async function main() {
           log(`deleted throwaway api app id=${state.appId} (HTTP ${res.status})`);
         } catch (err) {
           log(`warn: failed to delete api app: ${err.message}`);
+        }
+      }
+      if (state.openAPIChanged) {
+        try {
+          const res = await request('PATCH', '/api/admin/service-policy', {
+            token: state.token,
+            body: { open_api_enabled: false },
+          });
+          log(`restored open_api_enabled=false (HTTP ${res.status})`);
+        } catch (err) {
+          log(`warn: failed to restore open_api_enabled: ${err.message}`);
         }
       }
       if (state.brokenCreated && state.brokenId) {

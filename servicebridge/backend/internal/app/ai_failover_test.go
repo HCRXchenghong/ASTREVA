@@ -509,7 +509,7 @@ func TestAIProviderHealthIncludesDisabledProviders(t *testing.T) {
 // TestAIFailoverLoggerIsWired 保证故障转移日志限流器在 NewService 中已初始化，
 // 避免上游持续故障时因 nil 指针 panic。
 func TestAIFailoverLoggerIsWired(t *testing.T) {
-	service := NewService(store.NewMemoryStore(store.Options{}), realtime.NewHub(), slog.Default())
+	service := NewService(store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"}), realtime.NewHub(), slog.Default())
 	if service.circuit == nil || service.failoverLogs == nil {
 		t.Fatal("NewService 必须初始化熔断器与故障转移日志限流器")
 	}

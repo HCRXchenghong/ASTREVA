@@ -363,6 +363,7 @@ func (s *Service) DisableAgent(id string) (domain.Agent, error) {
 	if err != nil {
 		return domain.Agent{}, err
 	}
+	s.ClearAgentWatchers(updated.ID)
 	s.hub.DisconnectAgent(updated.ID, "account_disabled")
 	s.hub.BroadcastAdmins(realtime.Event{Event: "agent.disabled", Data: updated})
 	return updated, nil
@@ -373,6 +374,7 @@ func (s *Service) DeleteAgent(id string) (domain.Agent, error) {
 	if err != nil {
 		return domain.Agent{}, err
 	}
+	s.ClearAgentWatchers(deleted.ID)
 	s.hub.DisconnectAgent(deleted.ID, "account_deleted")
 	s.hub.BroadcastAdmins(realtime.Event{Event: "agent.deleted", Data: deleted})
 	return deleted, nil
@@ -761,6 +763,7 @@ func (s *Service) CloseConversation(actor domain.AuthSession, conversationID str
 		s.hub.SendToAgent(conversation.AssignedAgentID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
 	}
 	s.hub.BroadcastAdmins(realtime.Event{Event: "conversation.status_changed", Data: conversation})
+	s.ClearWatchers(conversationID)
 	// 结束的会话不应继续占着排队位置；清理失败（不在队列中）无需关心。
 	if err := s.store.DequeueConversation(conversationID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.logger.Warn("清理排队记录失败", "conversation_id", conversationID, "error", err)
@@ -787,6 +790,8 @@ func (s *Service) TransferConversation(actor domain.AuthSession, conversationID,
 	if err != nil {
 		return domain.Conversation{}, err
 	}
+	// 转接后旧围观者必须失去读权限。
+	s.ClearWatchers(conversationID)
 	// 无痕转人工：转接提示只在客服/后台侧可见，不下发给访客。
 	s.hub.SendToVisitor(conversationID, realtime.Event{Event: "conversation.status_changed", Data: conversation})
 	if conversation.AssignedAgentID != "" {
@@ -813,6 +818,7 @@ func (s *Service) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	conversationID := r.URL.Query().Get("conversation_id")
 
 	var accountID string
+	var expiresAt time.Time
 	switch role {
 	case realtime.RoleVisitor:
 		session, ok := s.store.AuthVisitor(token)
@@ -821,6 +827,7 @@ func (s *Service) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		accountID = session.AccountID
+		expiresAt = session.ExpiresAt
 		if conversationID == "" {
 			conversationID = session.AccountID
 		} else if conversationID != session.AccountID {
@@ -842,6 +849,7 @@ func (s *Service) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		accountID = session.AccountID
+		expiresAt = session.ExpiresAt
 	default:
 		http.Error(w, "invalid role", http.StatusBadRequest)
 		return
@@ -854,6 +862,7 @@ func (s *Service) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := realtime.NewClient(role, accountID, conversationID, conn, s.hub, s.handleSocketEvent, s.logger)
+	client.ExpiresAt = expiresAt
 	client.Run()
 }
 
@@ -883,6 +892,10 @@ func (s *Service) handleSocketEvent(client *realtime.Client, event realtime.Inco
 			return
 		}
 		if strings.TrimSpace(req.ConversationID) == "" {
+			return
+		}
+		conversation, ok := s.store.Conversation(req.ConversationID)
+		if !ok || (conversation.AssignedAgentID != client.AccountID && !s.IsWatching(client.AccountID, req.ConversationID)) {
 			return
 		}
 		s.hub.SendToVisitor(req.ConversationID, realtime.Event{Event: "conversation.typing", Data: map[string]any{"sender_type": "agent", "typing": req.Typing}})

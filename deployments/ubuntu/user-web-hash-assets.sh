@@ -4,7 +4,7 @@
 # 每次发布立即生效，无需刷新 CDN 缓存。
 set -eu
 cd /usr/share/nginx/html
-for f in assets/i18n.js assets/tailwind.css; do
+for f in assets/i18n.js assets/tailwind.css assets/chat.js assets/chat-boot.js assets/chat.css; do
   h=$(md5sum "$f" | cut -c1-10)
   nf=$(echo "$f" | sed "s/\.\([a-z]*\)$/.$h.\1/")
   mv "$f" "$nf"

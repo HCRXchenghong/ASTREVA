@@ -176,7 +176,11 @@
       "videoPreviewLabel": "宣传视频播放器 (预览)",
       "videoOpenExternalLabel": "无法播放？在 YouTube 打开",
       "videoCloseLabel": "关闭视频",
-      "primaryHref": "/products/"
+      "primaryHref": "/products/",
+      "videoModalEyebrow": "ASTREVA · 产品介绍",
+      "videoModalDescription": "了解 ASTREVA 产品与项目方案。视频封面、播放内容和弹窗背景均可在后台修改。",
+      "videoPosterImage": "",
+      "videoModalBackgroundImage": ""
     },
     "featuredProducts": {
       "title": "产品展示",
@@ -270,13 +274,14 @@
       "backLabel": "返回重新选择业务板块",
       "productHoverLabel": "查看详情",
       "backIcon": "←",
-      "categoryCtaIcon": "→"
+      "categoryCtaIcon": "→",
+      "placeholderImageLabel": "产品示意图"
     },
     "detailPage": {
-      "badgeLabel": "顶级工业品质",
+      "badgeLabel": "产品信息",
       "quoteButtonLabel": "获取项目报价",
       "specsTitle": "技术规格与参数",
-      "specsDescription": "标准化模块化尺寸，亦支持根据项目需求进行深度定制。",
+      "specsDescription": "规格信息请以相应产品资料为准。",
       "specsPrimaryIcon": "层",
       "specsPrimaryTitle": "材质与工艺",
       "descriptionIcon": "工",
@@ -287,304 +292,279 @@
       "featureIcon": "✓",
       "quoteButtonIcon": "✉",
       "downloadButtonIcon": "↓",
-      "breadcrumbSeparator": "›"
+      "breadcrumbSeparator": "›",
+      "specsEmptyMessage": "本产品尚未配置公开规格参数，请联系团队获取当前版本的产品资料。",
+      "placeholderImageLabel": "产品示意图 · 可在后台替换"
     }
   },
   "categories": [
     {
-      "id": "cat_municipal",
-      "name": "市政与公共工程",
-      "slug": "municipal-public-works",
-      "description": "面向道路、广场、公共设施的高承载排水系统。",
+      "id": "cat_water_seal_floor_drains",
+      "name": "地漏（防臭）（水封）",
+      "slug": "water-seal-floor-drains",
+      "description": "水封地漏组件分类，当前列出的产品包括箱体与滤网。具体组合和规格以项目确认内容为准。",
       "coverImage": "",
       "sortOrder": 10,
+      "heroVideo": "",
       "seo": {
-        "title": "市政与公共工程排水系统 | 星渡ASTREVA",
-        "description": "适用于市政道路、公共广场和大型基础设施的模块化不锈钢排水方案。"
-      },
-      "heroVideo": ""
+        "title": "地漏（防臭）（水封）产品 | 星渡ASTREVA",
+        "description": "查看水封地漏箱体与滤网产品。"
+      }
     },
     {
-      "id": "cat_commercial",
-      "name": "商业与高端住宅",
-      "slug": "commercial-premium-residential",
-      "description": "兼顾建筑美学、隐形排水与长期耐用性的高端场景方案。",
+      "id": "cat_drain_covers",
+      "name": "盖板",
+      "slug": "drain-covers",
+      "description": "按盖板结构形式查看缝隙式、激光开孔、格扇和冲压拉伸盖板。",
       "coverImage": "",
       "sortOrder": 20,
+      "heroVideo": "",
       "seo": {
-        "title": "商业与高端住宅排水系统 | 星渡ASTREVA",
-        "description": "服务商业综合体、高端住宅和景观空间的隐形排水系统。"
-      },
-      "heroVideo": ""
+        "title": "排水盖板产品 | 星渡ASTREVA",
+        "description": "查看不同结构形式的排水盖板产品。"
+      }
     },
     {
-      "id": "cat_industrial",
-      "name": "工业与仓储设施",
-      "slug": "industrial-warehouse",
-      "description": "适合重载、腐蚀和高频通行环境的工业排水系统。",
+      "id": "cat_channel_drains",
+      "name": "水沟",
+      "slug": "channel-drains",
+      "description": "水沟相关产品分类，当前列出的产品为水沟盖板。",
       "coverImage": "",
       "sortOrder": 30,
+      "heroVideo": "",
       "seo": {
-        "title": "工业与仓储排水系统 | 星渡ASTREVA",
-        "description": "用于工业厂房、仓储物流和重载区域的不锈钢排水产品。"
-      },
-      "heroVideo": ""
+        "title": "水沟产品 | 星渡ASTREVA",
+        "description": "查看水沟及配套盖板产品。"
+      }
     },
     {
-      "id": "cat_landscape",
-      "name": "景观与特殊排水",
-      "slug": "landscape-special-drainage",
-      "description": "支持曲线、异形、生态透水和特殊节点的定制化排水。",
+      "id": "cat_grease_traps",
+      "name": "隔油池",
+      "slug": "grease-traps",
+      "description": "该分类已建立，具体产品资料待后台补充。",
       "coverImage": "",
       "sortOrder": 40,
+      "heroVideo": "",
       "seo": {
-        "title": "景观与特殊排水系统 | 星渡ASTREVA",
-        "description": "用于景观、公园、庭院和异形地坪的定制排水解决方案。"
-      },
-      "heroVideo": ""
+        "title": "隔油池 | 星渡ASTREVA",
+        "description": "隔油池产品分类与相关资料。"
+      }
+    },
+    {
+      "id": "cat_settling_tanks",
+      "name": "沉淀池",
+      "slug": "settling-tanks",
+      "description": "该分类已建立，具体产品资料待后台补充。",
+      "coverImage": "",
+      "sortOrder": 50,
+      "heroVideo": "",
+      "seo": {
+        "title": "沉淀池 | 星渡ASTREVA",
+        "description": "沉淀池产品分类与相关资料。"
+      }
+    },
+    {
+      "id": "cat_simple_floor_drains",
+      "name": "简易地漏（无防臭带滤网）",
+      "slug": "simple-floor-drains",
+      "description": "该分类已建立，具体产品资料待后台补充。",
+      "coverImage": "",
+      "sortOrder": 60,
+      "heroVideo": "",
+      "seo": {
+        "title": "简易地漏（无防臭带滤网） | 星渡ASTREVA",
+        "description": "简易地漏产品分类与相关资料。"
+      }
+    },
+    {
+      "id": "cat_concealed_stainless_manhole_covers",
+      "name": "不锈钢隐形井盖",
+      "slug": "concealed-stainless-manhole-covers",
+      "description": "该分类已建立，具体产品资料待后台补充。",
+      "coverImage": "",
+      "sortOrder": 70,
+      "heroVideo": "",
+      "seo": {
+        "title": "不锈钢隐形井盖 | 星渡ASTREVA",
+        "description": "不锈钢隐形井盖产品分类与相关资料。"
+      }
     }
   ],
   "products": [
     {
-      "id": "prod_heavy_modular_stainless",
-      "name": "重型模块化不锈钢排水沟",
-      "slug": "heavy-modular-stainless-drain",
-      "categorySlug": "municipal-public-works",
+      "id": "prod_sealed_floor_drain_housing",
+      "name": "水封地漏箱体",
+      "slug": "sealed-floor-drain-housing",
+      "categorySlug": "water-seal-floor-drains",
       "coverImage": "",
       "galleryImages": [],
-      "summary": "采用顶级 316/316L 不锈钢精密制造，结合专利 Click 咔哒锁扣技术。",
+      "videoUrl": "",
+      "galleryVideos": [],
+      "summary": "水封地漏系统中的箱体部件。",
       "features": [
-        "专利无缝拼接技术，100% 防渗漏",
-        "符合 EN1433 国际承载标准",
-        "一体成型结构，有效防止异物堵塞",
-        "表面防滑处理，符合 ADA 建筑安全规范"
+        "用于构成水封地漏主体的箱体部件",
+        "可与对应滤网按选型组合",
+        "接口及尺寸按已确认的产品资料核对"
       ],
-      "specifications": [
-        {
-          "label": "主体材质",
-          "value": "AISI 304 或 AISI 316L 级不锈钢"
-        },
-        {
-          "label": "内部宽度",
-          "value": "100mm / 150mm / 200mm / 300mm"
-        },
-        {
-          "label": "承载等级",
-          "value": "A15 - F900"
-        }
-      ],
+      "specifications": [],
       "downloads": [],
-      "body": "该系统不仅具备极致的耐腐蚀性和水力学性能，更能在最严苛的环境下提供长达 50 年的可靠服役周期。",
+      "body": "<p>水封地漏系统中的箱体部件。详情页展示产品示意图；外形、接口、材质与尺寸请按项目图纸及最终确认资料核对。</p><h3>选型与配套</h3><p>请提供项目图纸、安装环境、目标饰面和维护要求。ASTREVA 将依据双方确认的产品资料回复适配信息；未在本页列明的参数不构成产品承诺。</p>",
       "isFeatured": true,
       "sortOrder": 10,
       "seo": {
-        "title": "重型模块化不锈钢排水沟 | 星渡ASTREVA",
-        "description": "适用于市政和公共工程的重型模块化不锈钢排水沟。"
-      },
-      "videoUrl": ""
+        "title": "水封地漏箱体 | 星渡ASTREVA",
+        "description": "水封地漏箱体产品信息、示意图与选型说明。"
+      }
     },
     {
-      "id": "prod_municipal_grate",
-      "name": "高承载定制化市政格栅",
-      "slug": "high-load-custom-municipal-grate",
-      "categorySlug": "municipal-public-works",
+      "id": "prod_sealed_floor_drain_strainer",
+      "name": "水封地漏滤网",
+      "slug": "sealed-floor-drain-strainer",
+      "categorySlug": "water-seal-floor-drains",
       "coverImage": "",
       "galleryImages": [],
-      "summary": "为市政道路和公共空间提供高承载、易维护的格栅系统。",
+      "videoUrl": "",
+      "galleryVideos": [],
+      "summary": "水封地漏配套滤网部件。",
       "features": [
-        "高承载结构",
-        "快速检修",
-        "耐腐蚀表面处理"
+        "用于地漏内部的过滤组件",
+        "与对应箱体配套确认",
+        "开孔形式及尺寸以产品资料为准"
       ],
-      "specifications": [
-        {
-          "label": "承载等级",
-          "value": "D400 - F900"
-        }
-      ],
+      "specifications": [],
       "downloads": [],
-      "body": "适合高频交通和长期暴露环境，支持工程定制。",
+      "body": "<p>水封地漏配套滤网部件。请在选型时确认与箱体的适配关系、开孔形式和清理方式。</p><h3>选型与配套</h3><p>请提供项目图纸、安装环境、目标饰面和维护要求。ASTREVA 将依据双方确认的产品资料回复适配信息；未在本页列明的参数不构成产品承诺。</p>",
       "isFeatured": true,
       "sortOrder": 20,
       "seo": {
-        "title": "高承载定制化市政格栅 | 星渡ASTREVA",
-        "description": "高承载市政格栅和排水盖板定制方案。"
-      },
-      "videoUrl": ""
+        "title": "水封地漏滤网 | 星渡ASTREVA",
+        "description": "水封地漏滤网产品信息、示意图与选型说明。"
+      }
     },
     {
-      "id": "prod_slot_drain",
-      "name": "隐形缝隙式树脂排水系统",
-      "slug": "invisible-slot-resin-drainage-system",
-      "categorySlug": "commercial-premium-residential",
+      "id": "prod_slot_drain_cover",
+      "name": "缝隙式盖板",
+      "slug": "slot-drain-cover",
+      "categorySlug": "drain-covers",
       "coverImage": "",
       "galleryImages": [],
-      "summary": "适合商业广场、高端住宅和景观地坪的低视觉干扰排水系统。",
+      "videoUrl": "",
+      "galleryVideos": [],
+      "summary": "缝隙式排水盖板以连续开口形成收水面，适用于希望控制表面视觉表达的排水节点。",
       "features": [
-        "隐形缝隙外观",
-        "适配石材和地砖",
-        "排水性能稳定"
+        "结构形式：缝隙式",
+        "可与项目排水沟体配套选型",
+        "开口与外形尺寸按确认图纸核对"
       ],
-      "specifications": [
-        {
-          "label": "缝隙宽度",
-          "value": "8mm / 12mm / 20mm"
-        }
-      ],
+      "specifications": [],
       "downloads": [],
-      "body": "通过窄缝收水和模块化沟体兼顾美观与效率。",
+      "body": "<p>缝隙式排水盖板以连续开口形成收水面，适用于希望控制表面视觉表达的排水节点。沟体、开口、饰面和检修方式应结合项目图纸确认。</p><h3>选型与配套</h3><p>请提供项目图纸、安装环境、目标饰面和维护要求。ASTREVA 将依据双方确认的产品资料回复适配信息；未在本页列明的参数不构成产品承诺。</p>",
       "isFeatured": true,
-      "sortOrder": 10,
+      "sortOrder": 30,
       "seo": {
-        "title": "隐形缝隙式排水系统 | 星渡ASTREVA",
-        "description": "用于商业与高端住宅的隐形缝隙式排水系统。"
-      },
-      "videoUrl": ""
+        "title": "缝隙式盖板 | 星渡ASTREVA",
+        "description": "缝隙式盖板产品信息、示意图与选型说明。"
+      }
     },
     {
-      "id": "prod_rain_collector",
-      "name": "景观级雨水收集器",
-      "slug": "landscape-rainwater-collector",
-      "categorySlug": "commercial-premium-residential",
+      "id": "prod_laser_cut_cover",
+      "name": "激光开孔盖板",
+      "slug": "laser-cut-perforated-drain-cover",
+      "categorySlug": "drain-covers",
       "coverImage": "",
       "galleryImages": [],
-      "summary": "面向景观雨水组织与收集的建筑级节点产品。",
+      "videoUrl": "",
+      "galleryVideos": [],
+      "summary": "激光开孔盖板通过定制孔型形成排水开口。",
       "features": [
-        "易清洁",
-        "可定制面层",
-        "与铺装协调"
+        "结构形式：激光开孔",
+        "孔型及布局可按项目资料确认",
+        "盖板与沟体配合关系需核对"
       ],
-      "specifications": [
-        {
-          "label": "面层",
-          "value": "不锈钢 / 石材嵌入式"
-        }
-      ],
+      "specifications": [],
       "downloads": [],
-      "body": "让雨水管理与景观设计自然融合。",
+      "body": "<p>激光开孔盖板通过定制孔型形成排水开口。孔形、孔距、板面、边缘处理和配套沟体应在生产前根据项目文件确认。</p><h3>选型与配套</h3><p>请提供项目图纸、安装环境、目标饰面和维护要求。ASTREVA 将依据双方确认的产品资料回复适配信息；未在本页列明的参数不构成产品承诺。</p>",
       "isFeatured": false,
-      "sortOrder": 20,
+      "sortOrder": 40,
       "seo": {
-        "title": "景观级雨水收集器 | 星渡ASTREVA",
-        "description": "适用于景观空间的雨水收集和排水节点。"
-      },
-      "videoUrl": ""
+        "title": "激光开孔盖板 | 星渡ASTREVA",
+        "description": "激光开孔盖板产品信息、示意图与选型说明。"
+      }
     },
     {
-      "id": "prod_industrial_channel",
-      "name": "防腐蚀工业级不锈钢明沟",
-      "slug": "anti-corrosion-industrial-stainless-channel",
-      "categorySlug": "industrial-warehouse",
+      "id": "prod_bar_grating_cover",
+      "name": "格扇盖板",
+      "slug": "bar-grating-drain-cover",
+      "categorySlug": "drain-covers",
       "coverImage": "",
       "galleryImages": [],
-      "summary": "为工业腐蚀环境和高强度清洗场景设计。",
+      "videoUrl": "",
+      "galleryVideos": [],
+      "summary": "格扇式盖板以条格构成排水面。",
       "features": [
-        "316L 耐腐蚀",
-        "卫生级焊接",
-        "可承受高压冲洗"
+        "结构形式：格扇",
+        "条格方向与开口按图纸确认",
+        "支承和安装条件需与沟体配套核对"
       ],
-      "specifications": [
-        {
-          "label": "材质",
-          "value": "316L 不锈钢"
-        }
-      ],
+      "specifications": [],
       "downloads": [],
-      "body": "适合食品、化工、物流和制造场景。",
+      "body": "<p>格扇式盖板以条格构成排水面。选型时应确认条格方向、开口、边框、支承方式以及实际使用区域要求。</p><h3>选型与配套</h3><p>请提供项目图纸、安装环境、目标饰面和维护要求。ASTREVA 将依据双方确认的产品资料回复适配信息；未在本页列明的参数不构成产品承诺。</p>",
       "isFeatured": false,
-      "sortOrder": 10,
+      "sortOrder": 50,
       "seo": {
-        "title": "防腐蚀工业级不锈钢明沟 | 星渡ASTREVA",
-        "description": "工业级防腐不锈钢明沟排水系统。"
-      },
-      "videoUrl": ""
+        "title": "格扇盖板 | 星渡ASTREVA",
+        "description": "格扇盖板产品信息、示意图与选型说明。"
+      }
     },
     {
-      "id": "prod_industrial_cover",
-      "name": "工业级承重井盖",
-      "slug": "industrial-heavy-duty-manhole-cover",
-      "categorySlug": "industrial-warehouse",
+      "id": "prod_stamped_drawn_cover",
+      "name": "冲压拉伸盖板",
+      "slug": "stamped-drawn-drain-cover",
+      "categorySlug": "drain-covers",
       "coverImage": "",
       "galleryImages": [],
-      "summary": "用于仓储、工业厂区和重型车辆区域的承重井盖。",
+      "videoUrl": "",
+      "galleryVideos": [],
+      "summary": "冲压拉伸盖板采用成形结构作为排水表面。",
       "features": [
-        "高承载",
-        "防滑表面",
-        "易维护开启"
+        "结构形式：冲压拉伸",
+        "外观与开口形式按产品资料确认",
+        "适配沟体及安装方式按项目核对"
       ],
-      "specifications": [
-        {
-          "label": "承载",
-          "value": "D400 - F900"
-        }
-      ],
+      "specifications": [],
       "downloads": [],
-      "body": "根据场地荷载和检修频率定制。",
+      "body": "<p>冲压拉伸盖板采用成形结构作为排水表面。具体纹理、开口、板面尺寸和配套关系以已确认的产品图纸与技术资料为准。</p><h3>选型与配套</h3><p>请提供项目图纸、安装环境、目标饰面和维护要求。ASTREVA 将依据双方确认的产品资料回复适配信息；未在本页列明的参数不构成产品承诺。</p>",
       "isFeatured": false,
-      "sortOrder": 20,
+      "sortOrder": 60,
       "seo": {
-        "title": "工业级承重井盖 | 星渡ASTREVA",
-        "description": "工业与仓储设施重载井盖产品。"
-      },
-      "videoUrl": ""
+        "title": "冲压拉伸盖板 | 星渡ASTREVA",
+        "description": "冲压拉伸盖板产品信息、示意图与选型说明。"
+      }
     },
     {
-      "id": "prod_curve_drain",
-      "name": "曲线定制地坪排水系统",
-      "slug": "custom-curved-floor-drainage-system",
-      "categorySlug": "landscape-special-drainage",
+      "id": "prod_trench_drain_cover",
+      "name": "水沟盖板",
+      "slug": "trench-drain-cover",
+      "categorySlug": "channel-drains",
       "coverImage": "",
       "galleryImages": [],
-      "summary": "支持曲线、异形和复杂地坪边界的定制排水。",
+      "videoUrl": "",
+      "galleryVideos": [],
+      "summary": "水沟盖板用于覆盖水沟并形成可排水的表面节点。",
       "features": [
-        "曲线定制",
-        "适合景观空间",
-        "模块精确拼接"
+        "产品类型：水沟盖板",
+        "分段与尺寸按项目资料确认",
+        "与对应水沟沟体配套核对"
       ],
-      "specifications": [
-        {
-          "label": "定制半径",
-          "value": "按项目图纸加工"
-        }
-      ],
+      "specifications": [],
       "downloads": [],
-      "body": "用于广场、公园、庭院和特殊建筑节点。",
+      "body": "<p>水沟盖板用于覆盖水沟并形成可排水的表面节点。选型时请确认沟体净宽、盖板分段、支承方式及检修要求。</p><h3>选型与配套</h3><p>请提供项目图纸、安装环境、目标饰面和维护要求。ASTREVA 将依据双方确认的产品资料回复适配信息；未在本页列明的参数不构成产品承诺。</p>",
       "isFeatured": false,
-      "sortOrder": 10,
+      "sortOrder": 70,
       "seo": {
-        "title": "曲线定制地坪排水系统 | 星渡ASTREVA",
-        "description": "曲线和异形地坪排水定制方案。"
-      },
-      "videoUrl": ""
-    },
-    {
-      "id": "prod_permeable_well",
-      "name": "生态透水材料与检查井",
-      "slug": "ecological-permeable-materials-and-inspection-well",
-      "categorySlug": "landscape-special-drainage",
-      "coverImage": "",
-      "galleryImages": [],
-      "summary": "结合生态透水铺装和可维护检查井的雨水管理节点。",
-      "features": [
-        "生态透水",
-        "检修便利",
-        "适合海绵城市"
-      ],
-      "specifications": [
-        {
-          "label": "应用",
-          "value": "海绵城市 / 景观改造"
-        }
-      ],
-      "downloads": [],
-      "body": "支持城市雨水滞蓄、渗透与排放的综合设计。",
-      "isFeatured": false,
-      "sortOrder": 20,
-      "seo": {
-        "title": "生态透水材料与检查井 | 星渡ASTREVA",
-        "description": "生态透水材料与检查井排水节点。"
-      },
-      "videoUrl": ""
+        "title": "水沟盖板 | 星渡ASTREVA",
+        "description": "水沟盖板产品信息、示意图与选型说明。"
+      }
     }
   ],
   "support": {
@@ -683,21 +663,24 @@
       "slug": "about",
       "title": "关于星渡ASTREVA",
       "hero": {
-        "eyebrow": "About Us",
-        "title": "推动全球排水创新的力量",
-        "description": "自成立以来，星渡ASTREVA 始终致力于用前沿科技与顶级制造工艺，重塑建筑环境的生命线。",
+        "eyebrow": "ABOUT ASTREVA",
+        "title": "让排水系统更好地融入建筑与城市",
+        "description": "围绕建筑、市政、工业与景观项目，提供排水产品信息、选型沟通和项目配套支持。",
         "backgroundImage": "",
         "backgroundVideo": ""
       },
       "sections": {
         "introIcon": "滴",
-        "partnersTitle": "全球信赖的合作伙伴"
+        "partnersTitle": "全球信赖的合作伙伴",
+        "companyPagesTitle": "了解我们的制造协同与工程品质",
+        "imagePlaceholderLabel": "页面示意图"
       },
-      "body": "<p>星渡ASTREVA 是全球领先的建筑与市政排水系统研发制造商。我们摒弃了传统的铸铁与水泥沟渠，开创性地推出了 <strong>100% 模块化的不锈钢 Click 咔哒锁扣系统</strong>。</p><p>我们的研发中心与制造基地配备了全球最先进的自动化生产线，确保每一寸不锈钢材都达到航天级精度。</p><h2>我们不仅制造产品，更在重构工程的标准。</h2><p>从商业广场的隐形缝隙，到市政重载道路的高强度格栅，星渡ASTREVA 以极致的耐腐蚀性、超过 50 年的超长使用寿命以及极致的安装速度，赢得了全球顶级建筑师和总包商的信赖。</p>",
+      "body": "<p>星渡ASTREVA 专注于排水产品与项目应用。我们重视产品结构、安装条件和建筑表面的协调，希望让排水系统在满足项目功能需求的同时，更容易融入整体设计。</p><h3>从需求开始沟通</h3><p>不同项目在图纸、地面做法、排水方向、检修空间和使用环境上各不相同。我们通过产品信息整理和项目沟通，协助客户明确选型所需资料，并在范围确认后推进后续配套。</p><h3>信息以项目确认为准</h3><p>官网中的图片用于产品示意。材质、尺寸、连接方式、交付范围和性能参数请以对应产品的正式资料、报价及双方确认的项目文件为准。</p>",
       "seo": {
         "title": "关于我们 | 星渡ASTREVA",
-        "description": "了解星渡ASTREVA 的品牌、技术理念和排水系统创新。"
-      }
+        "description": "了解星渡ASTREVA 的产品方向、项目协作方式和服务理念。"
+      },
+      "enabled": true
     },
     {
       "slug": "faq",
@@ -735,48 +718,54 @@
     },
     {
       "slug": "install",
-      "title": "Click 咔哒锁扣系统 安装指南",
+      "title": "排水系统安装指南",
       "sections": {
         "icon": "工"
       },
-      "body": "<h3>Step 1 基础沟槽准备</h3><p>根据项目图纸要求，开挖具有足够宽度和深度的沟槽，并铺设混凝土垫层。</p><h3>Step 2 模块拼接与锁定</h3><p>将相邻两段星渡不锈钢排水沟模块对齐，通过专利 Click 锁扣机制实现无缝防水连接。</p><h3>Step 3 高度调节与固定</h3><p>利用沟体两侧自带的高度调节支架螺栓，将排水系统精确调整至标高水平面。</p>",
+      "body": "<p><strong>施工前提示：</strong>本指南用于一般流程说明，不替代项目施工图、产品安装文件、结构设计或现场安全规范。不同产品和工况可能需要不同做法；如文件要求不一致，应先向项目技术负责人确认后再施工。</p><h3>第一步：核对图纸与产品清单</h3><p>确认沟体、盖板、地漏组件、连接件及附件的型号、数量、安装方向和到货状态。检查现场持有的图纸版本与订单确认文件一致，并标记转角、端头、出水口和交接位置。</p><h3>第二步：复核现场尺寸与定位</h3><p>依据批准的排水布置图测量沟线、标高、完成面厚度、门口和设备接口。检查施工空间、排水去向和检修可达性；发现结构、标高或尺寸冲突时，先形成书面问题并完成确认。</p><h3>第三步：准备基槽与基层</h3><p>按项目做法开挖基槽，清理松散材料并检查基层承载条件。基层材料、宽度、厚度和养护要求以结构设计与产品安装文件为准。施工过程中避免扰动既有管线和周边结构。</p><h3>第四步：预排沟体与连接部件</h3><p>正式固定前先按顺序摆放沟体、端板、连接件和转接件，核对长度、方向及出水口位置。确认模块之间的连接方式和密封材料与对应产品说明相符，不要仅凭外观相似替换部件。</p><h3>第五步：调整标高与排水坡向</h3><p>使用测量工具按批准图纸设置沟体顶面与设计坡向。需要纵向坡度、局部落差或分段标高时，按图纸数值逐段复核；避免用未经确认的通用数值替代项目设计。</p><h3>第六步：固定沟体并保护内部</h3><p>按安装文件设置支撑和固定点，确认沟体在浇筑或回填过程中不会移位、变形或进浆。对连接处、出水口及裸露开口采取保护措施；混凝土、砂浆或其他施工材料不得进入排水通道。</p><h3>第七步：完成周边铺装与盖板安装</h3><p>依据项目节点完成周边混凝土、找平层和面层施工，控制完成面与盖板边缘的关系。达到安装文件要求后再装盖板，确认盖板方向、支承和开启方式正确，检修部位保持可操作。</p><h3>第八步：清理并进行排水检查</h3><p>移除施工保护物和沟内杂物，检查接口、端部和排水出口。按项目要求进行通水或现场验收，观察是否存在堵塞、明显积水或松动；发现问题先定位原因并完成修整，再进入交付。</p><h3>第九步：交接维护信息</h3><p>整理实际安装位置、产品清单、变更记录和随附资料。向使用方说明盖板开启、滤网清理、沉积物移除和定期检查方式，清洁剂及维护周期按对应产品文件执行。</p><h3>常见检查项</h3><ul><li>现场使用最新版图纸，尺寸与排水方向已经复核。</li><li>沟体、盖板和附件型号匹配，数量及安装方向无误。</li><li>基层、支撑、连接和密封符合项目文件要求。</li><li>浇筑或铺装过程保护了排水通道和检修位置。</li><li>安装后完成清理、通水检查和资料交接。</li></ul>",
       "seo": {
-        "title": "安装指南 | 星渡ASTREVA",
-        "description": "查看星渡ASTREVA Click 咔哒锁扣排水系统安装步骤。"
+        "title": "排水系统安装指南 | 星渡ASTREVA",
+        "description": "从现场复核、沟体安装到完工检查，了解排水系统一般安装流程。"
       },
       "hero": {
-        "title": "Click 咔哒锁扣系统 安装指南",
-        "description": "查看星渡ASTREVA Click 咔哒锁扣排水系统安装步骤。",
-        "backgroundVideo": ""
-      }
+        "title": "排水系统安装指南",
+        "description": "从施工条件核对到安装后检查，按项目图纸和产品资料组织施工。",
+        "backgroundVideo": "",
+        "eyebrow": "INSTALLATION GUIDE"
+      },
+      "enabled": true
     },
     {
       "slug": "privacy",
       "title": "隐私政策",
-      "body": "<p>生效日期：2026年1月1日</p><p>星渡ASTREVA 高度重视您的隐私。本隐私政策解释了当您访问我们的网站或使用我们的服务时，我们如何收集、使用、披露和保护您的个人信息。</p><h3>信息收集</h3><p>当您通过我们的在线表单提交咨询、申请报价或订阅资讯时，我们可能会收集您的姓名、联系电话、电子邮件地址以及项目需求。</p>",
+      "body": "<p><strong>更新日期：2026年10月22日</strong></p><p>本政策适用于 ASTREVA 官方网站及其页面功能。我们按照适用的个人信息与隐私保护法律处理信息；不同地区的强制性规则可能赋予您额外权利。</p><h3>一、我们可能处理的信息</h3><ul><li><strong>您主动提交的信息：</strong>姓名、公司、电话、电子邮箱、项目需求及您在咨询表单中填写的其他内容，用于回复咨询、准备报价或跟进项目。</li><li><strong>网站访问与设备信息：</strong>访问时间、页面路径、来源页面、IP 地址或网络前缀、浏览器及版本、操作系统、设备类型和访问事件，用于提供网站、分析访问情况、保障安全及排查故障。</li><li><strong>大致地区与时区：</strong>如果请求经过已配置为可信的反向代理或 CDN，我们可能收到该服务根据 IP 提供的大致国家、地区、城市及其时区信息；您允许分析统计后，浏览器也可能发送时区名称。本网站不请求 GPS 精确位置。</li><li><strong>偏好设置：</strong>Cookie 提示选择、语言等设置可能保存在浏览器本地存储中。</li></ul><h3>二、匿名统计与同意设置</h3><p>在您尚未接受分析统计前，网站可能发送不带本地访客和会话标识符的匿名页面访问记录；服务器仍会接收完成请求所需的网络信息，例如 IP 和浏览器请求头。接受分析统计后，网站可生成或读取浏览器中的访客及会话标识符，并在后续页面访问中发送时区。在线客服打开、提交咨询等分析事件仅在分析统计可用时发送。您可以通过 Cookie 设置更改选择；更改后的选择影响后续访问。</p><h3>三、处理目的与依据</h3><p>我们使用上述信息提供并维护网站、响应咨询、处理项目沟通、了解页面使用情况、保护服务安全、履行法律义务以及处理争议。非必要分析功能以您的选择为基础；在适用法律允许的范围内，安全、服务交付和主动提交咨询等处理可基于提供所请求服务或其他适用依据。</p><h3>四、共享、受托处理与跨境访问</h3><p>我们可能将必要信息提供给网站托管、数据库、对象存储、客服系统、邮件或安全服务供应商，由其按约定提供服务；法律要求、保护权利或处理安全事件时，也可能依法披露。供应商可能在不同国家或地区处理数据。我们会按适用要求采取合同、访问控制和其他保护措施，不会出售个人信息。</p><h3>五、保存期限与安全</h3><p>我们仅在实现本政策目的所需期间保存信息，并采用访问控制、权限管理和传输保护等措施。官网访问明细的默认保留期为30天，后台系统事件默认保留180天；管理员可按系统策略调整。咨询信息按照沟通、交易和适用法律需要保存，到期后删除或进行去标识化处理，法律要求继续保存的情况除外。</p><h3>六、您的选择与权利</h3><p>在适用法律允许的范围内，您可请求查阅、更正、删除或限制处理相关个人信息，也可以撤回基于同意开展的处理。撤回不会影响撤回前处理的合法性。请通过官网服务支持页面或 info@astreva.com 联系我们；为保护信息安全，我们可能需要核验请求人的身份，并可能说明依法不能完成请求的原因。</p><h3>七、未成年人</h3><p>本网站面向企业、项目和专业采购沟通，不以未成年人为目标对象。如果您认为未成年人向我们提交了个人信息，请通过上述联系方式联系我们处理。</p><h3>八、政策变更与联系</h3><p>我们可能因功能或法律变化更新本政策，并在本页发布更新版本。有关隐私的问题可联系 info@astreva.com，或通过官网服务支持页面提交。</p>",
       "seo": {
         "title": "隐私政策 | 星渡ASTREVA",
-        "description": "星渡ASTREVA 官网隐私政策。"
+        "description": "了解 ASTREVA 官网处理咨询信息、网站访问记录、Cookie 偏好和隐私请求的方式。"
       },
       "hero": {
         "title": "隐私政策",
-        "description": "星渡ASTREVA 官网隐私政策。",
-        "backgroundVideo": ""
-      }
+        "description": "说明 ASTREVA 官网在访问、咨询和使用网站功能时如何处理相关信息。",
+        "backgroundVideo": "",
+        "eyebrow": "PRIVACY"
+      },
+      "enabled": true
     },
     {
       "slug": "agreement",
-      "title": "用户服务协议",
-      "body": "<p>感谢您访问星渡ASTREVA官方网站。在使用本网站之前，请仔细阅读以下条款和条件。</p><h3>网站内容与知识产权</h3><p>本网站上的所有内容均受版权法保护，未经书面许可，任何人不得出于商业目的复制、分发或修改这些资料。</p><h3>产品信息免责声明</h3><p>具体工程参数应以我们的工程师为您出具的最终正式方案及技术协议为准。</p>",
+      "title": "网站使用条款",
+      "body": "<p><strong>更新日期：2026年10月22日</strong></p><p>欢迎访问 ASTREVA 官方网站。访问或使用本网站，即表示您同意遵守本条款及适用法律。如您不同意，请停止使用相关功能。</p><h3>一、网站内容与服务范围</h3><p>本网站用于介绍产品类别、一般应用信息、项目支持方式和联系方式。网站页面、图片、视频及技术文字仅用于信息沟通；特定交易、报价、交期、产品配置和服务范围，以双方后续确认的正式文件为准。</p><h3>二、产品资料与示意内容</h3><p>产品图片可能为示意图，页面展示不代表特定项目的最终供货状态。尺寸、材质、表面处理、适用环境、承载或其他技术参数，只有在相应正式产品资料或双方确认文件中列明时才适用于具体产品。请勿仅依据网页图片或一般说明开展设计、采购或施工。</p><h3>三、用户责任</h3><p>您应提供真实、准确且有权提交的联系和项目资料；不得利用本网站从事违法行为、侵害他人权利、干扰服务运行、传播恶意代码或未授权收集他人信息。请确保您提交的图纸、图片和文件不侵犯第三方权益，并且仅包含开展咨询所需的资料。</p><h3>四、知识产权</h3><p>本网站中的商标、标识、文字、图像、视频、页面设计和其他内容受适用知识产权规则保护。未经权利人许可，不得复制、公开传播、修改、商业使用或移除权利标识；法律允许或 ASTREVA 书面授权的使用除外。您提交的资料仍由您或相应权利人享有权利；您授权我们为回复咨询和处理项目沟通而使用这些资料。</p><h3>五、外部服务与可用性</h3><p>本网站可能链接至第三方网站或嵌入第三方媒体。第三方服务由其运营者负责，访问和使用时应遵守其条款。我们会合理维护网站，但网络、维护或第三方服务故障可能导致暂时中断；我们会在合理范围内处理已知问题。</p><h3>六、责任范围</h3><p>在适用法律允许的范围内，本网站信息按发布时状态提供。我们不以一般网页内容代替针对具体项目的工程设计、现场测量、检测或专业意见。对于法律不得排除或限制的责任，本条款不作排除或限制；其他责任按适用法律和具体交易文件处理。</p><h3>七、隐私与条款更新</h3><p>个人信息处理方式见本网站隐私政策。我们可能根据网站功能、业务或法律变化更新本条款，并在本页公布。更新版本发布后继续使用网站，表示您在适用法律允许范围内接受更新条款。</p><h3>八、适用规则与联系</h3><p>本条款的解释和履行适用与相关交易或服务相适用的强制性法律；具体争议处理方式以适用法律和双方签署的交易文件为准。本条款不指定未经确认的法律主体、注册地址或争议管辖地。条款问题可联系 info@astreva.com 或通过官网服务支持页面提交。</p>",
       "seo": {
-        "title": "用户服务协议 | 星渡ASTREVA",
-        "description": "星渡ASTREVA 官网用户服务协议。"
+        "title": "网站使用条款 | 星渡ASTREVA",
+        "description": "ASTREVA 官方网站的使用规则、产品信息说明、知识产权和责任范围。"
       },
       "hero": {
-        "title": "用户服务协议",
-        "description": "星渡ASTREVA 官网用户服务协议。",
-        "backgroundVideo": ""
-      }
+        "title": "网站使用条款",
+        "description": "访问和使用 ASTREVA 官网时适用的基本规则。",
+        "backgroundVideo": "",
+        "eyebrow": "TERMS OF USE"
+      },
+      "enabled": true
     },
     {
       "slug": "solutions",
@@ -920,6 +909,48 @@
         "title": "解决方案 | 星渡ASTREVA",
         "description": "浏览星渡ASTREVA 市政、商业、工业、景观、海绵城市等排水系统解决方案。"
       }
+    },
+    {
+      "slug": "about-manufacturing",
+      "title": "制造协同与交付能力",
+      "hero": {
+        "eyebrow": "MANUFACTURING",
+        "title": "围绕项目要求组织产品制造与交付",
+        "description": "从图纸、规格和节点信息核对开始，逐步确认产品配置、检验重点与交付资料。"
+      },
+      "body": "<p>排水产品与建筑节点紧密相关。制造协作需要先把项目条件转化为清晰、可核对的产品要求，再安排样品、图纸确认、生产沟通和交付资料。</p><h3>项目资料核对</h3><p>沟通阶段可提供平面与节点图、沟体长度和接口信息、饰面做法、使用环境、维护需求及期望交付时间。双方据此确认产品范围及仍待澄清的事项。</p><h3>配置与图纸确认</h3><p>涉及非标准尺寸、特殊开孔、转角或饰面配合时，应在生产前确认对应图纸、产品数量、分段方式和安装界面。未经双方确认的示意图或网页图片不作为制造依据。</p><h3>生产、检验与交付资料</h3><p>生产安排、过程检查项目、包装方式和随货文件按订单或项目文件约定执行。若项目需要样品、检验记录或其他资料，应在报价和交付计划中提前确认。</p><h3>需要进一步沟通</h3><p>请通过服务支持页面提交项目图纸和需求，我们会根据可提供的资料回复适配建议与下一步确认事项。</p>",
+      "sections": {
+        "cardLinkLabel": "查看制造协同",
+        "backLabel": "关于我们",
+        "contactLabel": "联系项目团队",
+        "imagePlaceholderLabel": "页面示意图"
+      },
+      "seo": {
+        "title": "制造协同与交付能力 | 星渡ASTREVA",
+        "description": "了解 ASTREVA 项目资料核对、配置确认和交付协作方式。"
+      },
+      "enabled": true
+    },
+    {
+      "slug": "about-quality",
+      "title": "工程协同与品质确认",
+      "hero": {
+        "eyebrow": "ENGINEERING & QUALITY",
+        "title": "让产品信息、图纸与现场条件保持一致",
+        "description": "以可核对的项目资料为基础，逐项确认选型、配套、检查和安装交接事项。"
+      },
+      "body": "<p>排水系统的适配与现场条件有关。工程协同的目标，是让产品资料、项目图纸和安装界面在关键节点得到确认，并让待确认事项在生产和施工前被识别。</p><h3>需求与边界</h3><p>共同梳理使用区域、排水方式、地面构造、标高关系、连接点、检修空间和现场施工顺序。涉及载荷、介质、温度或特殊规范时，应提供项目要求和适用文件供技术确认。</p><h3>设计与配套检查</h3><p>对产品型号、材料标识、尺寸、连接及附件进行文件核对。任何修改应回到双方确认的最新版文件，避免现场依据不同版本加工或安装。</p><h3>验收与维护信息</h3><p>项目交付时可按订单约定核对数量、外观、随附文件和现场节点。清洁剂、维护频次及替换件要求应参考对应产品资料；没有明示的数据不应由示意图推定。</p><h3>以正式文件为准</h3><p>本页介绍一般沟通流程，不替代产品规格、检验标准、施工图或合同约定。具体项目的质量要求和验收标准以双方确认的正式文件为准。</p>",
+      "sections": {
+        "cardLinkLabel": "查看工程与品质",
+        "backLabel": "关于我们",
+        "contactLabel": "联系项目团队",
+        "imagePlaceholderLabel": "页面示意图"
+      },
+      "seo": {
+        "title": "工程协同与品质确认 | 星渡ASTREVA",
+        "description": "了解 ASTREVA 项目工程信息核对、配套检查与交付沟通方式。"
+      },
+      "enabled": true
     }
   ]
 }

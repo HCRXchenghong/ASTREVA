@@ -33,6 +33,7 @@ func main() {
 	}
 
 	storeOptions := store.Options{
+		Logger:                 logger,
 		OpenAIAPIKey:           cfg.OpenAIAPIKey,
 		OpenAIBaseURL:          cfg.OpenAIBaseURL,
 		OpenAIModel:            cfg.OpenAIModel,
@@ -73,6 +74,10 @@ func main() {
 		Addr:              cfg.HTTPAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       2 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	errCh := make(chan error, 1)
@@ -131,5 +136,7 @@ func buildStore(ctx context.Context, cfg config.Config, options store.Options, l
 func buildNotifier(cfg config.Config, logger *slog.Logger, dataStore store.Store) notify.Notifier {
 	provider := notify.NewProvider(logger)
 	provider.SetSMTPProvider(dataStore.AlertSMTPSettings)
+	env := strings.ToLower(strings.TrimSpace(cfg.Env))
+	provider.SetAllowPrivate(env != "prod" && env != "production")
 	return provider
 }

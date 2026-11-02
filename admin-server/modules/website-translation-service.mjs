@@ -1,3 +1,5 @@
+import { sanitizeCmsContent } from './html-sanitize.mjs';
+
 const SETTING_KEY = 'website-translation';
 const TARGET_LOCALES = ['en', 'ar'];
 const API_TYPES = new Set(['chat_completions', 'responses', 'anthropic_messages']);
@@ -9,6 +11,9 @@ const RETRY_DELAYS_MS = [1500, 5000, 15000, 30000, 60000];
 const JOB_REQUEUE_DELAYS_MS = [60000, 120000, 240000];
 // 连续批次之间短暂停顿，降低上游网关在高频请求下返回 502 的概率。
 const BATCH_GAP_MS = 2500;
+// 控制输入长度，避免少数长文案把 40 条批次的输出挤到模型上限之外。
+const MAX_BATCH_INPUT_CHARS = 6000;
+const SINGLE_ENTRY_ATTEMPTS = 3;
 
 // 上游账号池容易被并发打限流：同一时刻最多一个批量翻译请求在途，多语言按批次交替进行。
 let batchChain = Promise.resolve();
@@ -83,7 +88,7 @@ async function fetchWithRetry(fetchImpl, url, options, timeoutMs, logger) {
       if (attempt === RETRY_DELAYS_MS.length) throw error;
       lastError = error;
     }
-    logger.warn(`[网站翻译] 上游抖动（${lastError.message}），${RETRY_DELAYS_MS[attempt]}ms 后重试 ${url}`);
+    logWarn(logger, `[网站翻译] 上游抖动（${lastError.message}），${RETRY_DELAYS_MS[attempt]}ms 后重试 ${url}`);
     await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
   }
   throw lastError;
@@ -143,9 +148,11 @@ function parseJsonObject(text) {
 
 function shouldTranslate(path, value) {
   if (!/[\u3400-\u9fff]/u.test(value)) return false;
+  // 每种语言的 SEO 由 SEO 能力直接生成，不能把中文 SEO 混进普通翻译任务。
+  if (/(?:^|\.)(?:defaultSeo|seo)(?:\.|$)/i.test(path)) return false;
   const key = path.split('.').at(-1) || '';
   if (/^(id|slug|categorySlug|locale|href|url|src|path|phone|email|icon|logoUrl|serviceBridgeUrl)$/i.test(key)) return false;
-  if (/(image|video|media|asset|cover|poster|thumbnail|background|download|endpoint|key)$/i.test(key)) return false;
+  if (/(image|video|media|asset|cover|poster|thumbnail|background|download|endpoint|key|icon)$/i.test(key)) return false;
   if (/^(?:https?:|mailto:|tel:|\/|#)/i.test(value.trim())) return false;
   return true;
 }
@@ -167,6 +174,74 @@ export function collectTranslatableEntries(content) {
   return entries;
 }
 
+const MEDIA_FIELD_KEYS = new Set([
+  'mediaItems', 'galleryMediaItems', 'videoMediaItems', 'videoModalBackgroundMediaItems',
+  'coverImage', 'backgroundImage', 'backgroundVideo', 'videoUrl', 'videoImage',
+  'videoPosterImage', 'videoModalBackgroundImage', 'galleryImages', 'galleryVideos',
+  'heroVideo', 'image', 'images', 'poster', 'logoUrl'
+]);
+
+function sameValue(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function mediaAltChanged(before, after) {
+  if (!Array.isArray(before) || !Array.isArray(after)) return false;
+  const previous = new Map(before.map((item) => [`${item?.type}:${item?.url}`, item?.alt || '']));
+  return after.some((item) => {
+    const id = `${item?.type}:${item?.url}`;
+    if (previous.has(id)) return previous.get(id) !== (item?.alt || '');
+    return /[\u3400-\u9fff]/u.test(item?.alt || '');
+  });
+}
+
+export function isMediaOnlyContentChange(before, after) {
+  let changed = false;
+  function visit(left, right, key = '') {
+    if (sameValue(left, right)) return true;
+    if (MEDIA_FIELD_KEYS.has(key)) {
+      changed = true;
+      return !/MediaItems$|^mediaItems$/.test(key) || !mediaAltChanged(left, right);
+    }
+    if (Array.isArray(left) || Array.isArray(right)) {
+      if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+      return left.every((item, index) => visit(item, right[index]));
+    }
+    if (left && right && typeof left === 'object' && typeof right === 'object') {
+      return [...new Set([...Object.keys(left), ...Object.keys(right)])]
+        .every((child) => visit(left[child], right[child], child));
+    }
+    return false;
+  }
+  const visibleText = (content) => collectTranslatableEntries(content)
+    .filter((entry) => !/(?:^|\.)(?:mediaItems|galleryMediaItems|videoMediaItems|videoModalBackgroundMediaItems)\.\d+\.alt$/.test(entry.id));
+  const sourceTextUnchanged = sameValue(visibleText(before), visibleText(after));
+  return sourceTextUnchanged && visit(before, after) && changed;
+}
+
+function rebaseMediaFields(translated, before, after) {
+  if (!translated || typeof translated !== 'object' || !before || !after || typeof before !== 'object' || typeof after !== 'object') return;
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (MEDIA_FIELD_KEYS.has(key)) {
+      if (sameValue(before[key], after[key])) continue;
+      if (!(key in after)) { delete translated[key]; continue; }
+      const next = structuredClone(after[key]);
+      if (/MediaItems$|^mediaItems$/.test(key) && Array.isArray(next) && Array.isArray(translated[key])) {
+        const localizedAlt = new Map(translated[key].map((item) => [`${item?.type}:${item?.url}`, item?.alt || '']));
+        for (const item of next) {
+          const id = `${item?.type}:${item?.url}`;
+          if (localizedAlt.has(id)) item.alt = localizedAlt.get(id);
+        }
+      }
+      translated[key] = next;
+    } else if (Array.isArray(after[key]) && Array.isArray(before[key]) && Array.isArray(translated[key])) {
+      after[key].forEach((item, index) => rebaseMediaFields(translated[key][index], before[key][index], item));
+    } else {
+      rebaseMediaFields(translated[key], before[key], after[key]);
+    }
+  }
+}
+
 function setAtPath(target, path, value) {
   const keys = path.split('.');
   let cursor = target;
@@ -184,6 +259,22 @@ function getAtPath(source, path) {
   return cursor;
 }
 
+// 品牌在中文站显示为“星渡ASTREVA”；目标语言站统一使用拉丁品牌名。
+// 上游偶尔会在已翻译的句子和独立生成的 SEO 中保留这段中文，发布前统一修正。
+export function normalizeLocalizedBrandTerms(content) {
+  function visit(value) {
+    if (typeof value === 'string') {
+      return value.replace(/星渡\s*ASTREVA/gi, 'ASTREVA').replace(/Click咔哒(?:锁扣)?/g, 'Click');
+    }
+    if (Array.isArray(value)) return value.map(visit);
+    if (value && typeof value === 'object') {
+      for (const [key, item] of Object.entries(value)) value[key] = visit(item);
+    }
+    return value;
+  }
+  return visit(content);
+}
+
 function localeLabel(locale) {
   return locale === 'ar' ? '阿拉伯语' : '英语';
 }
@@ -192,18 +283,54 @@ function promptFor(locale, entries) {
   return [
     `将下面的官网文案从简体中文专业翻译为${localeLabel(locale)}。`,
     '你必须只返回 JSON 数组，每项仅包含 id 和 text，顺序、id 和条目数必须与输入一致。',
-    '保留 ASTREVA 等品牌名、产品型号、{category} 等占位符、URL、HTML 和换行结构；不要解释，不要 Markdown 代码块。',
+    '品牌“星渡ASTREVA”或“星渡 ASTREVA”在目标语言中统一写 ASTREVA；“Click咔哒锁扣”写 Click。保留产品型号、{category} 等占位符、URL、HTML 和换行结构；不要解释，不要 Markdown 代码块。',
     locale === 'ar' ? '阿拉伯语使用现代标准阿拉伯语，保持商业官网语气。' : '英语使用自然、准确的国际商务网站语气。',
     JSON.stringify(entries)
   ].join('\n');
 }
 
-export function createWebsiteTranslationService({ platformStore, fetchImpl = fetch, logger = console, resolveProvider = null }) {
+function responseError(message) {
+  return Object.assign(new Error(message), { code: 'TRANSLATION_RESPONSE_INVALID' });
+}
+
+function isBatchTooLarge(error) {
+  const message = String(error?.message || '');
+  return /^HTTP 413\b/.test(message) || /^HTTP (400|422):.*(?:context|token|too large|length|size)/i.test(message);
+}
+
+function makeBatches(entries, maxSize) {
+  const batches = [];
+  let batch = [];
+  let chars = 0;
+  for (const entry of entries) {
+    const size = entry.id.length + entry.text.length;
+    if (batch.length && (batch.length >= maxSize || chars + size > MAX_BATCH_INPUT_CHARS)) {
+      batches.push(batch);
+      batch = [];
+      chars = 0;
+    }
+    batch.push(entry);
+    chars += size;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
+
+export function createWebsiteTranslationService({ platformStore, fetchImpl = fetch, logger = console, resolveProvider = null, onAvailabilityChange = null }) {
   let stored = null;
   const queued = new Map();
   const latestRevision = new Map();
+  const latestJob = new Map();
   const progressByLocale = new Map();
   let draining = false;
+  let generateLocaleSeo = null;
+
+  function notifyAvailability(change) {
+    if (!onAvailabilityChange) return;
+    Promise.resolve().then(() => onAvailabilityChange(change)).catch((error) => {
+      logger.error(`[网站翻译] 自动更新前台失败：${error.message}`);
+    });
+  }
 
   /**
    * 解析控制台里的能力绑定。命中时只覆盖上游 baseUrl/apiType/model/apiKey，
@@ -308,13 +435,48 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
       const detail = payload?.error?.message || payload?.message || '';
       throw new Error(detail ? `HTTP ${response.status}: ${detail}` : `翻译失败（HTTP ${response.status}）`);
     }
-    const translated = parseJsonArray(extractText(payload, config.apiType));
-    if (translated.length !== batch.length) throw new Error(`翻译上游返回 ${translated.length} 项，预期 ${batch.length} 项。`);
-    const result = new Map(translated.map((item) => [String(item?.id || ''), String(item?.text || '')]));
-    for (const item of batch) {
-      if (!result.get(item.id)?.trim()) throw new Error(`翻译结果缺少字段 ${item.id}。`);
+    let translated;
+    try { translated = parseJsonArray(extractText(payload, config.apiType)); }
+    catch (error) { throw responseError(error.message); }
+    const requested = new Set(batch.map((item) => item.id));
+    const result = new Map();
+    for (const item of translated) {
+      if (requested.has(item?.id) && typeof item.text === 'string' && item.text.trim()) {
+        result.set(item.id, item.text);
+      }
     }
     return result;
+  }
+
+  async function translateBatch(config, apiKey, locale, batch, onResult, isCurrent, singleAttempts = 0) {
+    if (!isCurrent()) return;
+    let result;
+    try {
+      result = await runSerializedBatch(() => requestBatch(config, apiKey, locale, batch));
+    } catch (error) {
+      if (error.code !== 'TRANSLATION_RESPONSE_INVALID' && !isBatchTooLarge(error)) throw error;
+      logWarn(logger, `[网站翻译] ${locale} 批次未返回有效译文（${error.message}），缩小批次重试。`);
+      result = new Map();
+    }
+    if (!isCurrent()) return;
+    if (result.size) await onResult(result);
+    const missing = batch.filter((entry) => !result.has(entry.id));
+    if (!missing.length || !isCurrent()) return;
+    if (missing.length === 1) {
+      if (singleAttempts + 1 >= SINGLE_ENTRY_ATTEMPTS) {
+        throw responseError(`翻译结果多次缺少字段 ${missing[0].id}。`);
+      }
+      logWarn(logger, `[网站翻译] ${locale} 单条文案 ${missing[0].id} 未返回有效译文，重试。`);
+      await translateBatch(config, apiKey, locale, missing, onResult, isCurrent, singleAttempts + 1);
+      return;
+    }
+    if (missing.length < batch.length) {
+      await translateBatch(config, apiKey, locale, missing, onResult, isCurrent);
+      return;
+    }
+    const middle = Math.floor(missing.length / 2);
+    await translateBatch(config, apiKey, locale, missing.slice(0, middle), onResult, isCurrent);
+    await translateBatch(config, apiKey, locale, missing.slice(middle), onResult, isCurrent);
   }
 
   async function generateJson(prompt, options = {}) {
@@ -365,7 +527,9 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
     });
   }
 
-  async function translate(locale, content, sourceRevision) {
+  async function translate(job) {
+    const { locale, content, sourceRevision } = job;
+    const isCurrent = () => latestRevision.get(locale) === sourceRevision && latestJob.get(locale) === job.token;
     const current = await loadSetting();
     if (!current.config.enabled) throw Object.assign(new Error('自动翻译已停用。'), { code: 'TRANSLATION_UNCONFIGURED' });
     // 控制台已把翻译能力绑定到供应商时，使用该上游（含协议/模型/密钥）；否则完全沿用本地配置。
@@ -401,26 +565,49 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
     const remaining = checkpointable ? entries.filter(needsTranslation) : entries;
     const startedAt = (checkpointable && previous.startedAt) || new Date().toISOString();
     progressByLocale.set(locale, { done: resumed, total, updatedAt: Date.now() });
+    if (!isCurrent()) return;
     await platformStore.saveContentTranslation(locale, { content: translatedContent, sourceRevision, status: 'running', lastError: '', startedAt, finishedAt: null });
-    for (let index = 0; index < remaining.length; index += config.batchSize) {
-      const batch = remaining.slice(index, index + config.batchSize);
-      if (index > 0) await new Promise((resolve) => setTimeout(resolve, BATCH_GAP_MS));
-      if (latestRevision.get(locale) !== sourceRevision) return;
-      const result = await runSerializedBatch(() => requestBatch(config, apiKey, locale, batch));
+    let done = resumed;
+    const onResult = async (result) => {
+      if (!isCurrent()) return;
       for (const [path, value] of result) setAtPath(translatedContent, path, value);
-      progressByLocale.set(locale, { done: resumed + Math.min(index + config.batchSize, remaining.length), total, updatedAt: Date.now() });
-      await platformStore.saveContentTranslation(locale, { content: translatedContent, sourceRevision, status: 'running', lastError: '', startedAt, finishedAt: null }).catch(() => {});
+      done += result.size;
+      progressByLocale.set(locale, { done, total, updatedAt: Date.now() });
+      await platformStore.saveContentTranslation(locale, { content: translatedContent, sourceRevision, status: 'running', lastError: '', startedAt, finishedAt: null });
+    };
+    const batches = makeBatches(remaining, config.batchSize);
+    for (const [index, batch] of batches.entries()) {
+      if (index > 0) await new Promise((resolve) => setTimeout(resolve, BATCH_GAP_MS));
+      if (!isCurrent()) return;
+      await translateBatch(config, apiKey, locale, batch, onResult, isCurrent);
     }
-    if (latestRevision.get(locale) !== sourceRevision) return;
+    if (!isCurrent()) return;
+    normalizeLocalizedBrandTerms(translatedContent);
+    if (generateLocaleSeo) {
+      const seoResult = await generateLocaleSeo(translatedContent, locale);
+      if (!isCurrent()) return;
+      const localizedContent = seoResult?.content;
+      if (!localizedContent || typeof localizedContent !== 'object') {
+        throw new Error(`AI SEO 没有返回 ${locale} 的官网内容。`);
+      }
+      Object.keys(translatedContent).forEach((key) => delete translatedContent[key]);
+      Object.assign(translatedContent, localizedContent);
+      translatedContent.site.locale = locale;
+    }
+    normalizeLocalizedBrandTerms(translatedContent);
+    // 翻译上游是外部输入：它返回的 HTML/链接同样必须过白名单与协议校验，
+    // 否则 en/ar 页面会成为绕过 CMS 写入消毒的 XSS 通道。
+    const safeTranslatedContent = sanitizeCmsContent(translatedContent);
     progressByLocale.set(locale, { done: total, total, updatedAt: Date.now() });
     await platformStore.saveContentTranslation(locale, {
-      content: translatedContent,
+      content: safeTranslatedContent,
       sourceRevision,
       status: 'ready',
       lastError: '',
       startedAt,
       finishedAt: new Date().toISOString()
     });
+    notifyAvailability({ locales: [locale], status: 'ready', sourceRevision });
   }
 
   function isRetryableUpstreamError(error) {
@@ -433,9 +620,9 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
 
   async function runJob(job) {
     try {
-      await translate(job.locale, job.content, job.sourceRevision);
+      await translate(job);
     } catch (error) {
-      if (latestRevision.get(job.locale) !== job.sourceRevision) return;
+      if (latestRevision.get(job.locale) !== job.sourceRevision || latestJob.get(job.locale) !== job.token) return;
       const attempts = Number(job.attempts || 0);
       if (isRetryableUpstreamError(error) && attempts < JOB_REQUEUE_DELAYS_MS.length) {
         const delay = JOB_REQUEUE_DELAYS_MS[attempts];
@@ -452,7 +639,7 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
           finishedAt: null
         }).catch(() => {});
         setTimeout(() => {
-          if (latestRevision.get(job.locale) !== job.sourceRevision) return;
+          if (latestRevision.get(job.locale) !== job.sourceRevision || latestJob.get(job.locale) !== job.token) return;
           queued.set(job.locale, { ...job, attempts: attempts + 1 });
           queueMicrotask(drain);
         }, delay);
@@ -487,20 +674,40 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
   async function schedule(content, sourceRevision, locales = TARGET_LOCALES) {
     const existing = new Map((await platformStore.listContentTranslations()).map((item) => [item.locale, item]));
     const progressTotal = collectTranslatableEntries(content).length;
-    for (const locale of locales.filter((item) => TARGET_LOCALES.includes(item))) {
+    const scheduledLocales = locales.filter((item) => TARGET_LOCALES.includes(item));
+    for (const locale of scheduledLocales) {
+      const previous = existing.get(locale);
+      const checkpoint = previous?.sourceRevision === sourceRevision && previous.status !== 'ready' ? previous : null;
+      const token = Symbol(locale);
       latestRevision.set(locale, sourceRevision);
+      latestJob.set(locale, token);
       progressByLocale.set(locale, { done: 0, total: progressTotal, updatedAt: Date.now() });
       await platformStore.saveContentTranslation(locale, {
-        content: null,
+        content: checkpoint?.content || null,
         sourceRevision,
         status: 'pending',
         lastError: '',
-        startedAt: null,
+        startedAt: checkpoint?.startedAt || null,
         finishedAt: null
       });
-      queued.set(locale, { locale, content: structuredClone(content), sourceRevision });
+      queued.set(locale, { locale, content: structuredClone(content), sourceRevision, token });
     }
+    if (scheduledLocales.length) notifyAvailability({ locales: scheduledLocales, status: 'pending', sourceRevision });
     queueMicrotask(drain);
+  }
+
+  async function carryForwardMediaOnly(before, after, previousRevision, sourceRevision) {
+    if (!isMediaOnlyContentChange(before, after)) return false;
+    const existing = await platformStore.listContentTranslations();
+    if (!TARGET_LOCALES.every((locale) => existing.some((item) => item.locale === locale && item.status === 'ready' && item.sourceRevision === previousRevision && item.content))) return false;
+    for (const locale of TARGET_LOCALES) {
+      const previous = existing.find((item) => item.locale === locale);
+      const content = structuredClone(previous.content);
+      rebaseMediaFields(content, before, after);
+      await platformStore.saveContentTranslation(locale, { ...previous, content, sourceRevision, status: 'ready' });
+    }
+    notifyAvailability({ locales: TARGET_LOCALES, status: 'ready', sourceRevision });
+    return true;
   }
 
   return {
@@ -509,7 +716,11 @@ export function createWebsiteTranslationService({ platformStore, fetchImpl = fet
     saveSettings,
     requestModels,
     generateJson,
+    setLocaleSeoGenerator(generator) {
+      generateLocaleSeo = typeof generator === 'function' ? generator : null;
+    },
     schedule,
+    carryForwardMediaOnly,
     list: async () => (await platformStore.listContentTranslations()).map((item) => {
       const progress = progressByLocale.get(item.locale);
       return { ...item, progress: progress ? { ...progress } : null };

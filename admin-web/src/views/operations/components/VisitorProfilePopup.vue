@@ -63,7 +63,7 @@
             {{ regionText }}
           </a-descriptions-item>
           <a-descriptions-item label="时区">
-            {{ textOr(profile.timezone) }}
+            {{ shownTimezone }}
           </a-descriptions-item>
           <a-descriptions-item label="推测国籍">
             <span v-if="profile.nationality_guess" data-testid="profile-popup-nationality">
@@ -76,7 +76,7 @@
             <span v-else>暂无数据</span>
           </a-descriptions-item>
           <a-descriptions-item label="访问次数">
-            {{ Number(profile.visits || 0) }}
+            {{ shownVisits }}
           </a-descriptions-item>
           <a-descriptions-item label="浏览器">
             {{ device.browser }}
@@ -88,16 +88,16 @@
             {{ device.device }}
           </a-descriptions-item>
           <a-descriptions-item label="最近访问时间">
-            {{ localTime(profile.last_seen_at) }}
+            {{ localTime(shownLastSeen) }}
           </a-descriptions-item>
           <a-descriptions-item label="最近路径" :span="2">
-            {{ textOr(profile.last_path) }}
+            {{ shownLastPath }}
           </a-descriptions-item>
           <a-descriptions-item label="来源" :span="2">
             {{ sourceText }}
           </a-descriptions-item>
           <a-descriptions-item label="IP" :span="2">
-            {{ textOr(profile.ip_last) }}
+            {{ shownIp }}
           </a-descriptions-item>
         </a-descriptions>
 
@@ -127,8 +127,8 @@
           </a-typography-paragraph>
         </div>
 
-        <a-typography-text v-if="deviceFallback" type="secondary" class="popup-footnote">
-          说明：当前画像接口未返回浏览器 / OS / 设备字段，因此这三项显示「暂无数据」。
+        <a-typography-text v-if="deviceFallback || geoFallback" type="secondary" class="popup-footnote">
+          说明：浏览器、系统和设备来自官网访问记录；地区信息需要公网 IP 或可信 CDN 地理头，本机回环 IP（如 127.0.0.1）无法定位。
         </a-typography-text>
       </template>
 
@@ -139,7 +139,7 @@
 
 <script lang="ts" setup>
   import { computed, ref, watch } from 'vue';
-  import { fetchVisitorProfile } from '@/api/admin';
+  import { fetchAnalyticsVisitorVisits, fetchVisitorProfile } from '@/api/admin';
 
   const props = defineProps<{
     visible: boolean;
@@ -149,6 +149,8 @@
 
   const loading = ref(false);
   const profile = ref<any>(null);
+  const analyticsVisit = ref<any>(null);
+  const analyticsVisits = ref<any[]>([]);
   const state = ref<'idle' | 'missing' | 'ok' | 'empty' | 'error'>('idle');
   const errorText = ref('');
 
@@ -182,7 +184,11 @@
   );
 
   const regionText = computed(() => {
-    const parts = [profile.value?.country, profile.value?.region, profile.value?.city]
+    const parts = [
+      profile.value?.country || analyticsVisit.value?.country,
+      profile.value?.region || analyticsVisit.value?.region,
+      profile.value?.city || analyticsVisit.value?.city,
+    ]
       .map((item) => String(item ?? '').trim())
       .filter(Boolean);
     return parts.length ? parts.join(' / ') : '暂无数据';
@@ -191,22 +197,31 @@
   const sourceText = computed(() => {
     const raw =
       profile.value?.source ||
-      profile.value?.referrer ||
       props.conversation?.source ||
+      profile.value?.referrer ||
+      analyticsVisit.value?.referrer ||
       '';
     return String(raw ?? '').trim() || '暂无数据';
   });
 
-  // 画像接口目前没有 UA / 设备维度；这里兼容后端未来可能补充的字段名，
-  // 一个都取不到时统一显示「暂无数据」，并给出说明而不是留空。
+  // 地理信息优先来自客服画像，缺少时回退到同一 visitor_ref 下的官网访问记录。
+  // 浏览器、系统和设备由官网服务端解析访问记录的 User-Agent 后提供。
   const device = computed(() => {
     const p = profile.value || {};
+    const rawDevice = String(p.device || p.device_type || analyticsVisit.value?.device || '').trim();
+    const deviceLabel = /mobile|phone|移动/i.test(rawDevice)
+      ? '移动端'
+      : /tablet|平板/i.test(rawDevice)
+        ? '平板'
+        : /desktop|桌面/i.test(rawDevice)
+          ? '桌面端'
+          : rawDevice;
     const direct = {
-      browser: textOr(p.browser, ''),
-      os: textOr(p.os || p.operating_system, ''),
-      device: textOr(p.device || p.device_type, ''),
+      browser: textOr(p.browser || analyticsVisit.value?.browser, ''),
+      os: textOr(p.os || p.operating_system || analyticsVisit.value?.os, ''),
+      device: textOr(deviceLabel, ''),
     };
-    const ua = String(p.user_agent || p.ua || '').trim();
+    const ua = String(p.user_agent || p.ua || analyticsVisit.value?.userAgent || '').trim();
     let fromUa = { browser: '', os: '', device: '' };
     if (ua) {
       fromUa = {
@@ -249,6 +264,20 @@
       device.value.os === '暂无数据' &&
       device.value.device === '暂无数据'
   );
+
+  const geoFallback = computed(
+    () =>
+      state.value === 'ok' &&
+      !profile.value?.country && !analyticsVisit.value?.country &&
+      !profile.value?.region && !analyticsVisit.value?.region &&
+      !profile.value?.city && !analyticsVisit.value?.city
+  );
+
+  const shownTimezone = computed(() => textOr(profile.value?.timezone || analyticsVisit.value?.timezone));
+  const shownVisits = computed(() => Number(profile.value?.visits ?? analyticsVisits.value.length ?? 0));
+  const shownLastPath = computed(() => textOr(profile.value?.last_path || analyticsVisit.value?.path));
+  const shownLastSeen = computed(() => profile.value?.last_seen_at || analyticsVisit.value?.occurredAt);
+  const shownIp = computed(() => textOr(profile.value?.ip_last || analyticsVisit.value?.ip));
 
   function textOr(value: unknown, fallback = '暂无数据') {
     const raw = String(value ?? '').trim();
@@ -315,6 +344,8 @@
   async function load() {
     const id = visitorId.value;
     profile.value = null;
+    analyticsVisit.value = null;
+    analyticsVisits.value = [];
     errorText.value = '';
     if (!id) {
       state.value = 'missing';
@@ -323,13 +354,23 @@
     loading.value = true;
     state.value = 'idle';
     try {
-      const payload = await fetchVisitorProfile(id);
+      const [profileResult, visitsResult] = await Promise.allSettled([
+        fetchVisitorProfile(id),
+        fetchAnalyticsVisitorVisits(id),
+      ]);
+      const visitRows = visitsResult.status === 'fulfilled' && Array.isArray(visitsResult.value)
+        ? visitsResult.value
+        : [];
+      analyticsVisits.value = visitRows;
+      analyticsVisit.value = visitRows[0] || null;
+      const payload = profileResult.status === 'fulfilled' ? profileResult.value : null;
       const detail = payload?.profile ?? payload ?? null;
-      if (!detail || typeof detail !== 'object' || !Object.keys(detail).length) {
+      if ((!detail || typeof detail !== 'object' || !Object.keys(detail).length) && !analyticsVisit.value) {
+        if (profileResult.status === 'rejected') throw profileResult.reason;
         state.value = 'empty';
         return;
       }
-      profile.value = detail;
+      profile.value = detail && typeof detail === 'object' ? detail : {};
       state.value = 'ok';
     } catch (reason: any) {
       // 404 = 引擎里没有这条画像，属于正常空态，不算错误。

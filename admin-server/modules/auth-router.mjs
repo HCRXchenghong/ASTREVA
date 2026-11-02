@@ -17,10 +17,12 @@ export function createAuthRouter({
   auditEvent,
   recordSystemEvent = () => {},
   resolveClient = () => ({ ip: '', source: '' }),
-  platformStore = null
+  platformStore = null,
+  setupToken = ''
 }) {
   const pendingSetups = new Map();
   const pendingLogins = new Map();
+  const SETUP_PENDING_LIMIT = 50;
 
   // 登录失败计数与 2FA 重放保护（内存态，重启即清零）
   const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -28,6 +30,41 @@ export function createAuthRouter({
   const CHALLENGE_MAX_ATTEMPTS = Number(process.env.ADMIN_LOGIN_MAX_2FA_ATTEMPTS || 5);
   const failureBuckets = new Map();
   const usedTotpCodes = new Map();
+  const setupBuckets = new Map();
+
+  function setupBucket(req) {
+    const key = resolveClient(req).ip || 'unknown';
+    const now = Date.now();
+    const current = setupBuckets.get(key);
+    const bucket = !current || current.resetAt <= now ? { count: 0, resetAt: now + LOGIN_WINDOW_MS } : current;
+    setupBuckets.set(key, bucket);
+    if (setupBuckets.size > 5000) {
+      for (const [entryKey, value] of setupBuckets) if (value.resetAt <= now) setupBuckets.delete(entryKey);
+    }
+    return bucket;
+  }
+
+  function setupRateLimited(req) {
+    const bucket = setupBucket(req);
+    return bucket.count >= LOGIN_MAX_FAILURES ? bucket : null;
+  }
+
+  function noteSetupAttempt(req) {
+    const bucket = setupBucket(req);
+    bucket.count += 1;
+    return bucket;
+  }
+
+  function timingSafeStringEqual(left, right) {
+    const a = Buffer.from(String(left || ''));
+    const b = Buffer.from(String(right || ''));
+    return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+  }
+
+  function validSetupToken(body) {
+    if (!setupToken) return false;
+    return timingSafeStringEqual(body?.setupToken || body?.setup_token || '', setupToken);
+  }
 
   function bucketFor(key) {
     const now = Date.now();
@@ -100,24 +137,45 @@ export function createAuthRouter({
   return async function handleAuth(req, res, pathname) {
     if (pathname === '/site-admin-auth/status' && req.method === 'GET') {
       const users = await readUsers();
-      json(res, 200, { hasAdmin: users.users.length > 0, authenticated: Boolean(verifySession(req)) });
+      json(res, 200, {
+        hasAdmin: users.users.length > 0,
+        authenticated: Boolean(verifySession(req)),
+        setupRequired: users.users.length === 0,
+        setupTokenRequired: users.users.length === 0 && Boolean(setupToken)
+      });
       return true;
     }
     if (pathname === '/site-admin-auth/setup/start' && req.method === 'POST') {
+      const limited = setupRateLimited(req);
+      if (limited) {
+        res.setHeader('Retry-After', String(Math.max(1, Math.ceil((limited.resetAt - Date.now()) / 1000))));
+        json(res, 429, { error: { message: '初始化尝试过于频繁，请稍后再试。' } });
+        return true;
+      }
+      const body = await bodyJson(req);
+      if (!validSetupToken(body)) {
+        noteSetupAttempt(req);
+        await logAuthEvent(req, 'warning', 'auth.setup.token_rejected', '初始化令牌不正确或缺失', { statusCode: 403 });
+        json(res, 403, { error: { message: '初始化令牌不正确。请查看 admin-server 启动日志中的一次性令牌。' } });
+        return true;
+      }
       const users = await readUsers();
       if (users.users.length) {
         json(res, 409, { error: { message: '管理员账号已存在，请直接登录。' } });
         return true;
       }
-      const body = await bodyJson(req);
+      if (pendingSetups.size >= SETUP_PENDING_LIMIT) {
+        json(res, 429, { error: { message: '待完成的初始化请求过多，请稍后再试。' } });
+        return true;
+      }
       const email = String(body.email || '').trim().toLowerCase();
       const password = String(body.password || '');
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         json(res, 400, { error: { message: '请输入有效邮箱。' } });
         return true;
       }
-      if (password.length < 8) {
-        json(res, 400, { error: { message: '密码至少 8 位。' } });
+      if (password.length < 12) {
+        json(res, 400, { error: { message: '密码至少 12 位。' } });
         return true;
       }
       const secret = generateTotpSecret();
@@ -128,6 +186,19 @@ export function createAuthRouter({
     }
     if (pathname === '/site-admin-auth/setup/verify' && req.method === 'POST') {
       const body = await bodyJson(req);
+      if (!validSetupToken(body)) {
+        noteSetupAttempt(req);
+        await logAuthEvent(req, 'warning', 'auth.setup.token_rejected', '初始化令牌不正确或缺失', { statusCode: 403 });
+        json(res, 403, { error: { message: '初始化令牌不正确。' } });
+        return true;
+      }
+      // 关键：挑战创建后如果管理员已经存在，绝不能用旧挑战覆盖现有账号。
+      const currentUsers = await readUsers();
+      if (currentUsers.users.length) {
+        pendingSetups.clear();
+        json(res, 409, { error: { message: '管理员账号已存在，初始化已关闭。请直接登录。' } });
+        return true;
+      }
       const challenge = pendingSetups.get(body.challengeId);
       if (!challenge || challenge.exp < Date.now()) {
         json(res, 400, { error: { message: '绑定已过期，请重新开始。' } });
@@ -148,7 +219,7 @@ export function createAuthRouter({
       rememberTotp(challenge.secret, body.code);
       const user = { id: crypto.randomUUID(), email: challenge.email, passwordHash: challenge.passwordHash, totpSecret: challenge.secret, createdAt: new Date().toISOString() };
       await saveUsers({ users: [user] });
-      pendingSetups.delete(body.challengeId);
+      pendingSetups.clear();
       await setSessionCookie(res, user, req);
       await auditEvent(req, 'auth.setup.completed', 'admin-user', user.id, { email: user.email }, user);
       json(res, 200, { ok: true });
@@ -203,6 +274,36 @@ export function createAuthRouter({
       clearFailures(req, user.email);
       await setSessionCookie(res, user, req);
       await auditEvent(req, 'auth.login.completed', 'admin-user', user.id, { email: user.email }, user);
+      json(res, 200, { ok: true });
+      return true;
+    }
+    if (pathname === '/site-admin-auth/password' && req.method === 'POST') {
+      const session = verifySession(req);
+      if (!session?.userId) {
+        json(res, 401, { error: { message: '请先登录。' } });
+        return true;
+      }
+      const body = await bodyJson(req);
+      const users = await readUsers();
+      const user = users.users.find((item) => item.id === session.userId);
+      if (!user || !(await bcrypt.compare(String(body.currentPassword || ''), user.passwordHash))) {
+        json(res, 400, { error: { message: '当前密码不正确。' } });
+        return true;
+      }
+      if (totpReplayed(user.totpSecret, body.code) || !verifyTotp(user.totpSecret, body.code)) {
+        json(res, 400, { error: { message: '2FA 验证码不正确。' } });
+        return true;
+      }
+      const newPassword = String(body.newPassword || '');
+      if (newPassword.length < 12) {
+        json(res, 400, { error: { message: '新密码至少 12 位。' } });
+        return true;
+      }
+      rememberTotp(user.totpSecret, body.code);
+      const updated = { ...user, passwordHash: await bcrypt.hash(newPassword, 12) };
+      await saveUsers({ users: [updated] });
+      await setSessionCookie(res, updated, req);
+      await auditEvent(req, 'auth.password.changed', 'admin-user', user.id, {}, updated);
       json(res, 200, { ok: true });
       return true;
     }

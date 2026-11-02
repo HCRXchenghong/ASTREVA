@@ -9,7 +9,7 @@ import (
 
 // TestMemoryAIProviderCRUDAndMasking 覆盖供应商增删改查、密钥掩码与明文边界。
 func TestMemoryAIProviderCRUDAndMasking(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	created, err := s.CreateAIProvider(domain.AIProvider{
 		Name:         "OpenAI 主账号",
@@ -110,7 +110,7 @@ func TestMemoryAIProviderCRUDAndMasking(t *testing.T) {
 
 // TestMemoryAIProviderValidationAndHostWhitelist 覆盖类型/协议匹配与白名单格式校验。
 func TestMemoryAIProviderValidationAndHostWhitelist(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	if _, err := s.CreateAIProvider(domain.AIProvider{
 		Name:    "非法白名单",
@@ -170,7 +170,7 @@ func TestMemoryAIProviderValidationAndHostWhitelist(t *testing.T) {
 
 // TestMemoryAIBindingsAndDeleteResidual 覆盖绑定读写、能力校验与删除供应商后的残留清理。
 func TestMemoryAIBindingsAndDeleteResidual(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	provider, err := s.CreateAIProvider(domain.AIProvider{
 		Name:    "翻译供应商",
 		Kind:    domain.AIProviderKindText,
@@ -225,7 +225,7 @@ func TestMemoryAIBindingsAndDeleteResidual(t *testing.T) {
 // TestMemoryAIBindingTargetsCRUDAndCascade 覆盖候选供应商的增改查、主键覆盖、
 // 优先级排序、参数校验与删除供应商后的级联清理。
 func TestMemoryAIBindingTargetsCRUDAndCascade(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	// 显式指定 ID，便于断言同优先级下的稳定排序（provider_id 升序）。
 	primary, err := s.CreateAIProvider(domain.AIProvider{

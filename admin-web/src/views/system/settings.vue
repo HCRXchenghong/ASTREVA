@@ -22,6 +22,9 @@
       <a-tab-pane key="alerts" title="提醒设置">
         <AlertSettings />
       </a-tab-pane>
+      <a-tab-pane key="security" title="安全策略">
+        <SecuritySettings />
+      </a-tab-pane>
     </a-tabs>
   </a-card>
 </template>
@@ -32,9 +35,10 @@
   import GeneralSettings from './general.vue';
   import PushSettings from './push.vue';
   import AlertSettings from './alerts.vue';
+  import SecuritySettings from './security.vue';
 
   // Tab key 与 ?tab= 查询参数双向同步，便于旧地址 /system/{general,push,alerts} 重定向后直接落到对应分区。
-  const TAB_KEYS = ['general', 'push', 'alerts'];
+  const TAB_KEYS = ['general', 'push', 'alerts', 'security'];
   const route = useRoute();
   const router = useRouter();
 

@@ -1,5 +1,41 @@
 # 更新记录
 
+## v1.4.3 - 2026-10-30
+
+### 一键商业化部署
+
+- 新增 `scripts/install.sh`：支持 GitHub 一行命令拉取、环境检查、Docker/Compose 安装与版本校验、GitHub/Docker/Registry 多渠道测速、域名询问、ACME 邮箱、SSL 自动签发与续期。
+- 旧版本升级：先 `pg_dump` 备份 PostgreSQL，再原地 `up -d --build`；不执行 `down -v`，不重建数据库卷，保留 `.env.ubuntu` 与数据加密密钥。
+- 部署后自动检查官网、后台、客服 API、容器健康、TLS 证书；全部正常才退出 0，否则保留服务并打印排查命令。
+- 新增 [一键部署文档](docs/ONE_CLICK_DEPLOY.md)；首次安装默认本地媒体卷，已有 S3 配置不会被覆盖。
+
+## v1.4.2 - 2026-10-27
+
+### 开放 API 关闭（业务要求）
+
+- 开放 API 改为后台「系统设置 → 安全策略 → 开放 API」总开关，默认关闭；关闭时 `/open/v1/*` 返回 503，不泄露数据。
+- Caddy 始终转发 `/open/*` 到 Go 引擎，由后台开关决定是否可用；不再需要在环境变量里改 `OPEN_API_ENABLED`。
+- 删除 `scripts/verify-content-api-stub.mjs`；`verify-all.sh` 第 5 步改为临时启动真实 admin-server（JSON 存储 + seed），通过真实 `/site-admin-api/public-content` 构建，不再用桩内容 API。
+- 控制台恢复「API 管理」用于管理授权，但总开关默认关闭；撤下独立第三方接入指南，后台保留静态接入说明。
+- AI 不再伪造回复：未配置 API Key 时 `Reply` 返回 `ErrNoAPIKey`，后台测试/建议接口真实报错，接待链路走明确的 `aiBusyText`，不再返回本地伪装的 AI 文案。
+- 客服围观范围也改为后台可选（仅本人/本组/未分配，或任意客服）；草稿预览有效期可在后台选择 5–120 分钟。
+
+## v1.4.1 - 2026-10-24
+
+### 安全加固（代码 + 文档）
+
+- 首次初始化：新增一次性 `ADMIN_SETUP_TOKEN`，`setup/verify` 重新校验“仍无管理员”，旧挑战不能覆盖已建账号；初始化接口独立限速。
+- 后台会话：写请求新增 CSRF 双提交令牌（`X-CSRF-Token` + `astreva_admin_csrf` Cookie），会话 Cookie 改 `SameSite=Strict`；后台写 Origin 与官网读/提交白名单分离；重置密码/2FA、重建账号会撤销全部旧会话。
+- 富文本：重写 HTML 消毒（未闭合标签、`javascript:`/`//host` 链接），翻译 AI 输出与草稿预览同样消毒；JSON-LD 使用 script 上下文安全序列化；公网站点改用 Astro `security.csp` 生成带哈希的严格 CSP（无 `script-src 'unsafe-inline'`），Caddy 负责 `frame-ancestors`/XFO。页面已无内联 `style` 属性；客服页外置 `chat.css` 后，`style-src`/`style-src-attr` 也收紧为 `'self'`/`'none'`。
+- 草稿预览：`/__preview/<token>/` 由 Caddy `forward_auth` 向 admin-server 校验构建 token + 10 分钟 HttpOnly 预览 Cookie，未登录/链接外泄均无法直接读取。
+- 访客聊天：Caddy 增加 `frame-ancestors`；聊天页只向白名单父 Origin 发送会话 token，不再使用 `'*'`；内容模型里的客服地址不能指向非配置域名。
+- 上传：访客上传禁止 APK，拒绝 HTML 伪装；增加每访客与全局每日上传配额。
+- 本地默认口令：Go 引擎不再内置 `superadmin/123456`；未配置 bootstrap 口令时生成本进程随机口令，生产环境强制显式强口令。
+- 客服引擎：只读围观默认只允许本人/本组/未分配会话（后台安全策略可改为 `all`），接管/转接/结束/停用立即清理；Bark 自定义地址禁止私网/回环/链路本地与重定向；WebSocket 增加全局/单账号连接上限、24h 生命周期，API Key 重置/停用/删除与账号过期会断开连接；CSV 导出防公式注入；默认密码在切生产时自动替换；HTTP 读写/空闲超时。
+- 部署：admin-server 注入 `APP_ENV=production` 并校验弱密钥；Go/admin-server/rebuild-webhook 镜像非 root；生产 Caddy 不再暴露 `/metrics`；`INTERNAL_API_TOKEN` 贯通 AI 供应商内部读取与访客画像转发。
+- 移动端：正式包禁止明文 HTTP；Android `usesCleartextTraffic=false`，iOS ATS 仅允许本地网络；重建入口与发布构建以非 root 运行。
+- 文档：同步更新安全设计、等保自评、基线加固、日志留存、上线清单、预览 token、默认口令与 Compose 文件名；移除文档中的真实 macOS 路径和个人姓名。
+
 ## v1.4.0 - 2026-10-21
 
 ### 重点变更

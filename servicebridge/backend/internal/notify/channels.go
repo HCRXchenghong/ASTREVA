@@ -149,6 +149,9 @@ func (p *Provider) sendBarkAlert(ctx context.Context, config map[string]string, 
 	if server == "" {
 		server = domain.DefaultBarkServer
 	}
+	if err := validateOutboundURL(server, p.allowPrivate); err != nil {
+		return err
+	}
 	title := alertTitle(payload)
 	text := alertBodyText(payload)
 	endpoint := fmt.Sprintf(p.barkEndpointTemplate,
@@ -161,16 +164,94 @@ func (p *Provider) sendBarkAlert(ctx context.Context, config map[string]string, 
 	if err != nil {
 		return sanitizeAlertError(err, key)
 	}
-	resp, err := p.client.Do(req)
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{DialContext: safeDialContext(p.allowPrivate)},
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return sanitizeAlertError(err, key)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return sanitizeAlertError(fmt.Errorf("bark 返回 %s: %s", resp.Status, strings.TrimSpace(string(detail))), key)
+		// 不回显上游响应体，避免把内网服务内容带回给客服端。
+		return sanitizeAlertError(fmt.Errorf("bark 返回 %s", resp.Status), key)
 	}
 	return nil
+}
+
+// validateOutboundURL 拒绝非 http(s)、带 userinfo、以及（生产环境）私网/回环/链路本地地址。
+func validateOutboundURL(raw string, allowPrivate bool) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return errors.New("bark 的 server 必须是 http(s) 地址")
+	}
+	if parsed.User != nil {
+		return errors.New("bark 的 server 不能包含账号密码")
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return errors.New("bark 的 server 缺少主机名")
+	}
+	if !allowPrivate {
+		if parsed.Scheme != "https" {
+			return errors.New("生产环境 bark server 必须使用 HTTPS")
+		}
+		lookupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ips, err := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
+		if err != nil || len(ips) == 0 {
+			return errors.New("bark 的 server 无法解析")
+		}
+		for _, item := range ips {
+			if isDisallowedIP(item.IP) {
+				return errors.New("bark 的 server 指向不允许的内网地址")
+			}
+		}
+	}
+	return nil
+}
+
+func isDisallowedIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip4 := ip.To4(); ip4 != nil && ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+		// RFC 6598 CGNAT，云上常被用作内部地址段。
+		return true
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
+}
+
+// safeDialContext 在真正建连前再次校验解析结果，防止 DNS rebinding 把公网域名指向内网。
+func safeDialContext(allowPrivate bool) func(context.Context, string, string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			if !allowPrivate && isDisallowedIP(ip) {
+				return nil, errors.New("目标地址不允许")
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil || len(ips) == 0 {
+			return nil, errors.New("目标主机无法解析")
+		}
+		for _, item := range ips {
+			if !allowPrivate && isDisallowedIP(item.IP) {
+				return nil, errors.New("目标地址不允许")
+			}
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+	}
 }
 
 // sendEmailAlert 通过全局 SMTP 设置发信到渠道配置里的 address。

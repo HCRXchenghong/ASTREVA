@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ASTREVA 一键验证（macOS / Linux 通用）
 #
-# 覆盖：Node 入口语法、CMS 内容契约、后台单测、后台构建、官网构建（必要时用桩内容 API）、
+# 覆盖：Node 入口语法、CMS 内容契约、后台单测、后台构建、官网构建（真实 admin-server 内容 API）、
 #       Go 后端测试与 vet、Shell 语法、Compose 配置、Caddyfile 校验、Flutter 静态分析。
 #
 # 约定：
@@ -26,12 +26,16 @@ COMPOSE_FILE="deployments/ubuntu/docker-compose.ubuntu.yml"
 export GOCACHE="${GOCACHE:-/tmp/astreva-go-cache}"
 
 SUMMARY_FILE="$(mktemp "${TMPDIR:-/tmp}/astreva-verify-summary.XXXXXX")"
-STUB_PID=""
+ADMIN_SMOKE_PID=""
+ADMIN_SMOKE_DIR=""
 
 cleanup() {
-  if [[ -n "$STUB_PID" ]] && kill -0 "$STUB_PID" 2>/dev/null; then
-    kill "$STUB_PID" 2>/dev/null || true
-    wait "$STUB_PID" 2>/dev/null || true
+  if [[ -n "$ADMIN_SMOKE_PID" ]] && kill -0 "$ADMIN_SMOKE_PID" 2>/dev/null; then
+    kill "$ADMIN_SMOKE_PID" 2>/dev/null || true
+    wait "$ADMIN_SMOKE_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$ADMIN_SMOKE_DIR" ]]; then
+    rm -rf "$ADMIN_SMOKE_DIR"
   fi
   rm -f "$SUMMARY_FILE"
 }
@@ -167,7 +171,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 5. 官网构建
-begin "5/11 官网构建（frontend/dist 缺失时使用桩内容 API）"
+begin "5/11 官网构建（真实 admin-server 内容 API）"
 dist_present=0
 if [[ -d frontend/dist ]] && [[ -n "$(ls -A frontend/dist 2>/dev/null)" ]]; then
   dist_present=1
@@ -177,44 +181,60 @@ if [[ "${VERIFY_SKIP_STEP5:-0}" == "1" ]]; then
 elif [[ "$dist_present" -eq 1 ]]; then
   mark_skip "frontend/dist 已存在且非空"
 else
-  STUB_LOG="$(mktemp "${TMPDIR:-/tmp}/astreva-stub.XXXXXX")"
-  node "$ROOT_DIR/scripts/verify-content-api-stub.mjs" >"$STUB_LOG" 2>&1 &
-  STUB_PID=$!
-  stub_port=""
-  for _ in $(seq 1 100); do
-    stub_port="$(sed -n 's/^STUB_PORT=//p' "$STUB_LOG" | head -n 1)"
-    [[ -n "$stub_port" ]] && break
-    if ! kill -0 "$STUB_PID" 2>/dev/null; then
-      cat "$STUB_LOG" >&2
-      STUB_PID=""
-      rm -f "$STUB_LOG"
-      fatal "桩内容 API 启动失败"
+  ADMIN_SMOKE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/astreva-real-content.XXXXXX")"
+  ADMIN_SMOKE_PORT="$(
+    node -e 'const net=require("net");const s=net.createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close();});'
+  )" || fatal "无法分配真实 admin-server 测试端口"
+  ADMIN_LOG="$ADMIN_SMOKE_DIR/admin.log"
+  ADMIN_DATA_DIR="$ADMIN_SMOKE_DIR/data" \
+  ADMIN_UPLOAD_DIR="$ADMIN_SMOKE_DIR/uploads" \
+  PORT="$ADMIN_SMOKE_PORT" HOST=127.0.0.1 \
+  ALLOW_LEGACY_STORAGE_FOR_TESTS=true CMS_STORE_DRIVER=json ADMIN_MEDIA_DRIVER=local \
+  ADMIN_2FA_SESSION_SECRET=verify-real-content-secret-0123456789 \
+  ADMIN_SETUP_TOKEN=verify-real-content-setup-token \
+  CMS_DATA_ENCRYPTION_KEY=verify-real-content-encryption-key-0123456789 \
+  SITE_CONTENT_SEED_FILE="$ROOT_DIR/admin-server/seed/site-content.json" \
+  PUBLIC_ADMIN_URL="http://127.0.0.1:$ADMIN_SMOKE_PORT" \
+  node admin-server/server.mjs >"$ADMIN_LOG" 2>&1 &
+  ADMIN_SMOKE_PID=$!
+  admin_ready=0
+  for _ in $(seq 1 80); do
+    if node -e 'fetch(process.argv[1]).then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'       "http://127.0.0.1:$ADMIN_SMOKE_PORT/healthz" >/dev/null 2>&1; then
+      admin_ready=1
+      break
+    fi
+    if ! kill -0 "$ADMIN_SMOKE_PID" 2>/dev/null; then
+      cat "$ADMIN_LOG" >&2
+      fatal "真实 admin-server 启动失败"
     fi
     sleep 0.1
   done
-  if [[ -z "$stub_port" ]]; then
-    cat "$STUB_LOG" >&2
-    rm -f "$STUB_LOG"
-    fatal "桩内容 API 在 10 秒内未就绪"
+  if [[ "$admin_ready" -ne 1 ]]; then
+    cat "$ADMIN_LOG" >&2
+    fatal "真实 admin-server 在 8 秒内未就绪"
   fi
-  printf '桩内容 API：http://127.0.0.1:%s（源文件 admin-server/seed/site-content.json）\n' "$stub_port"
+  printf '真实内容 API：http://127.0.0.1:%s（admin-server + seed）\n' "$ADMIN_SMOKE_PORT"
   BUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/astreva-frontend-build.XXXXXX")"
   build_ok=0
-  if CONTENT_API_URL="http://127.0.0.1:$stub_port" npm run build:frontend 2>&1 | tee "$BUILD_LOG"; then
+  if PUBLIC_ADMIN_URL="http://127.0.0.1:$ADMIN_SMOKE_PORT" \
+    CONTENT_API_URL="http://127.0.0.1:$ADMIN_SMOKE_PORT" \
+    PUBLIC_SERVICEBRIDGE_URL="http://127.0.0.1:5173" \
+    PUBLIC_SITE_URL="http://127.0.0.1:4321" \
+    npm run build:frontend 2>&1 | tee "$BUILD_LOG"; then
     build_ok=1
   fi
-  kill "$STUB_PID" 2>/dev/null || true
-  wait "$STUB_PID" 2>/dev/null || true
-  STUB_PID=""
-  rm -f "$STUB_LOG"
+  kill "$ADMIN_SMOKE_PID" 2>/dev/null || true
+  wait "$ADMIN_SMOKE_PID" 2>/dev/null || true
+  ADMIN_SMOKE_PID=""
+  rm -rf "$ADMIN_SMOKE_DIR"
+  ADMIN_SMOKE_DIR=""
   if [[ "$build_ok" -ne 1 ]]; then
-    # 常见的环境问题给出可操作提示，但不把真实失败降级为 SKIP。
     if grep -q "Cannot find native binding" "$BUILD_LOG" 2>/dev/null; then
       printf '\n提示：node_modules 缺少可选原生依赖（npm optional dependencies bug）。\n' >&2
       printf '请在有网络的环境执行 `npm ci` 恢复依赖后重跑：npm ci && bash scripts/verify-all.sh\n' >&2
     fi
     rm -f "$BUILD_LOG"
-    fatal "使用桩内容 API 构建官网失败"
+    fatal "使用真实 admin-server 内容 API 构建官网失败"
   fi
   rm -f "$BUILD_LOG"
   if [[ ! -d frontend/dist ]] || [[ -z "$(ls -A frontend/dist 2>/dev/null)" ]]; then

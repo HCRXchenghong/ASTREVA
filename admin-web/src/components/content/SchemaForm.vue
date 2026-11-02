@@ -67,6 +67,16 @@
           @update:model-value="(value: string) => setValue(field, value)"
         />
 
+        <MediaListField
+          v-else-if="field.type === 'mediaList'"
+          :model-value="getPath(field.key)"
+          :legacy-image="field.legacyImageKey ? getPath(field.legacyImageKey) : undefined"
+          :legacy-video="legacyVideos(field)"
+          :default-images="field.defaultImages || inferredDefaultImages()"
+          :disabled="disabled"
+          @update:model-value="(value: any) => setValue(field, value)"
+        />
+
         <template v-else-if="field.type === 'listText'">
           <a-textarea
             :model-value="listTextValue(field)"
@@ -129,6 +139,7 @@
   import { computed, reactive, watch } from 'vue';
   import type { FieldDef } from './schema';
   import MediaPicker from './MediaPicker.vue';
+  import MediaListField from './MediaListField.vue';
   import PairList from './PairList.vue';
   import ObjectList from './ObjectList.vue';
 
@@ -164,6 +175,45 @@
       .reduce<any>((acc, key) => (acc == null ? undefined : acc[key]), props.model);
   }
 
+  function inferredDefaultImages(): string[] {
+    const slug = String(props.model?.slug || '').trim();
+    const sectionId = String(props.model?.id || '').trim();
+    const root = '/assets/placeholders';
+    if (slug && props.model?.categorySlug) {
+      const jpg = ['sealed-floor-drain-housing', 'sealed-floor-drain-strainer', 'slot-drain-cover', 'laser-cut-perforated-drain-cover', 'bar-grating-drain-cover', 'stamped-drawn-drain-cover', 'trench-drain-cover'].includes(slug);
+      return [`${root}/products/${slug}.${jpg ? 'jpg' : 'webp'}`, `${root}/products/${slug}-alternate.webp`];
+    }
+    const categoryProduct = ({
+      'water-seal-floor-drains': 'sealed-floor-drain-housing', 'simple-floor-drains': 'sealed-floor-drain-strainer',
+      'drain-covers': 'laser-cut-perforated-drain-cover', 'channel-drains': 'trench-drain-cover',
+      'concealed-stainless-manhole-covers': 'industrial-heavy-duty-manhole-cover',
+    } as Record<string, string>)[slug];
+    if (categoryProduct) {
+      const jpg = !categoryProduct.includes('manhole');
+      return [`${root}/products/${categoryProduct}.${jpg ? 'jpg' : 'webp'}`, `${root}/products/${categoryProduct}-alternate.webp`];
+    }
+    const scene = ({
+      'about-manufacturing': 'industrial', 'about-quality': 'commercial', about: 'commercial',
+      install: 'installation-guide', warranty: 'industrial', support: 'industrial',
+      solutions: 'municipal', 'sol-sec-1': 'municipal', 'sol-sec-2': 'commercial',
+      'sol-sec-3': 'industrial', 'sol-sec-4': 'landscape', 'sol-sec-5': 'ecological',
+      'municipal-public-works': 'municipal', 'commercial-premium-residential': 'commercial',
+      'industrial-warehouse': 'industrial', 'landscape-special-drainage': 'landscape',
+      'grease-traps': 'industrial', 'settling-tanks': 'ecological',
+    } as Record<string, string>)[slug || sectionId] || 'home-hero';
+    return [`${root}/scenes/${scene}.webp`, `${root}/scenes/${scene}-alternate.webp`];
+  }
+
+  function legacyVideos(field: FieldDef): string[] {
+    const values = [field.legacyVideoKey, field.legacyExtraVideoKey]
+      .filter(Boolean)
+      .flatMap((key) => {
+        const value = getPath(key as string);
+        return Array.isArray(value) ? value : [value];
+      });
+    return values.map((value) => String(value || '').trim()).filter(Boolean);
+  }
+
   function setPath(path: string, value: any) {
     const keys = path.split('.');
     let current: any = props.model;
@@ -182,7 +232,7 @@
 
   function isFull(field: FieldDef) {
     if (field.full) return true;
-    return ['textarea', 'listText', 'objectList', 'pairList'].includes(String(field.type));
+    return ['textarea', 'listText', 'objectList', 'pairList', 'mediaList'].includes(String(field.type));
   }
 
   function listTextValue(field: FieldDef) {
@@ -218,7 +268,7 @@
       const key = child.key.split('.').pop() as string;
       if (child.type === 'checkbox') blank[key] = false;
       else if (child.type === 'number') blank[key] = 0;
-      else if (child.type === 'listText' || child.type === 'objectList' || child.type === 'pairList')
+      else if (child.type === 'listText' || child.type === 'objectList' || child.type === 'pairList' || child.type === 'mediaList')
         blank[key] = [];
       else blank[key] = '';
     });

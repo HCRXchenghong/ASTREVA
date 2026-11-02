@@ -9,6 +9,12 @@ import (
 
 // AI 与关键词的优先级模式。
 const (
+	// 客服只读围观范围：own_group=本人/本组/未分配；all=任意客服。
+	AgentWatchScopeOwnGroup = "own_group"
+	AgentWatchScopeAll      = "all"
+)
+
+const (
 	AIKeywordPriorityKeywordFirst = "keyword_first" // 现行为：先命中关键词，未命中再请求 AI
 	AIKeywordPriorityAIFirst      = "ai_first"      // 先请求 AI，AI 不可用时才命中关键词
 	AIKeywordPriorityKeywordOnly  = "keyword_only"  // 只走关键词，不请求 AI
@@ -59,8 +65,7 @@ const (
 	ServicePolicyMaxUnattendedReplyRunes         = 2000  // 无人值守兜底话术上限
 )
 
-// DefaultServicePolicy 返回客服策略的默认值。
-// 默认值与表结构默认值保持一致，且本批次不接线任何计时器，因此默认值不会改变现有会话流转。
+// DefaultServicePolicy 返回客服策略的默认值；默认值与 PostgreSQL 表结构保持一致。
 func DefaultServicePolicy() ServicePolicy {
 	return ServicePolicy{
 		QueueEnabled:            true,
@@ -73,6 +78,9 @@ func DefaultServicePolicy() ServicePolicy {
 		UnattendedEnabled:       true,
 		UnattendedReply:         "",
 		TakeoverPopupEnabled:    true,
+		// 开放 API 默认关闭，由后台“安全策略”开关控制；围观默认只允许本人/本组/未分配。
+		OpenAPIEnabled:  false,
+		AgentWatchScope: AgentWatchScopeOwnGroup,
 	}
 }
 
@@ -92,6 +100,10 @@ type ServicePolicy struct {
 	UnattendedEnabled    bool   `json:"unattended_enabled"`
 	UnattendedReply      string `json:"unattended_reply"`
 	TakeoverPopupEnabled bool   `json:"takeover_popup_enabled"`
+	// OpenAPIEnabled 是后台“安全策略”里的开放 API 总开关，默认 false。
+	OpenAPIEnabled bool `json:"open_api_enabled"`
+	// AgentWatchScope 控制客服只读围观范围，默认 own_group。
+	AgentWatchScope string `json:"agent_watch_scope"`
 	// UpdatedAt 是最近一次更新时间；从未写入时为 nil（因此 omitempty）。
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
@@ -106,6 +118,7 @@ func (p ServicePolicy) Normalize() ServicePolicy {
 	out.AutoCloseIdleMinutes = clampServicePolicyValue(out.AutoCloseIdleMinutes, ServicePolicyMaxAutoCloseIdleMinutesLimit)
 	out.SLAIdleAction = NormalizeSLAIdleAction(out.SLAIdleAction)
 	out.AIKeywordPriority = NormalizeAIKeywordPriority(out.AIKeywordPriority)
+	out.AgentWatchScope = NormalizeAgentWatchScope(out.AgentWatchScope)
 	out.UnattendedReply = truncateRunes(strings.TrimSpace(out.UnattendedReply), ServicePolicyMaxUnattendedReplyRunes)
 	// 这里刻意不修改布尔字段：false 是有效配置（例如关闭排队），不能与"未配置"混淆。
 	return out
@@ -222,4 +235,24 @@ func truncateRunes(value string, max int) string {
 		return value
 	}
 	return string(runes[:max])
+}
+
+// NormalizeAgentWatchScope 归一化围观范围；空/非法值回落到安全的 own_group。
+func NormalizeAgentWatchScope(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case AgentWatchScopeAll:
+		return AgentWatchScopeAll
+	default:
+		return AgentWatchScopeOwnGroup
+	}
+}
+
+// ValidAgentWatchScope 判断围观范围是否为允许的取值。
+func ValidAgentWatchScope(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case AgentWatchScopeOwnGroup, AgentWatchScopeAll:
+		return true
+	default:
+		return false
+	}
 }

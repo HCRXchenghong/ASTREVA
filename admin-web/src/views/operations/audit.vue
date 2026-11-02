@@ -70,6 +70,7 @@
 <script lang="ts" setup>
   import { computed, onMounted, ref } from 'vue';
   import { fetchBridgeAudit, fetchSiteAudit } from '@/api/admin';
+  import { csvCell as cell } from '@/utils/csv';
 
   const events = ref<any[]>([]);
   const loading = ref(false);
@@ -181,7 +182,6 @@
 
   function exportCsv() {
     const header = ['时间', '来源', '动作', '对象', '操作者', 'IP', '说明'];
-    const cell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
     const rows = filtered.value.map((item) => [
       item.createdAt,
       item.source,

@@ -18,7 +18,7 @@ import (
 // AddVisitorMessage 不会启动 AI goroutine，涉及上游调用的用例直接同步调用 generateAIReply。
 func newAILimitsService(t *testing.T) (*Service, store.Store) {
 	t.Helper()
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	if _, err := st.UpdateAISettings(domain.AISettings{
 		Enabled: true,
 		Mode:    domain.AIModeManualOnly,

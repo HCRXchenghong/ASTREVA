@@ -4,14 +4,46 @@ export function createWebsiteSeoRouter({
   verifySession,
   auditEvent,
   seoService,
+  autoSeo,
+  siteDomainService,
+  publishService,
   readContentRecord,
   saveContent,
   getBootstrap
 }) {
   return async function handleWebsiteSeo(req, res, pathname) {
-    if (pathname !== '/site-admin-api/seo/ai-generate') return false;
+    if (pathname !== '/site-admin-api/seo/ai-generate' && pathname !== '/site-admin-api/seo/auto-status' && pathname !== '/site-admin-api/seo/site-domain') return false;
     if (!verifySession(req)) {
       json(res, 401, { error: { message: '请先登录。' } });
+      return true;
+    }
+    if (pathname === '/site-admin-api/seo/auto-status') {
+      if (req.method !== 'GET') json(res, 405, { error: { message: '该接口仅支持 GET。' } });
+      else json(res, 200, { data: await autoSeo.status() });
+      return true;
+    }
+    if (pathname === '/site-admin-api/seo/site-domain') {
+      if (req.method === 'GET') {
+        json(res, 200, { data: await siteDomainService.read() });
+      } else if (req.method === 'PUT') {
+        try {
+          const payload = await bodyJson(req);
+          if (typeof payload?.domain !== 'string') throw new Error('请填写官网域名；留空可恢复部署配置。');
+          const setting = await siteDomainService.save(payload.domain);
+          let publish = null;
+          let rebuildError = '';
+          if (setting.changed) {
+            try { publish = await publishService.requestPublish(verifySession(req).userId || '', 'current'); }
+            catch (error) { rebuildError = error.message || '官网重建排队失败'; }
+          }
+          await auditEvent(req, 'seo.site-domain.updated', 'runtime-setting', 'website-site-domain', { domain: setting.domain, changed: setting.changed, rebuildQueued: Boolean(publish), rebuildError });
+          json(res, 200, { data: setting, meta: { publish, rebuildError } });
+        } catch (error) {
+          json(res, 400, { error: { message: error.message || '保存官网域名失败。' } });
+        }
+      } else {
+        json(res, 405, { error: { message: '该接口仅支持 GET 和 PUT。' } });
+      }
       return true;
     }
     if (req.method !== 'POST') {
@@ -41,7 +73,9 @@ export function createWebsiteSeoRouter({
           generatedCount: result.generatedCount,
           generatedAt: result.generatedAt,
           sourceLocale: result.locale,
-          translationLocalesQueued: ['en', 'ar']
+          translationLocalesQueued: ['en', 'ar'],
+          localizedSeoLocales: ['en', 'ar'],
+          localizedSeoStage: 'after-translation-before-publish'
         }
       });
     } catch (error) {

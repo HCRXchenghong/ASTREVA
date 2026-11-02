@@ -44,22 +44,25 @@ type IPResolver func(r *http.Request) (ip, source string)
 
 // Options 构造 Service 的依赖。
 type Options struct {
-	Store            store.Store
-	App              *app.Service
-	Logger           *slog.Logger
-	Enabled          bool
+	Store   store.Store
+	App     *app.Service
+	Logger  *slog.Logger
+	Enabled bool
+	// PolicyControlled=true 时，除 Enabled 外还读取后台服务策略的 open_api_enabled 总开关。
+	PolicyControlled bool
 	DefaultRateLimit int
 	ResolveIP        IPResolver
 }
 
 // Service 承载开放接口与 API 授权管理逻辑。
 type Service struct {
-	store       store.Store
-	app         *app.Service
-	logger      *slog.Logger
-	enabled     bool
-	defaultRate int
-	resolveIP   IPResolver
+	store            store.Store
+	app              *app.Service
+	logger           *slog.Logger
+	enabled          bool
+	policyControlled bool
+	defaultRate      int
+	resolveIP        IPResolver
 
 	mu      sync.Mutex
 	buckets map[string]*bucket
@@ -79,13 +82,14 @@ func NewService(options Options) *Service {
 		defaultRate = DefaultRateLimit
 	}
 	return &Service{
-		store:       options.Store,
-		app:         options.App,
-		logger:      logger,
-		enabled:     options.Enabled,
-		defaultRate: defaultRate,
-		resolveIP:   resolveIP,
-		buckets:     map[string]*bucket{},
+		store:            options.Store,
+		app:              options.App,
+		logger:           logger,
+		enabled:          options.Enabled,
+		policyControlled: options.PolicyControlled,
+		defaultRate:      defaultRate,
+		resolveIP:        resolveIP,
+		buckets:          map[string]*bucket{},
 	}
 }
 
@@ -126,6 +130,9 @@ func apiKeyFromRequest(r *http.Request) string {
 // authenticate 校验 API Key 并返回对应授权应用；同时累计调用量。
 func (s *Service) authenticate(r *http.Request) (domain.APIApp, error) {
 	if !s.enabled {
+		return domain.APIApp{}, ErrDisabled
+	}
+	if s.policyControlled && !s.store.ServicePolicy().OpenAPIEnabled {
 		return domain.APIApp{}, ErrDisabled
 	}
 	key := apiKeyFromRequest(r)

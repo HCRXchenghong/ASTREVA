@@ -11,6 +11,9 @@
       第三方平台通过 Open API 接入客服引擎：创建会话、代用户收发消息，并用 WebSocket 实时接收 AI 与人工客服回复。
       Key 只在创建/重置时显示一次，系统仅保存 SHA-256 哈希。
     </a-alert>
+    <a-alert class="tips" type="warning">
+      开放 API 总开关已移到「系统设置 → 安全策略」；默认关闭，关闭时 /open/v1/* 返回 503。
+    </a-alert>
 
     <!-- T2：开放接口按 scope 校验的显著说明。 -->
     <a-alert class="tips" type="warning" title="开放接口按权限范围（scope）校验">

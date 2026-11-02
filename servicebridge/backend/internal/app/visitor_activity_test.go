@@ -14,7 +14,7 @@ import (
 // TestRecordVisitorActivity 覆盖跨服务访客活动上报的全部行为：
 // 参数校验、画像关闭、画像不存在、字段更新与 visits 递增、last_seen_at 只前进不后退。
 func TestRecordVisitorActivity(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	service := NewService(st, realtime.NewHub(), slog.Default())
 
 	// 1) 参数缺失：visitor_id / path 都必须提供。

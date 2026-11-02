@@ -22,7 +22,7 @@ import (
 // newVisitorProfileService 构建可访问底层存储的画像测试服务。
 func newVisitorProfileService(t *testing.T) (*Service, store.Store) {
 	t.Helper()
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	service := NewService(st, realtime.NewHub(), slog.Default())
 	return service, st
 }

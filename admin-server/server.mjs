@@ -31,10 +31,14 @@ import { createAIProviderClient } from './modules/ai-provider-client.mjs';
 import { createWebsiteTranslationService } from './modules/website-translation-service.mjs';
 import { createWebsiteTranslationRouter } from './modules/website-translation-router.mjs';
 import { createWebsiteSeoService } from './modules/website-seo-service.mjs';
+import { createWebsiteSiteDomain } from './modules/website-site-domain.mjs';
+import { createWebsiteAutoSeo, needsAutomaticSeo } from './modules/website-auto-seo.mjs';
 import { createAnalyticsRouter, createVisitorActivityForwarder, detectDanger } from './modules/analytics-router.mjs';
 import { createSystemRouter } from './modules/system-router.mjs';
-import { sanitizeContentRichText, sanitizeHtml } from './modules/html-sanitize.mjs';
+import { sanitizeCmsContent } from './modules/html-sanitize.mjs';
 import { createWebsiteSeoRouter } from './modules/website-seo-router.mjs';
+import { geolocationFromRequest } from './modules/request-geo.mjs';
+import { validateContentMedia } from './modules/content-media-validation.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -76,17 +80,25 @@ const PUBLIC_ADMIN_URL = process.env.PUBLIC_ADMIN_URL || process.env.PUBLIC_ADMI
 const REBUILD_URL = process.env.FRONTEND_REBUILD_WEBHOOK_URL || 'http://127.0.0.1:8787/rebuild';
 const SERVICEBRIDGE_API_URL = normalizeServiceBridgeUrl(process.env.SERVICEBRIDGE_API_URL || 'http://127.0.0.1:8080');
 const SERVICEBRIDGE_ADMIN_ACCOUNT = process.env.SERVICEBRIDGE_ADMIN_ACCOUNT || 'superadmin';
-const SERVICEBRIDGE_ADMIN_PASSWORD = process.env.SERVICEBRIDGE_ADMIN_PASSWORD || '123456';
+const SERVICEBRIDGE_ADMIN_PASSWORD = process.env.SERVICEBRIDGE_ADMIN_PASSWORD || '';
+if (!SERVICEBRIDGE_ADMIN_PASSWORD) {
+  console.warn('[安全] 未配置 SERVICEBRIDGE_ADMIN_PASSWORD：统一后台将无法代理客服引擎管理接口。请设置强随机值。');
+}
 const SESSION_COOKIE = 'astreva_admin_session';
+const CSRF_COOKIE = 'astreva_admin_csrf';
+const PREVIEW_COOKIE = 'astreva_preview_access';
+const PREVIEW_ACCESS_TTL_MS = 10 * 60 * 1000;
+const SECURITY_SETTINGS_KEY = 'security';
 const ISSUER = process.env.ADMIN_2FA_ISSUER || '星渡官网账号';
 const SESSION_TTL_MS = Number(process.env.ADMIN_2FA_SESSION_TTL_MS || 12 * 60 * 60 * 1000);
+// 生产环境必须提供强随机会话密钥，避免使用仓库里的示例值被伪造管理员会话。
+const IS_PRODUCTION = (process.env.APP_ENV || process.env.NODE_ENV || '').toLowerCase() === 'production';
 const SESSION_SECRET =
   process.env.ADMIN_2FA_SESSION_SECRET ||
   process.env.ADMIN_SESSION_SECRET ||
-  'change-me-astreva-admin-session-secret';
+  // 本地未配置时使用进程内随机值，而不是公开的示例常量；重启后旧会话失效。
+  (IS_PRODUCTION ? 'change-me-astreva-admin-session-secret' : crypto.randomBytes(32).toString('base64url'));
 const SESSION_COOKIE_SECURE = process.env.ADMIN_SESSION_COOKIE_SECURE === 'true' || PUBLIC_ORIGIN.startsWith('https://');
-// 生产环境必须提供强随机会话密钥，避免使用仓库里的示例值被伪造管理员会话。
-const IS_PRODUCTION = (process.env.APP_ENV || process.env.NODE_ENV || '').toLowerCase() === 'production';
 if (IS_PRODUCTION) {
   const weakSession = SESSION_SECRET.length < 24 || /change-me|changeme|placeholder|secret/i.test(SESSION_SECRET);
   if (weakSession) {
@@ -101,6 +113,8 @@ if (IS_PRODUCTION) {
 const CMS_STORE_DRIVER = process.env.CMS_STORE_DRIVER || 'postgres';
 const CMS_DATA_ENCRYPTION_KEY = process.env.CMS_DATA_ENCRYPTION_KEY || process.env.DATA_ENCRYPTION_KEY || '';
 const ADMIN_MEDIA_DRIVER = process.env.ADMIN_MEDIA_DRIVER || 's3';
+// 单机商业化部署允许显式启用本地卷媒体；多机/对象存储仍推荐 s3。
+const ADMIN_ALLOW_LOCAL_MEDIA = process.env.ADMIN_ALLOW_LOCAL_MEDIA === 'true';
 const ADMIN_METRICS_BEARER_TOKEN = process.env.ADMIN_METRICS_BEARER_TOKEN || '';
 const ADMIN_TRUST_PROXY = process.env.ADMIN_TRUST_PROXY === 'true';
 const ADMIN_CORS_ALLOWED_ORIGINS = new Set(
@@ -109,12 +123,24 @@ const ADMIN_CORS_ALLOWED_ORIGINS = new Set(
     .map((value) => value.trim().replace(/\/$/, ''))
     .filter(Boolean)
 );
+// 后台“写”接口的 Origin 白名单必须与公开站点的读/提交白名单分离。
+// 默认只允许同源（后台自身域名）；ADMIN_WRITE_ALLOWED_ORIGINS 仅给确有需要的独立管理端使用。
+const ADMIN_WRITE_ALLOWED_ORIGINS = new Set(
+  String(process.env.ADMIN_WRITE_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((value) => value.trim().replace(/\/$/, ''))
+    .filter(Boolean)
+);
+let configuredSiteOrigin = '';
+function publicSiteOriginAllowed(origin) {
+  return ADMIN_CORS_ALLOWED_ORIGINS.has(origin) || Boolean(configuredSiteOrigin && origin === configuredSiteOrigin);
+}
 
 if (process.env.ALLOW_LEGACY_STORAGE_FOR_TESTS !== 'true' && CMS_STORE_DRIVER !== 'postgres') {
   throw new Error('后台运行必须使用 CMS_STORE_DRIVER=postgres；旧 JSON 仅可通过 npm run cms:cutover 导入。');
 }
-if (process.env.ALLOW_LEGACY_STORAGE_FOR_TESTS !== 'true' && ADMIN_MEDIA_DRIVER !== 's3') {
-  throw new Error('后台运行必须使用 ADMIN_MEDIA_DRIVER=s3；旧本地媒体仅可通过 npm run cms:cutover 导入。');
+if (process.env.ALLOW_LEGACY_STORAGE_FOR_TESTS !== 'true' && ADMIN_MEDIA_DRIVER !== 's3' && !ADMIN_ALLOW_LOCAL_MEDIA) {
+  throw new Error('后台运行必须使用 ADMIN_MEDIA_DRIVER=s3；单机部署可显式设置 ADMIN_ALLOW_LOCAL_MEDIA=true 使用本地卷。');
 }
 
 const platformStore = createPlatformStore({
@@ -133,11 +159,38 @@ const platformStore = createPlatformStore({
 });
 await platformStore.init();
 
+// 首次初始化必须持有一次性令牌，避免公网部署窗口被扫描器抢占。
+const ENV_SETUP_TOKEN = String(process.env.ADMIN_SETUP_TOKEN || '').trim();
+let ADMIN_SETUP_TOKEN = ENV_SETUP_TOKEN;
+const initialUsers = await platformStore.readUsers().catch(() => ({ users: [] }));
+// 仅测试进程允许固定令牌，生产环境永远走随机/显式配置。
+if (!ADMIN_SETUP_TOKEN && process.env.ALLOW_LEGACY_STORAGE_FOR_TESTS === 'true') {
+  ADMIN_SETUP_TOKEN = 'test-setup-token';
+}
+if (IS_PRODUCTION && initialUsers.users.length === 0 && !ENV_SETUP_TOKEN) {
+  throw new Error('生产环境首次启动必须显式设置 ADMIN_SETUP_TOKEN（建议 openssl rand -base64 36），不能把初始化令牌写进日志。');
+}
+if (!ADMIN_SETUP_TOKEN && initialUsers.users.length === 0) {
+  // 仅本地/测试：没有显式令牌时生成一次性随机值并打印，方便本机首次初始化。
+  ADMIN_SETUP_TOKEN = crypto.randomBytes(24).toString('base64url');
+  console.log('');
+  console.log('============================================================');
+  console.log('[安全] 首次初始化令牌（仅本次启动有效，初始化完成后不再需要）：');
+  console.log(`[安全] ${ADMIN_SETUP_TOKEN}`);
+  console.log('[安全] 在后台登录页选择“首次初始化”并粘贴该令牌；不要发到公开渠道。');
+  console.log('============================================================');
+  console.log('');
+}
+if (IS_PRODUCTION && ADMIN_SETUP_TOKEN && (ADMIN_SETUP_TOKEN.length < 24 || /change-me|changeme|placeholder/i.test(ADMIN_SETUP_TOKEN))) {
+  throw new Error('生产环境 ADMIN_SETUP_TOKEN 必须至少 24 位且不能是示例值。');
+}
+
 // 客服引擎代理必须先于 AI 消费方创建：AI 供应商解析与后台管理共用同一条受信管理员通道。
 const serviceBridgeProxy = createServiceBridgeProxy({
   apiUrl: SERVICEBRIDGE_API_URL,
   adminAccount: SERVICEBRIDGE_ADMIN_ACCOUNT,
   adminPassword: SERVICEBRIDGE_ADMIN_PASSWORD,
+  internalToken: process.env.INTERNAL_API_TOKEN || '',
   publicOrigin: PUBLIC_ORIGIN,
   bodyRaw,
   bodyJson,
@@ -151,14 +204,61 @@ const serviceBridgeProxy = createServiceBridgeProxy({
 const aiProviderClient = createAIProviderClient({ adminJson: serviceBridgeProxy.adminJson });
 const resolveAiProvider = (capability) => aiProviderClient.resolve(capability);
 
-const translationService = createWebsiteTranslationService({ platformStore, resolveProvider: resolveAiProvider });
+const translationService = createWebsiteTranslationService({
+  platformStore,
+  resolveProvider: resolveAiProvider,
+  onAvailabilityChange: () => scheduleTranslationRebuild()
+});
 const seoService = createWebsiteSeoService({ aiService: translationService });
+const siteDomainService = createWebsiteSiteDomain({
+  platformStore,
+  fallbackOrigin: SITE_ORIGIN,
+  onChange: (setting) => { configuredSiteOrigin = setting.domain ? setting.effectiveOrigin : ''; }
+});
+const initialSiteDomain = await siteDomainService.read();
+configuredSiteOrigin = initialSiteDomain.domain ? initialSiteDomain.effectiveOrigin : '';
+// 英语、阿拉伯语正文翻译完成后，使用 SEO 能力在各自语言的页面内容上独立生成元数据。
+// 翻译记录只有在本步骤成功后才会标记 ready 并进入静态站构建流程。
+translationService.setLocaleSeoGenerator((content, locale) => seoService.generateLocale(content, locale));
+const autoSeo = createWebsiteAutoSeo({ platformStore, readContentRecord, seoService, translationService });
 const publishService = createPublishService({
   rebuildUrl: REBUILD_URL,
   rebuildSecret: process.env.REBUILD_WEBHOOK_SECRET || '',
   siteOrigin: SITE_ORIGIN,
   platformStore
 });
+let translationRebuildTimer = null;
+let translationRebuildRunning = false;
+let translationRebuildQueued = false;
+let translationRebuildFailures = 0;
+
+function scheduleTranslationRebuild() {
+  translationRebuildQueued = true;
+  if (translationRebuildTimer || translationRebuildRunning) return;
+  translationRebuildTimer = setTimeout(runTranslationRebuild, 250);
+}
+
+async function runTranslationRebuild() {
+  translationRebuildTimer = null;
+  if (!translationRebuildQueued || translationRebuildRunning) return;
+  translationRebuildQueued = false;
+  translationRebuildRunning = true;
+  try {
+    await publishService.requestAutomaticRebuild();
+    translationRebuildFailures = 0;
+  } catch (error) {
+    translationRebuildFailures += 1;
+    const delay = Math.min(5000 * 2 ** Math.min(translationRebuildFailures - 1, 4), 60000);
+    console.error(`[网站翻译] 前台自动重建失败，${delay / 1000} 秒后重试：${error.message}`);
+    translationRebuildQueued = true;
+    translationRebuildTimer = setTimeout(runTranslationRebuild, delay);
+  } finally {
+    translationRebuildRunning = false;
+    if (translationRebuildQueued && !translationRebuildTimer) {
+      translationRebuildTimer = setTimeout(runTranslationRebuild, 250);
+    }
+  }
+}
 const MEDIA_RUNTIME_SETTING_KEY = 'media-runtime';
 const mediaEnvironmentConfig = mediaRuntimeConfigFromEnv(process.env);
 const storedMediaRuntimeConfig = await platformStore.readRuntimeSetting(MEDIA_RUNTIME_SETTING_KEY);
@@ -416,8 +516,19 @@ async function readContent() {
 
 async function saveContent(content, options = {}) {
   const normalized = normalizeContent(content);
+  const previous = await readContentRecord();
   const saved = await platformStore.saveContent(normalized, options);
-  await translationService.schedule(normalized, saved.revision);
+  if (options.autoSeo !== false && needsAutomaticSeo(previous.content, normalized)) {
+    try {
+      await autoSeo.enqueue(saved.revision);
+    } catch (error) {
+      console.error(`[AI SEO] 自动任务排队失败，继续生成译文：${error.message}`);
+      await translationService.schedule(normalized, saved.revision);
+    }
+    return saved;
+  }
+  const carried = await translationService.carryForwardMediaOnly(previous.content, normalized, previous.revision, saved.revision);
+  if (!carried) await translationService.schedule(normalized, saved.revision);
   return saved;
 }
 
@@ -536,6 +647,10 @@ async function readUsers() {
 
 async function saveUsers(users) {
   await platformStore.saveUsers(users);
+  // 账号被删除/重建后，旧会话必须立即失效，避免旧 Cookie 继续访问。
+  await platformStore.revokeAllAdminSessions().catch((error) => {
+    console.error(`[auth] 撤销管理员会话失败：${error.message}`);
+  });
 }
 
 async function readLeads() {
@@ -622,7 +737,7 @@ function sign(value) {
   return crypto.createHmac('sha256', SESSION_SECRET).update(value).digest('base64url');
 }
 
-async function createSession(user, req = null) {
+async function createSession(user, req = null, csrf = '') {
   const client = req ? resolveAdminClient(req) : { ip: '', source: '' };
   const record = await platformStore.createAdminSession({
     userId: user.id,
@@ -635,6 +750,7 @@ async function createSession(user, req = null) {
     userId: user.id,
     email: user.email,
     sid: record?.id || '',
+    csrf: String(csrf || ''),
     exp: Date.now() + SESSION_TTL_MS
   })).toString('base64url');
   return `${payload}.${sign(payload)}`;
@@ -681,6 +797,82 @@ function verifySession(req) {
   }
 }
 
+function timingSafeStringEqual(left, right) {
+  const a = Buffer.from(String(left || ''));
+  const b = Buffer.from(String(right || ''));
+  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+}
+
+function cookieDomainForPreview() {
+  const configured = String(process.env.PREVIEW_COOKIE_DOMAIN || '').trim().replace(/^\./, '');
+  if (configured) return configured;
+  let adminHost = '';
+  let siteHost = '';
+  try { adminHost = new URL(PUBLIC_ORIGIN).hostname.toLowerCase(); } catch {}
+  try { siteHost = new URL(configuredSiteOrigin || SITE_ORIGIN).hostname.toLowerCase(); } catch {}
+  if (!adminHost || !siteHost) return '';
+  // IP / localhost 不设置 Domain，使用 host-only Cookie（同一主机不同端口仍会发送）。
+  if (/^[0-9.]+$/.test(adminHost) || adminHost.includes(':') || !adminHost.includes('.')) return '';
+  const adminParts = adminHost.split('.');
+  const siteParts = siteHost.split('.');
+  let labels = 0;
+  while (
+    labels < adminParts.length && labels < siteParts.length &&
+    adminParts[adminParts.length - 1 - labels] === siteParts[siteParts.length - 1 - labels]
+  ) labels += 1;
+  if (labels < 2) return '';
+  return `.${adminParts.slice(-labels).join('.')}`;
+}
+
+async function readSecuritySettings() {
+  try {
+    const record = await platformStore.readRuntimeSetting(SECURITY_SETTINGS_KEY);
+    const candidate = Number(record?.config?.previewTtlMinutes);
+    const minutes = Number.isFinite(candidate) ? Math.min(1440, Math.max(1, Math.round(candidate))) : 10;
+    return { previewTtlMinutes: minutes };
+  } catch {
+    return { previewTtlMinutes: 10 };
+  }
+}
+
+function setPreviewAccessCookie(res, ttlMs = PREVIEW_ACCESS_TTL_MS) {
+  const ttl = Math.min(24 * 60 * 60 * 1000, Math.max(60 * 1000, Number(ttlMs) || PREVIEW_ACCESS_TTL_MS));
+  const exp = Date.now() + ttl;
+  const signature = sign(`preview:${exp}`);
+  const secure = SESSION_COOKIE_SECURE ? ' Secure;' : '';
+  const domain = cookieDomainForPreview();
+  res.setHeader('Set-Cookie', `${PREVIEW_COOKIE}=${exp}.${signature}; Path=/; HttpOnly; SameSite=Lax;${secure} Max-Age=${Math.floor(ttl / 1000)}${domain ? `; Domain=${domain}` : ''}`);
+}
+
+function verifyPreviewAccess(req) {
+  const value = String(parseCookies(req)[PREVIEW_COOKIE] || '');
+  const [rawExp, signature] = value.split('.');
+  const exp = Number(rawExp || 0);
+  if (!Number.isFinite(exp) || exp <= Date.now() || !signature) return false;
+  return timingSafeStringEqual(signature, sign(`preview:${exp}`));
+}
+
+function verifyCsrf(req, session = null) {
+  const active = session || verifySession(req);
+  const expected = String(active?.csrf || '');
+  if (!expected) return false;
+  const header = String(req.headers['x-csrf-token'] || '');
+  const cookie = String(parseCookies(req)[CSRF_COOKIE] || '');
+  return timingSafeStringEqual(header, expected) && timingSafeStringEqual(cookie, expected);
+}
+
+const CSRF_EXEMPT_WRITE_PATHS = new Set([
+  '/site-admin-api/leads',
+  '/site-admin-api/analytics/visit'
+]);
+
+function requiresCsrf(req, pathname) {
+  if (process.env.ALLOW_LEGACY_STORAGE_FOR_TESTS === 'true') return false;
+  if (!['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method || '')) return false;
+  if (pathname === '/site-admin-auth/logout' || pathname === '/site-admin-auth/password') return true;
+  return pathname.startsWith('/site-admin-api/') && !CSRF_EXEMPT_WRITE_PATHS.has(pathname);
+}
+
 function requestIp(req) {
   if (ADMIN_TRUST_PROXY) {
     const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -692,7 +884,7 @@ function requestIp(req) {
 function applyLeadCors(req, res) {
   const origin = String(req.headers.origin || '').replace(/\/$/, '');
   if (!origin) return true;
-  if (!ADMIN_CORS_ALLOWED_ORIGINS.has(origin)) return false;
+  if (!publicSiteOriginAllowed(origin)) return false;
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -704,7 +896,7 @@ function applyLeadCors(req, res) {
 function applyPublicContentCors(req, res) {
   const origin = String(req.headers.origin || '').replace(/\/$/, '');
   if (!origin) return true;
-  if (!ADMIN_CORS_ALLOWED_ORIGINS.has(origin)) return false;
+  if (!publicSiteOriginAllowed(origin)) return false;
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -758,13 +950,23 @@ async function adminMetrics() {
 }
 
 async function setSessionCookie(res, user, req = null) {
-  const token = await createSession(user, req);
-  const cookie = `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax;${SESSION_COOKIE_SECURE ? ' Secure;' : ''} Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
-  res.setHeader('Set-Cookie', cookie);
+  const csrf = crypto.randomBytes(32).toString('base64url');
+  const token = await createSession(user, req, csrf);
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  const secure = SESSION_COOKIE_SECURE ? ' Secure;' : '';
+  res.setHeader('Set-Cookie', [
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict;${secure} Max-Age=${maxAge}`,
+    // CSRF 令牌必须能被同源 JS 读取，因此不设 HttpOnly；它不能单独用于认证。
+    `${CSRF_COOKIE}=${encodeURIComponent(csrf)}; Path=/; SameSite=Strict;${secure} Max-Age=${maxAge}`
+  ]);
 }
 
 function clearSessionCookie(res) {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  const secure = SESSION_COOKIE_SECURE ? ' Secure;' : '';
+  res.setHeader('Set-Cookie', [
+    `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict;${secure} Max-Age=0`,
+    `${CSRF_COOKIE}=; Path=/; SameSite=Strict;${secure} Max-Age=0`
+  ]);
 }
 
 const handleAuth = createAuthRouter({
@@ -781,7 +983,8 @@ const handleAuth = createAuthRouter({
   auditEvent,
   recordSystemEvent,
   resolveClient: resolveAdminClient,
-  platformStore
+  platformStore,
+  setupToken: ADMIN_SETUP_TOKEN
 });
 
 const base32Alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -931,7 +1134,7 @@ function getStaticPage(content, slug) {
 }
 
 const CONTENT_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const STATIC_PAGE_SLUGS = new Set(['about', 'solutions', 'warranty', 'install', 'faq', 'privacy', 'agreement']);
+const STATIC_PAGE_SLUGS = new Set(['about', 'about-manufacturing', 'about-quality', 'solutions', 'warranty', 'install', 'faq', 'privacy', 'agreement']);
 
 function requireText(value, label, maxLength = 200) {
   const text = String(value || '').trim();
@@ -984,7 +1187,9 @@ function assertContentIntegrity(content) {
   for (const [label, duplicates] of checks) {
     if (duplicates.length) throw new Error(`${label}重复：${duplicates.join('、')}`);
   }
+  validateContentMedia(content);
 }
+
 
 async function saveSection(payload) {
   const content = await readContent();
@@ -994,7 +1199,7 @@ async function saveSection(payload) {
 
   if (section === 'content') {
     // 全量保存也要先做富文本消毒，避免绕过下面的白名单清洗。
-    const sanitizedData = sanitizeContentRichText(data);
+    const sanitizedData = sanitizeCmsContent(data);
     assertContentIntegrity(sanitizedData);
     const result = await saveContent(sanitizedData, { expectedRevision: payload.revision });
     return { id: 'site-content', revision: result.revision, updatedAt: result.updatedAt };
@@ -1030,6 +1235,7 @@ async function saveSection(payload) {
         description: data.description || '',
         coverImage: data.coverImage || '',
         heroVideo: data.heroVideo || '',
+        mediaItems: Array.isArray(data.mediaItems) ? data.mediaItems : existing?.mediaItems,
         sortOrder: Number(data.sortOrder || 0),
         seo: data.seo || { title: `${data.name || '品类'} | 星渡ASTREVA`, description: data.description || '' }
       };
@@ -1046,6 +1252,7 @@ async function saveSection(payload) {
       content.products = content.products.filter((item) => item.id !== data.id);
       saved = { deleted: true, id: data.id };
     } else {
+      const existing = data.id ? content.products.find((item) => item.id === data.id) : null;
       const name = requireText(data.name, '产品名称');
       const slug = requireSlug(data.slug || slugify(name, 'product'), '产品 Slug');
       const categorySlug = requireSlug(data.categorySlug || content.categories[0]?.slug || '', '所属品类');
@@ -1059,6 +1266,10 @@ async function saveSection(payload) {
         coverImage: data.coverImage || '',
         galleryImages: Array.isArray(data.galleryImages) ? data.galleryImages : [],
         videoUrl: data.videoUrl || '',
+        galleryVideos: Array.isArray(data.galleryVideos) ? data.galleryVideos : [],
+        mediaItems: Array.isArray(data.mediaItems) ? data.mediaItems : existing?.mediaItems,
+        galleryMediaItems: Array.isArray(data.galleryMediaItems) ? data.galleryMediaItems : existing?.galleryMediaItems,
+        videoMediaItems: Array.isArray(data.videoMediaItems) ? data.videoMediaItems : existing?.videoMediaItems,
         summary: data.summary || '',
         features: Array.isArray(data.features) ? data.features : [],
         specifications: Array.isArray(data.specifications) ? data.specifications : [],
@@ -1104,7 +1315,7 @@ async function saveSection(payload) {
   }
 
   // 富文本字段写入前做白名单消毒，避免存储型 XSS 带到官网。
-  const sanitized = sanitizeContentRichText(content);
+  const sanitized = sanitizeCmsContent(content);
   for (const key of Object.keys(sanitized)) content[key] = sanitized[key];
   assertContentIntegrity(content);
   await saveContent(content, { expectedRevision: payload.revision });
@@ -1179,6 +1390,7 @@ const handleContent = createContentRouter({
   auditEvent,
   readContent,
   readContentRecord,
+  readSiteOrigin: async () => (await siteDomainService.read()).effectiveOrigin,
   readContentTranslation: (locale) => translationService.read(locale),
   applyPublicCors: applyPublicContentCors,
   activeFallbackVersion,
@@ -1208,6 +1420,9 @@ const handleWebsiteSeo = createWebsiteSeoRouter({
   verifySession,
   auditEvent,
   seoService,
+  autoSeo,
+  siteDomainService,
+  publishService,
   readContentRecord,
   saveContent,
   getBootstrap
@@ -1317,7 +1532,19 @@ function resolveAdminClient(req) {
 }
 
 function countryFromRequest(req) {
-  return String(req.headers['cf-ipcountry'] || req.headers['x-vercel-ip-country'] || req.headers['x-country-code'] || '').trim().toUpperCase().slice(0, 8);
+  return geolocationFromRequest(req, { trustedProxy: ADMIN_TRUST_PROXY }).country;
+}
+
+function regionFromRequest(req) {
+  return geolocationFromRequest(req, { trustedProxy: ADMIN_TRUST_PROXY }).region;
+}
+
+function cityFromRequest(req) {
+  return geolocationFromRequest(req, { trustedProxy: ADMIN_TRUST_PROXY }).city;
+}
+
+function visitorTimezoneFromRequest(req) {
+  return geolocationFromRequest(req, { trustedProxy: ADMIN_TRUST_PROXY }).timezone;
 }
 
 function analyticsTimezone() {
@@ -1327,7 +1554,7 @@ function analyticsTimezone() {
 function analyticsCors(req, res) {
   const origin = String(req.headers.origin || '').replace(/\/$/, '');
   if (!origin) return true;
-  if (!ADMIN_CORS_ALLOWED_ORIGINS.has(origin)) return false;
+  if (!publicSiteOriginAllowed(origin)) return false;
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -1358,6 +1585,9 @@ const analyticsModule = createAnalyticsRouter({
   applyPublicCors: analyticsCors,
   resolveClient: resolveAdminClient,
   countryFromRequest,
+  regionFromRequest,
+  cityFromRequest,
+  visitorTimezoneFromRequest,
   timezoneFromRequest: analyticsTimezone,
   visitorActivityForwarder
 });
@@ -1404,6 +1634,8 @@ const CONTENT_EDITOR_ITEMS = [
     ['solutions', '解决方案', '◇', '/solutions/#solutions-hero'],
     ['support', '服务支持', '☏', '/support/#support-hero'],
     ['about', '关于我们', '♙', '/about/#about-hero'],
+    ['aboutManufacturing', '制造能力', '', '/about/manufacturing/#about-subpage-hero'],
+    ['aboutQuality', '工程与品质', '', '/about/quality/#about-subpage-hero'],
     ['warranty', '质保页面', '', '/support/warranty/#warranty-content'],
     ['install', '安装指南', '', '/support/install/#install-content'],
     ['faq', '常见问题', '?', '/support/faq/#faq-list'],
@@ -1428,7 +1660,7 @@ const CONTENT_MODULE_GROUPS = [
     label: '页面',
     icon: '▣',
     description: '编辑首页、公司介绍、解决方案、支持与法务页面。',
-    items: ['homeHero', 'homeProducts', 'homeAdvantages', 'homeTestimonials', 'homeCta', 'solutions', 'support', 'about', 'warranty', 'install', 'faqPage', 'privacy', 'agreement']
+    items: ['homeHero', 'homeProducts', 'homeAdvantages', 'homeTestimonials', 'homeCta', 'solutions', 'support', 'about', 'aboutManufacturing', 'aboutQuality', 'warranty', 'install', 'faqPage', 'privacy', 'agreement']
   },
   {
     id: 'products',
@@ -2025,17 +2257,17 @@ function renderAdminPage(bootstrap, options = {}) {
       nav.querySelectorAll('button').forEach((btn) => btn.classList.toggle('active', btn.dataset.nav === state.active));
       const c = state.content;
       if (state.active === 'allContent') renderAllContent();
-      else if (state.active === 'homeHero') editor.innerHTML = title('首页首屏') + field('眉标', 'home.hero.eyebrow') + field('主标题', 'home.hero.title') + field('商标角标', 'home.hero.trademark') + text('副标题', 'home.hero.subtitle') + mediaField('背景图', 'home.hero.backgroundImage') + mediaField('背景视频', 'home.hero.backgroundVideo', 'video/*') + field('主按钮文字', 'home.hero.primaryCta') + field('主按钮链接', 'home.hero.primaryHref') + field('播放按钮文字', 'home.hero.secondaryCta') + field('播放视频链接', 'home.hero.videoUrl') + field('视频弹窗标题', 'home.hero.videoTitle') + field('视频占位提示', 'home.hero.videoPreviewLabel') + field('外部打开按钮文字', 'home.hero.videoOpenExternalLabel') + field('关闭按钮文字', 'home.hero.videoCloseLabel') + field('SEO 标题', 'home.seo.title') + text('SEO 描述', 'home.seo.description') + field('SEO 关键词', 'home.seo.keywords') + field('SEO 分享图', 'home.seo.image') + saveButton() + '</div>';
+      else if (state.active === 'homeHero') editor.innerHTML = title('首页首屏') + field('眉标', 'home.hero.eyebrow') + field('主标题', 'home.hero.title') + field('商标角标', 'home.hero.trademark') + text('副标题', 'home.hero.subtitle') + mediaField('背景图', 'home.hero.backgroundImage') + mediaField('背景视频', 'home.hero.backgroundVideo', 'video/*') + field('主按钮文字', 'home.hero.primaryCta') + field('主按钮链接', 'home.hero.primaryHref') + field('播放按钮文字', 'home.hero.secondaryCta') + mediaField('播放视频', 'home.hero.videoUrl', 'video/*') + mediaField('视频封面图', 'home.hero.videoPosterImage', 'image/*') + mediaField('视频弹窗背景图', 'home.hero.videoModalBackgroundImage', 'image/*') + field('视频弹窗眉标', 'home.hero.videoModalEyebrow') + text('视频弹窗说明', 'home.hero.videoModalDescription') + field('视频弹窗标题', 'home.hero.videoTitle') + field('视频占位提示', 'home.hero.videoPreviewLabel') + field('外部打开按钮文字', 'home.hero.videoOpenExternalLabel') + field('关闭按钮文字', 'home.hero.videoCloseLabel') + field('SEO 标题', 'home.seo.title') + text('SEO 描述', 'home.seo.description') + field('SEO 关键词', 'home.seo.keywords') + field('SEO 分享图', 'home.seo.image') + saveButton() + '</div>';
       else if (state.active === 'homeProducts') editor.innerHTML = title('首页产品区') + field('产品区标题', 'home.featuredProducts.title') + text('产品区描述', 'home.featuredProducts.description') + field('产品卡片链接文字', 'home.featuredProducts.linkLabel') + field('产品卡片链接图标', 'home.featuredProducts.linkIcon') + field('产品介绍标题', 'home.productIntro.title') + text('产品介绍描述', 'home.productIntro.description', 5) + mediaField('产品介绍图片', 'home.productIntro.image', 'image/*') + listText('产品介绍要点', 'home.productIntro.bullets') + field('产品介绍要点图标', 'home.productIntro.bulletIcon') + field('技术规格按钮文字', 'home.productIntro.ctaLabel') + field('技术规格按钮链接', 'home.productIntro.ctaHref') + saveButton() + '</div>';
       else if (state.active === 'homeAdvantages') editor.innerHTML = title('首页优势') + field('优势区标题', 'home.advantagesIntro.title') + text('优势区描述', 'home.advantagesIntro.description') + objectList('优势卡片', 'home.advantages', [['title','标题'],['description','描述','textarea'],['icon','图标代号']]) + saveButton() + '</div>';
       else if (state.active === 'homeTestimonials') editor.innerHTML = title('客户评价') + field('区域标题', 'home.testimonialsTitle') + objectList('评价列表', 'home.testimonials', [['name','姓名'],['role','身份'],['text','评价内容','textarea']]) + saveButton() + '</div>';
       else if (state.active === 'homeCta') editor.innerHTML = title('首页行动区') + field('标题', 'home.cta.title') + text('描述', 'home.cta.description') + field('主按钮', 'home.cta.primaryLabel') + field('主按钮链接', 'home.cta.primaryHref') + field('次按钮', 'home.cta.secondaryLabel') + field('次按钮链接', 'home.cta.secondaryHref') + mediaField('背景图', 'home.cta.backgroundImage') + saveButton() + '</div>';
-      else if (state.active === 'productCenter') editor.innerHTML = title('产品中心') + field('首屏标题', 'productCenter.hero.title') + mediaField('首屏背景图', 'productCenter.hero.backgroundImage') + mediaField('首屏背景视频', 'productCenter.hero.backgroundVideo', 'video/*') + field('品类按钮图标', 'productCenter.categoryPage.categoryCtaIcon') + field('品类页标题模板', 'productCenter.categoryPage.titleTemplate') + field('返回按钮文字', 'productCenter.categoryPage.backLabel') + field('返回按钮图标', 'productCenter.categoryPage.backIcon') + field('产品悬浮按钮文字', 'productCenter.categoryPage.productHoverLabel') + field('面包屑分隔符', 'productCenter.detailPage.breadcrumbSeparator') + field('详情页徽标', 'productCenter.detailPage.badgeLabel') + field('详情页徽标图标', 'productCenter.detailPage.badgeIcon') + field('卖点列表图标', 'productCenter.detailPage.featureIcon') + field('报价按钮文字', 'productCenter.detailPage.quoteButtonLabel') + field('报价按钮图标', 'productCenter.detailPage.quoteButtonIcon') + field('下载按钮图标', 'productCenter.detailPage.downloadButtonIcon') + field('规格区标题', 'productCenter.detailPage.specsTitle') + text('规格区描述', 'productCenter.detailPage.specsDescription') + field('规格左侧图标', 'productCenter.detailPage.specsPrimaryIcon') + field('规格左侧标题', 'productCenter.detailPage.specsPrimaryTitle') + field('说明右侧图标', 'productCenter.detailPage.descriptionIcon') + field('说明右侧标题', 'productCenter.detailPage.descriptionTitle') + field('图库标题', 'productCenter.detailPage.galleryTitle') + field('视频标题', 'productCenter.detailPage.videoTitle') + field('SEO 标题', 'productCenter.seo.title') + text('SEO 描述', 'productCenter.seo.description') + field('SEO 关键词', 'productCenter.seo.keywords') + field('SEO 分享图', 'productCenter.seo.image') + saveButton() + '</div>';
+      else if (state.active === 'productCenter') editor.innerHTML = title('产品中心') + field('首屏标题', 'productCenter.hero.title') + mediaField('首屏背景图', 'productCenter.hero.backgroundImage') + mediaField('首屏背景视频', 'productCenter.hero.backgroundVideo', 'video/*') + field('品类按钮图标', 'productCenter.categoryPage.categoryCtaIcon') + field('品类页标题模板', 'productCenter.categoryPage.titleTemplate') + field('返回按钮文字', 'productCenter.categoryPage.backLabel') + field('返回按钮图标', 'productCenter.categoryPage.backIcon') + field('产品悬浮按钮文字', 'productCenter.categoryPage.productHoverLabel') + field('面包屑分隔符', 'productCenter.detailPage.breadcrumbSeparator') + field('详情页徽标', 'productCenter.detailPage.badgeLabel') + field('详情页徽标图标', 'productCenter.detailPage.badgeIcon') + field('卖点列表图标', 'productCenter.detailPage.featureIcon') + field('报价按钮文字', 'productCenter.detailPage.quoteButtonLabel') + field('报价按钮图标', 'productCenter.detailPage.quoteButtonIcon') + field('下载按钮图标', 'productCenter.detailPage.downloadButtonIcon') + field('规格区标题', 'productCenter.detailPage.specsTitle') + text('规格区描述', 'productCenter.detailPage.specsDescription') + field('空规格提示', 'productCenter.detailPage.specsEmptyMessage') + field('规格左侧图标', 'productCenter.detailPage.specsPrimaryIcon') + field('规格左侧标题', 'productCenter.detailPage.specsPrimaryTitle') + field('说明右侧图标', 'productCenter.detailPage.descriptionIcon') + field('说明右侧标题', 'productCenter.detailPage.descriptionTitle') + field('图库标题', 'productCenter.detailPage.galleryTitle') + field('视频标题', 'productCenter.detailPage.videoTitle') + field('SEO 标题', 'productCenter.seo.title') + text('SEO 描述', 'productCenter.seo.description') + field('SEO 关键词', 'productCenter.seo.keywords') + field('SEO 分享图', 'productCenter.seo.image') + saveButton() + '</div>';
       else if (state.active === 'categories') renderCollection('产品品类', c.categories, 'category', ['name','slug','description','coverImage','sortOrder']);
       else if (state.active === 'products') renderProduct();
       else if (state.active === 'support') editor.innerHTML = title('服务支持') + field('首屏标题', 'support.hero.title') + text('首屏描述', 'support.hero.description') + mediaField('首屏背景图', 'support.hero.backgroundImage') + mediaField('首屏背景视频', 'support.hero.backgroundVideo', 'video/*') + objectList('服务卡片', 'support.services', [['title','标题'],['description','描述','textarea'],['icon','图标'],['href','链接'],['cta','按钮文字']]) + field('联系标题', 'support.contact.title') + text('联系说明', 'support.contact.description') + field('电话标签', 'support.contact.phoneLabel') + field('电话图标', 'support.contact.phoneIcon') + field('邮箱标签', 'support.contact.emailLabel') + field('邮箱图标', 'support.contact.emailIcon') + field('姓名标签', 'support.contact.form.nameLabel') + field('姓名占位', 'support.contact.form.namePlaceholder') + field('公司标签', 'support.contact.form.companyLabel') + field('公司占位', 'support.contact.form.companyPlaceholder') + field('电话标签', 'support.contact.form.phoneLabel') + field('电话占位', 'support.contact.form.phonePlaceholder') + field('邮箱标签', 'support.contact.form.emailLabel') + field('邮箱占位', 'support.contact.form.emailPlaceholder') + field('留言标签', 'support.contact.form.messageLabel') + field('留言占位', 'support.contact.form.messagePlaceholder') + field('选填提示', 'support.contact.form.optionalLabel') + field('提交按钮', 'support.contact.form.submitLabel') + field('提交中按钮', 'support.contact.form.submittingLabel') + field('提交成功提示', 'support.contact.form.successMessage') + field('提交失败提示', 'support.contact.form.errorMessage') + field('接口未配置提示', 'support.contact.form.missingEndpointMessage') + field('SEO 标题', 'support.seo.title') + text('SEO 描述', 'support.seo.description') + field('SEO 关键词', 'support.seo.keywords') + field('SEO 分享图', 'support.seo.image') + saveButton() + '</div>';
       else if (state.active === 'faq') renderCollection('常见问题', c.faqs, 'faq', ['question','answer','sortOrder','enabled']);
-      else if (['about','solutions','warranty','install','privacy','agreement','faqPage'].includes(state.active)) renderStatic(state.active === 'faqPage' ? 'faq' : state.active);
+      else if (['about','aboutManufacturing','aboutQuality','solutions','warranty','install','privacy','agreement','faqPage'].includes(state.active)) renderStatic(({aboutManufacturing:'about-manufacturing',aboutQuality:'about-quality',faqPage:'faq'})[state.active] || state.active);
       else if (state.active === 'media') renderMedia();
       else if (state.active === 'leads') renderLeads();
       else if (state.active === 'seo') editor.innerHTML = title('SEO 设置') + '<div class="card seo-ai-panel"><div class="card-head"><span>AI SEO 生成</span></div><p class="small">根据当前已保存的网站内容，为全站、首页、产品中心、服务页、全部品类、产品和静态页生成中文 SEO，并自动排队生成英文与阿拉伯语版本。现有分享图会保留，空白分享图自动使用页面主图或 ASTREVA Logo。</p><button class="seo-ai-button" id="generateSeo" type="button">一键 AI 生成三语 SEO</button><p class="seo-ai-status" id="seoAiStatus" aria-live="polite">'+esc(state.seoMessage || '')+'</p></div><div class="card"><div class="card-head"><span>搜索引擎站长验证</span></div><p class="small">在各平台站长后台添加网站后，把平台给出的 meta 验证码填入。留空时前台不会输出对应标签。</p>'+field('Google 验证码', 'site.searchVerification.google')+field('Bing 验证码', 'site.searchVerification.bing')+field('百度验证码', 'site.searchVerification.baidu')+field('360 搜索验证码', 'site.searchVerification.so360')+field('搜狗验证码', 'site.searchVerification.sogou')+field('Yandex 验证码', 'site.searchVerification.yandex')+'</div>' + field('默认 SEO 标题', 'site.defaultSeo.title') + text('默认 SEO 描述', 'site.defaultSeo.description') + field('默认分享图', 'site.defaultSeo.image') + field('默认关键词', 'site.defaultSeo.keywords') + field('首页 SEO 标题', 'home.seo.title') + text('首页 SEO 描述', 'home.seo.description') + field('首页 SEO 关键词', 'home.seo.keywords') + field('首页 SEO 分享图', 'home.seo.image') + field('产品中心 SEO 标题', 'productCenter.seo.title') + text('产品中心 SEO 描述', 'productCenter.seo.description') + field('产品中心 SEO 关键词', 'productCenter.seo.keywords') + field('产品中心 SEO 分享图', 'productCenter.seo.image') + field('服务页 SEO 标题', 'support.seo.title') + text('服务页 SEO 描述', 'support.seo.description') + field('服务页 SEO 关键词', 'support.seo.keywords') + field('服务页 SEO 分享图', 'support.seo.image') + saveButton() + '</div>';
@@ -2062,7 +2294,7 @@ function renderAdminPage(bootstrap, options = {}) {
       const items = state.content.products; state.selected.product = Math.min(state.selected.product || 0, Math.max(items.length - 1, 0)); const item = items[state.selected.product] || {};
       const buttons = items.map((it, i) => '<button class="'+(i===state.selected.product?'active':'')+'" data-select="product" data-index="'+i+'">'+esc(it.name||('产品 '+(i+1)))+'</button>').join('');
       const categoryOptions = state.content.categories.map((cat)=>'<option value="'+esc(cat.slug)+'" '+(cat.slug===item.categorySlug?'selected':'')+'>'+esc(cat.name)+'</option>').join('');
-      editor.innerHTML = title('产品管理') + '<div class="picker"><div class="select-list">'+buttons+'<button class="ghost" data-new="product">新增</button></div><div class="form"><input data-item-section="product" data-key="id" value="'+esc(item.id||'')+'" type="hidden" /><div class="field"><label>产品名称</label><input data-item-section="product" data-key="name" value="'+esc(item.name||'')+'"></div><div class="field"><label>Slug</label><input data-item-section="product" data-key="slug" value="'+esc(item.slug||'')+'"></div><div class="field"><label>所属品类</label><select data-item-section="product" data-key="categorySlug">'+categoryOptions+'</select></div><div class="field"><label>封面图</label><input data-item-section="product" data-key="coverImage" value="'+esc(item.coverImage||'')+'"></div><div class="field"><input type="file" data-item-upload="coverImage" accept="image/*"></div><div class="field"><label>图库图片</label><textarea data-item-section="product" data-key="galleryImages" rows="4">'+esc((item.galleryImages||[]).join('\\n'))+'</textarea><p class="small">每行一个图片 URL，也可以上传多张图片自动追加。</p><input type="file" data-item-gallery-upload accept="image/*" multiple></div><div class="field"><label>产品视频</label><input data-item-section="product" data-key="videoUrl" value="'+esc(item.videoUrl||'')+'"><p class="small">可填 YouTube/Bilibili iframe 地址，也可上传 mp4/webm。</p><input type="file" data-item-upload="videoUrl" accept="video/*"></div><div class="field"><label>简介</label><textarea data-item-section="product" data-key="summary">'+esc(item.summary||'')+'</textarea></div><div class="field"><label>卖点</label><textarea data-item-section="product" data-key="features">'+esc((item.features||[]).join('\\n'))+'</textarea><p class="small">每行一个卖点</p></div><div class="field"><label>规格参数</label><textarea data-item-section="product" data-key="specifications">'+esc((item.specifications||[]).map(s=>s.label+'：'+s.value).join('\\n'))+'</textarea><p class="small">每行一条，格式：参数名：参数值</p></div><div class="field"><label>下载资料</label><textarea data-item-section="product" data-key="downloads">'+esc((item.downloads||[]).map(s=>s.label+'：'+s.url).join('\\n'))+'</textarea><p class="small">每行一条，格式：名称：URL；上传文件会自动追加。</p><input type="file" data-item-download-upload accept=".pdf,.zip,.dwg,.dxf"></div><div class="field"><label>正文</label><textarea data-item-section="product" data-key="body" rows="5">'+esc(item.body||'')+'</textarea></div><label class="field"><input data-item-section="product" data-key="isFeatured" type="checkbox" '+(item.isFeatured?'checked':'')+' style="width:auto;margin-right:8px">首页推荐</label><div class="field"><label>排序</label><input data-item-section="product" data-key="sortOrder" type="number" value="'+esc(item.sortOrder||0)+'"></div><div class="field"><label>SEO 标题</label><input data-item-section="product" data-key="seo.title" value="'+esc(item.seo?.title||'')+'"></div><div class="field"><label>SEO 描述</label><textarea data-item-section="product" data-key="seo.description">'+esc(item.seo?.description||'')+'</textarea></div><div class="field"><label>SEO 关键词</label><input data-item-section="product" data-key="seo.keywords" value="'+esc(item.seo?.keywords||'')+'"></div><div class="field"><label>SEO 分享图</label><input data-item-section="product" data-key="seo.image" value="'+esc(item.seo?.image||'')+'"></div><button class="save-current" id="saveCurrent">保存当前产品</button><button class="danger" data-delete="product">删除当前产品</button></div></div></div>';
+      editor.innerHTML = title('产品管理') + '<div class="picker"><div class="select-list">'+buttons+'<button class="ghost" data-new="product">新增</button></div><div class="form"><input data-item-section="product" data-key="id" value="'+esc(item.id||'')+'" type="hidden" /><div class="field"><label>产品名称</label><input data-item-section="product" data-key="name" value="'+esc(item.name||'')+'"></div><div class="field"><label>Slug</label><input data-item-section="product" data-key="slug" value="'+esc(item.slug||'')+'"></div><div class="field"><label>所属品类</label><select data-item-section="product" data-key="categorySlug">'+categoryOptions+'</select></div><div class="field"><label>封面图</label><input data-item-section="product" data-key="coverImage" value="'+esc(item.coverImage||'')+'"></div><div class="field"><input type="file" data-item-upload="coverImage" accept="image/*"></div><div class="field"><label>图库图片</label><textarea data-item-section="product" data-key="galleryImages" rows="4">'+esc((item.galleryImages||[]).join('\\n'))+'</textarea><p class="small">每行一个图片 URL，也可以上传多张图片自动追加；删掉地址即可移除。</p><input type="file" data-item-gallery-upload accept="image/*" multiple></div><div class="field"><label>图库视频</label><textarea data-item-section="product" data-key="galleryVideos" rows="4">'+esc((item.galleryVideos||[]).join('\\n'))+'</textarea><p class="small">每行一个视频 URL，也可以上传多个视频；删掉地址即可移除。</p><input type="file" data-item-gallery-video-upload accept="video/*" multiple></div><div class="field"><label>产品视频</label><input data-item-section="product" data-key="videoUrl" value="'+esc(item.videoUrl||'')+'"><p class="small">可填 YouTube/Bilibili iframe 地址，也可上传 mp4/webm。</p><input type="file" data-item-upload="videoUrl" accept="video/*"></div><div class="field"><label>简介</label><textarea data-item-section="product" data-key="summary">'+esc(item.summary||'')+'</textarea></div><div class="field"><label>卖点</label><textarea data-item-section="product" data-key="features">'+esc((item.features||[]).join('\\n'))+'</textarea><p class="small">每行一个卖点</p></div><div class="field"><label>规格参数</label><textarea data-item-section="product" data-key="specifications">'+esc((item.specifications||[]).map(s=>s.label+'：'+s.value).join('\\n'))+'</textarea><p class="small">每行一条，格式：参数名：参数值</p></div><div class="field"><label>下载资料</label><textarea data-item-section="product" data-key="downloads">'+esc((item.downloads||[]).map(s=>s.label+'：'+s.url).join('\\n'))+'</textarea><p class="small">每行一条，格式：名称：URL；上传文件会自动追加。</p><input type="file" data-item-download-upload accept=".pdf,.zip,.dwg,.dxf"></div><div class="field"><label>正文</label><textarea data-item-section="product" data-key="body" rows="5">'+esc(item.body||'')+'</textarea></div><label class="field"><input data-item-section="product" data-key="isFeatured" type="checkbox" '+(item.isFeatured?'checked':'')+' style="width:auto;margin-right:8px">首页推荐</label><div class="field"><label>排序</label><input data-item-section="product" data-key="sortOrder" type="number" value="'+esc(item.sortOrder||0)+'"></div><div class="field"><label>SEO 标题</label><input data-item-section="product" data-key="seo.title" value="'+esc(item.seo?.title||'')+'"></div><div class="field"><label>SEO 描述</label><textarea data-item-section="product" data-key="seo.description">'+esc(item.seo?.description||'')+'</textarea></div><div class="field"><label>SEO 关键词</label><input data-item-section="product" data-key="seo.keywords" value="'+esc(item.seo?.keywords||'')+'"></div><div class="field"><label>SEO 分享图</label><input data-item-section="product" data-key="seo.image" value="'+esc(item.seo?.image||'')+'"></div><button class="save-current" id="saveCurrent">保存当前产品</button><button class="danger" data-delete="product">删除当前产品</button></div></div></div>';
     }
     function renderStatic(slug) {
       state.selected.staticPage = slug; let page = state.content.staticPages.find(p => p.slug === slug); if (!page) { page = { slug, title: slug, hero:{title:slug,description:''}, body:'', sections:{}, seo:{title:slug,description:''} }; state.content.staticPages.push(page); }
@@ -2071,7 +2303,7 @@ function renderAdminPage(bootstrap, options = {}) {
         ? '<div class="field"><label>顶部列表标题</label><input data-static-key="sections.introTitle" value="'+esc(page.sections?.introTitle||'')+'"></div><div class="field"><label>顶部列表描述</label><textarea data-static-key="sections.introDescription">'+esc(page.sections?.introDescription||'')+'</textarea></div><div class="grid2"><div class="field"><label>二级导航标题</label><input data-static-key="sections.sideNavTitle" value="'+esc(page.sections?.sideNavTitle||'方案导航')+'"></div><div class="field"><label>商业架构标题</label><input data-static-key="sections.architectureTitle" value="'+esc(page.sections?.architectureTitle||'隐形缝隙式系统架构')+'"></div></div><div class="grid2"><div class="field"><label>详情按钮文字</label><input data-static-key="sections.ctaLabel" value="'+esc(page.sections?.ctaLabel||'查看详细技术手册')+'"></div><div class="field"><label>详情按钮链接</label><input data-static-key="sections.ctaHref" value="'+esc(page.sections?.ctaHref||'/support/')+'"></div></div><div class="grid2"><div class="field"><label>侧栏咨询标题</label><input data-static-key="sections.adviceTitle" value="'+esc(page.sections?.adviceTitle||'需要专业选型建议？')+'"></div><div class="field"><label>技术提示文字</label><input data-static-key="sections.detailNote" value="'+esc(page.sections?.detailNote||'后台可继续补充该节点的技术说明。')+'"></div></div><div class="grid2"><div class="field"><label>侧栏主按钮</label><input data-static-key="sections.advicePrimaryLabel" value="'+esc(page.sections?.advicePrimaryLabel||'咨询方案专家')+'"></div><div class="field"><label>侧栏主按钮链接</label><input data-static-key="sections.advicePrimaryHref" value="'+esc(page.sections?.advicePrimaryHref||'/support/')+'"></div></div><div class="grid2"><div class="field"><label>侧栏次按钮</label><input data-static-key="sections.adviceSecondaryLabel" value="'+esc(page.sections?.adviceSecondaryLabel||'下载全线目录')+'"></div><div class="field"><label>侧栏次按钮链接</label><input data-static-key="sections.adviceSecondaryHref" value="'+esc(page.sections?.adviceSecondaryHref||'/products/')+'"></div></div>'+staticObjectList('方案长页面分区', 'sections.solutionSections', [['id','锚点 ID，例如 sol-sec-1'],['number','编号'],['navLabel','导航标签'],['title','标题'],['description','场景说明','textarea'],['image','图片 URL','image'],['videoImage','视频封面 URL','image'],['videoUrl','视频 URL','video'],['videoCaption','视频说明'],['focusTitle','重点标题'],['focusDescription','重点说明','textarea'],['ctaLabel','当前分区按钮文字'],['ctaHref','当前分区按钮链接'],['bullets','要点，每行一条','textarea']])+staticObjectList('商业系统架构卡片', 'sections.systemCards', [['step','步骤'],['title','说明','textarea']])
           : '';
       const iconFields = ['warranty','install'].includes(slug) ? '<div class="field"><label>页面图标</label><input data-static-key="sections.icon" value="'+esc(page.sections?.icon||'')+'"></div>' : '';
-      editor.innerHTML = title(page.title || slug) + '<input data-static-key="slug" type="hidden" value="'+esc(page.slug)+'"><div class="field"><label>页面标题</label><input data-static-key="title" value="'+esc(page.title||'')+'"></div><div class="field"><label>首屏眉标</label><input data-static-key="hero.eyebrow" value="'+esc(page.hero?.eyebrow||'')+'"></div><div class="field"><label>首屏标题</label><input data-static-key="hero.title" value="'+esc(page.hero?.title||'')+'"></div><div class="field"><label>首屏描述</label><textarea data-static-key="hero.description">'+esc(page.hero?.description||'')+'</textarea></div>'+staticMediaField('首屏背景图', 'hero.backgroundImage', 'image/*')+staticMediaField('首屏背景视频', 'hero.backgroundVideo', 'video/*')+aboutFields+solutionFields+iconFields+'<div class="field"><label>正文内容</label><textarea data-static-key="body" rows="10">'+esc(page.body||'')+'</textarea><p class="small">可输入正文文本，换行会保留；需要加粗或小标题时也可以使用少量 HTML。</p></div><div class="field"><label>SEO 标题</label><input data-static-key="seo.title" value="'+esc(page.seo?.title||'')+'"></div><div class="field"><label>SEO 描述</label><textarea data-static-key="seo.description">'+esc(page.seo?.description||'')+'</textarea></div><div class="field"><label>SEO 关键词</label><input data-static-key="seo.keywords" value="'+esc(page.seo?.keywords||'')+'"></div><div class="field"><label>SEO 分享图</label><input data-static-key="seo.image" value="'+esc(page.seo?.image||'')+'"></div>'+saveButton()+'</div>';
+      editor.innerHTML = title(page.title || slug) + '<input data-static-key="slug" type="hidden" value="'+esc(page.slug)+'"><label class="field"><input data-static-key="enabled" type="checkbox" '+(page.enabled!==false?'checked':'')+' style="width:auto;margin-right:8px">启用页面</label><div class="field"><label>页面标题</label><input data-static-key="title" value="'+esc(page.title||'')+'"></div><div class="field"><label>首屏眉标</label><input data-static-key="hero.eyebrow" value="'+esc(page.hero?.eyebrow||'')+'"></div><div class="field"><label>首屏标题</label><input data-static-key="hero.title" value="'+esc(page.hero?.title||'')+'"></div><div class="field"><label>首屏描述</label><textarea data-static-key="hero.description">'+esc(page.hero?.description||'')+'</textarea></div>'+staticMediaField('首屏背景图', 'hero.backgroundImage', 'image/*')+staticMediaField('首屏背景视频', 'hero.backgroundVideo', 'video/*')+aboutFields+solutionFields+iconFields+'<div class="field"><label>正文内容</label><textarea data-static-key="body" rows="10">'+esc(page.body||'')+'</textarea><p class="small">可输入正文文本，换行会保留；需要加粗或小标题时也可以使用少量 HTML。</p></div><div class="field"><label>SEO 标题</label><input data-static-key="seo.title" value="'+esc(page.seo?.title||'')+'"></div><div class="field"><label>SEO 描述</label><textarea data-static-key="seo.description">'+esc(page.seo?.description||'')+'</textarea></div><div class="field"><label>SEO 关键词</label><input data-static-key="seo.keywords" value="'+esc(page.seo?.keywords||'')+'"></div><div class="field"><label>SEO 分享图</label><input data-static-key="seo.image" value="'+esc(page.seo?.image||'')+'"></div>'+saveButton()+'</div>';
     }
     function renderMedia() { editor.innerHTML = title('媒体库') + '<div class="field"><label>上传媒体</label><input type="file" data-upload-media accept="image/*,video/*,.pdf,.zip,.dwg,.dxf"><p class="small">删除前会检查官网引用，仍被使用的素材不允许删除。</p></div><div class="media-grid">'+(state.data.media||[]).map(m=>'<div class="media-item">'+(m.type==='video'?'<video src="'+esc(m.url)+'" controls></video>':m.type==='image'?'<img src="'+esc(m.url)+'" alt="">':'<div style="height:130px;display:grid;place-items:center;background:#eef3f8">文件</div>')+'<div>'+esc(m.name)+'<br><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><button class="ghost" data-copy="'+esc(m.url)+'">复制地址</button><button class="ghost" data-media-references="'+esc(m.id)+'">查看引用</button><button class="danger" data-delete-media="'+esc(m.id)+'">删除</button></div></div></div>').join('')+'</div></div>'; }
     function renderFallbackVersions() {
@@ -2125,8 +2357,8 @@ function renderAdminPage(bootstrap, options = {}) {
       } finally { state.busy = false; syncBusy(); }
     }
     function renderLeads() { const leads = state.data.leads||[]; const rows = leads.map((lead,i)=>'<div class="card"><div class="card-head"><span>'+esc(lead.name||'未命名')+' · '+esc(lead.contactInfo||lead.phone||lead.email||'')+'</span><button class="ghost" data-select-lead="'+i+'">编辑</button></div><p class="small">'+esc(lead.email||lead.phone||'')+'<br>'+esc(lead.message||'')+'</p></div>').join(''); const lead = leads[state.selected.lead] || {}; editor.innerHTML = title('客户咨询') + rows + '<div class="rule"></div><input data-lead-key="id" type="hidden" value="'+esc(lead.id||'')+'"><div class="grid2"><div class="field"><label>状态</label><input data-lead-key="status" value="'+esc(lead.status||'新咨询')+'"></div><div class="field"><label>优先级</label><input data-lead-key="priority" value="'+esc(lead.priority||'普通')+'"></div></div><div class="field"><label>内部备注</label><textarea data-lead-key="internalNotes">'+esc(lead.internalNotes||'')+'</textarea></div>'+saveButton()+'</div>'; }
-    function sectionForActive() { if (['allContent','seo'].includes(state.active)) return ['content', state.content]; if (state.active.startsWith('home')) return ['home', state.content.home]; if (state.active === 'productCenter') return ['productCenter', state.content.productCenter]; if (state.active === 'support') return ['support', state.content.support]; if (['site','navigation','footer','social','cookie','chat'].includes(state.active)) return ['site', state.content.site]; if (['about','solutions','warranty','install','privacy','agreement','faqPage'].includes(state.active)) return ['staticPage', state.content.staticPages.find(p => p.slug === state.selected.staticPage)]; return [state.active, null]; }
-    function collectItem(section) { const data = {}; editor.querySelectorAll('[data-item-section="'+section+'"]').forEach(el => { let value = el.type === 'checkbox' ? el.checked : el.value; if (['sortOrder'].includes(el.dataset.key)) value = Number(value||0); if (['galleryImages','features'].includes(el.dataset.key)) value = value.split('\\n').map(s=>s.trim()).filter(Boolean); if (el.dataset.key === 'specifications') value = value.split('\\n').map(s=>s.trim()).filter(Boolean).map(s=>{const [label,...rest]=s.split(/[：:]/); return {label:label||'', value:rest.join('：')||''};}); if (el.dataset.key === 'downloads') value = value.split('\\n').map(s=>s.trim()).filter(Boolean).map(s=>{const [label,...rest]=s.split(/[：:]/); return {label:label||'', url:rest.join(':')||''};}); setNested(data, el.dataset.key, value); }); return data; }
+    function sectionForActive() { if (['allContent','seo'].includes(state.active)) return ['content', state.content]; if (state.active.startsWith('home')) return ['home', state.content.home]; if (state.active === 'productCenter') return ['productCenter', state.content.productCenter]; if (state.active === 'support') return ['support', state.content.support]; if (['site','navigation','footer','social','cookie','chat'].includes(state.active)) return ['site', state.content.site]; if (['about','aboutManufacturing','aboutQuality','solutions','warranty','install','privacy','agreement','faqPage'].includes(state.active)) return ['staticPage', state.content.staticPages.find(p => p.slug === state.selected.staticPage)]; return [state.active, null]; }
+    function collectItem(section) { const data = {}; editor.querySelectorAll('[data-item-section="'+section+'"]').forEach(el => { let value = el.type === 'checkbox' ? el.checked : el.value; if (['sortOrder'].includes(el.dataset.key)) value = Number(value||0); if (['galleryImages','galleryVideos','features'].includes(el.dataset.key)) value = value.split('\\n').map(s=>s.trim()).filter(Boolean); if (el.dataset.key === 'specifications') value = value.split('\\n').map(s=>s.trim()).filter(Boolean).map(s=>{const [label,...rest]=s.split(/[：:]/); return {label:label||'', value:rest.join('：')||''};}); if (el.dataset.key === 'downloads') value = value.split('\\n').map(s=>s.trim()).filter(Boolean).map(s=>{const [label,...rest]=s.split(/[：:]/); return {label:label||'', url:rest.join(':')||''};}); setNested(data, el.dataset.key, value); }); return data; }
     function setNested(obj, path, value) { const keys = path.split('.'); let cur = obj; keys.slice(0,-1).forEach(k=>{cur[k] ||= {}; cur = cur[k];}); cur[keys.at(-1)] = value; }
     async function uploadAsset(file) { const fd = new FormData(); fd.append('file', file); const res = await fetch('/site-admin-api/upload', { method:'POST', body: fd }); const data = await res.json(); if (!res.ok) throw new Error(data.error?.message || '上传失败'); state.data.media = (await (await fetch('/site-admin-api/media')).json()).data; return data.data; }
     async function upload(file) { return (await uploadAsset(file)).url; }
@@ -2243,7 +2475,7 @@ function renderAdminPage(bootstrap, options = {}) {
     editor.addEventListener('input', (event) => { const el = event.target; if (el.dataset.path) setPath(state.content, el.dataset.path, el.type==='checkbox'?el.checked:el.value); if (el.dataset.listPath) setPath(state.content, el.dataset.listPath, el.value.split('\\n').map(s=>s.trim()).filter(Boolean)); });
     editor.addEventListener('input', (event) => { const el = event.target; if (!el.dataset.configPath) return; setPath(state.content, el.dataset.configPath, 'configNumber' in el.dataset ? (el.value === '' ? 0 : Number(el.value)) : el.value); });
     editor.addEventListener('change', async (event) => { const el = event.target; if (el.dataset.configPath && el.type === 'checkbox') setPath(state.content, el.dataset.configPath, el.checked); if (el.dataset.configUpload && el.files[0]) { setPath(state.content, el.dataset.configUpload, await upload(el.files[0])); render(); } });
-    editor.addEventListener('change', async (event) => { const el = event.target; if (el.dataset.uploadTarget && el.files[0]) setPath(state.content, el.dataset.uploadTarget, await upload(el.files[0])); if (el.dataset.itemUpload && el.files[0]) { const input = editor.querySelector('[data-key="'+el.dataset.itemUpload+'"]'); input.value = await upload(el.files[0]); input.dispatchEvent(new Event('input',{bubbles:true})); } if ('itemGalleryUpload' in el.dataset && el.files?.length) { const input = editor.querySelector('[data-key="galleryImages"]'); const urls=[]; for (const file of el.files) urls.push(await upload(file)); input.value = [input.value, ...urls].filter(Boolean).join('\\n'); input.dispatchEvent(new Event('input',{bubbles:true})); } if ('itemDownloadUpload' in el.dataset && el.files[0]) { const asset = await uploadAsset(el.files[0]); const input = editor.querySelector('[data-key="downloads"]'); input.value = [input.value, (asset.name || '下载资料') + '：' + asset.url].filter(Boolean).join('\\n'); input.dispatchEvent(new Event('input',{bubbles:true})); } if (el.dataset.staticUpload && el.files[0]) { const input = editor.querySelector('[data-static-key="'+el.dataset.staticUpload+'"]'); input.value = await upload(el.files[0]); input.dispatchEvent(new Event('input',{bubbles:true})); } if (el.dataset.staticObjectUploadKey && el.files[0]) { const page=selectedStaticPage(); const box=el.closest('[data-static-object-list]'); const arr=byPath(page,box.dataset.staticObjectList)||[]; const index=Number(el.dataset.staticObjectUploadIndex); arr[index] ||= {}; arr[index][el.dataset.staticObjectUploadKey]=await upload(el.files[0]); setNested(page,box.dataset.staticObjectList,arr); markDirty(); render(); } if ('uploadMedia' in el.dataset && el.files[0]) { await upload(el.files[0]); renderMedia(); } });
+    editor.addEventListener('change', async (event) => { const el = event.target; if (el.dataset.uploadTarget && el.files[0]) setPath(state.content, el.dataset.uploadTarget, await upload(el.files[0])); if (el.dataset.itemUpload && el.files[0]) { const input = editor.querySelector('[data-key="'+el.dataset.itemUpload+'"]'); input.value = await upload(el.files[0]); input.dispatchEvent(new Event('input',{bubbles:true})); } if ('itemGalleryUpload' in el.dataset && el.files?.length) { const input = editor.querySelector('[data-key="galleryImages"]'); const urls=[]; for (const file of el.files) urls.push(await upload(file)); input.value = [input.value, ...urls].filter(Boolean).join('\\n'); input.dispatchEvent(new Event('input',{bubbles:true})); } if ('itemGalleryVideoUpload' in el.dataset && el.files?.length) { const input = editor.querySelector('[data-key="galleryVideos"]'); const urls=[]; for (const file of el.files) urls.push(await upload(file)); input.value = [input.value, ...urls].filter(Boolean).join('\\n'); input.dispatchEvent(new Event('input',{bubbles:true})); } if ('itemDownloadUpload' in el.dataset && el.files[0]) { const asset = await uploadAsset(el.files[0]); const input = editor.querySelector('[data-key="downloads"]'); input.value = [input.value, (asset.name || '下载资料') + '：' + asset.url].filter(Boolean).join('\\n'); input.dispatchEvent(new Event('input',{bubbles:true})); } if (el.dataset.staticUpload && el.files[0]) { const input = editor.querySelector('[data-static-key="'+el.dataset.staticUpload+'"]'); input.value = await upload(el.files[0]); input.dispatchEvent(new Event('input',{bubbles:true})); } if (el.dataset.staticObjectUploadKey && el.files[0]) { const page=selectedStaticPage(); const box=el.closest('[data-static-object-list]'); const arr=byPath(page,box.dataset.staticObjectList)||[]; const index=Number(el.dataset.staticObjectUploadIndex); arr[index] ||= {}; arr[index][el.dataset.staticObjectUploadKey]=await upload(el.files[0]); setNested(page,box.dataset.staticObjectList,arr); markDirty(); render(); } if ('uploadMedia' in el.dataset && el.files[0]) { await upload(el.files[0]); renderMedia(); } });
     editor.addEventListener('click', async (event) => {
       const button = event.target.closest('[data-media-references],[data-delete-media]');
       if (!button) return;
@@ -2285,7 +2517,7 @@ function renderAdminPage(bootstrap, options = {}) {
       button.click();
     }, true);
     editor.addEventListener('click', async (event) => { const btn = event.target.closest('button'); if (!btn) return; if (btn.id === 'generateSeo') { generateSeo().catch(showError); return; } if (btn.dataset.createFallback !== undefined) { createFallbackVersion().catch(showError); return; } if (btn.dataset.activateFallback) { activateFallbackVersion(btn.dataset.activateFallback).catch(showError); return; } if (btn.dataset.deleteFallback) { deleteFallbackVersion(btn.dataset.deleteFallback).catch(showError); return; } if (btn.id === 'saveCurrent') saveCurrent({ publish: false }).catch(showError); if (btn.dataset.select) { state.selected[btn.dataset.select] = Number(btn.dataset.index); render(); const nextPreview = selectedPreview(btn.dataset.select); if (nextPreview) refreshPreview(nextPreview); } if (btn.dataset.selectLead) { state.selected.lead = Number(btn.dataset.selectLead); renderLeads(); refreshPreview('/support/#support-contact'); } if (btn.dataset.new) { const type=btn.dataset.new; if(type==='category') state.content.categories.push({id:'',name:'新产品品类',slug:'',description:'',coverImage:'',heroVideo:'',sortOrder:0,seo:{title:'',description:''}}); if(type==='product') state.content.products.push({id:'',name:'新产品',slug:'',categorySlug:state.content.categories[0]?.slug||'',coverImage:'',galleryImages:[],videoUrl:'',summary:'',features:[],specifications:[],downloads:[],body:'',isFeatured:false,sortOrder:0,seo:{title:'',description:''}}); state.selected[type] = state.content[type === 'category' ? 'categories' : 'products'].length - 1; render(); markDirty(); refreshPreview(previewForNav(state.active, state.previewPath)); } if (btn.dataset.delete) { if (state.busy) return; state.busy = true; clearError(); syncBusy(); try { const type=btn.dataset.delete; const data=collectItem(type); data._delete=true; const response=await fetch('/site-admin-api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section:type,data,revision:state.data.contentRevision})}); const payload=await response.json(); if(!response.ok) throw new Error(payload.error?.message||'删除失败'); state.data=payload.data; state.content=payload.data.content; state.selected[type]=0; render(); await publishSite(); } finally { state.busy = false; syncBusy(); } } if (btn.dataset.copy) navigator.clipboard?.writeText(btn.dataset.copy); if (btn.dataset.addPair) { const arr=byPath(state.content,btn.dataset.addPair)||[]; arr.push({label:'',href:''}); setPath(state.content,btn.dataset.addPair,arr); render(); } if (btn.dataset.removePair) { const box=btn.closest('[data-pair-list]'); const arr=byPath(state.content,box.dataset.pairList)||[]; arr.splice(Number(btn.dataset.removePair),1); setPath(state.content,box.dataset.pairList,arr); render(); } if (btn.dataset.addObject) { const arr=byPath(state.content,btn.dataset.addObject)||[]; arr.push({title:'',description:'',icon:''}); setPath(state.content,btn.dataset.addObject,arr); render(); } if (btn.dataset.removeObject) { const box=btn.closest('[data-object-list]'); const arr=byPath(state.content,box.dataset.objectList)||[]; arr.splice(Number(btn.dataset.removeObject),1); setPath(state.content,box.dataset.objectList,arr); render(); } if (btn.dataset.addStaticObject) { const page=selectedStaticPage(); const arr=byPath(page,btn.dataset.addStaticObject)||[]; arr.push({}); setNested(page,btn.dataset.addStaticObject,arr); markDirty(); render(); } if (btn.dataset.removeStaticObject) { const page=selectedStaticPage(); const box=btn.closest('[data-static-object-list]'); const arr=byPath(page,box.dataset.staticObjectList)||[]; arr.splice(Number(btn.dataset.removeStaticObject),1); setNested(page,box.dataset.staticObjectList,arr); markDirty(); render(); } });
-    editor.addEventListener('input', (event) => { const el = event.target; const pairBox = el.closest('[data-pair-list]'); if (pairBox && el.dataset.pairIndex) { const arr=byPath(state.content,pairBox.dataset.pairList)||[]; arr[Number(el.dataset.pairIndex)] ||= {}; arr[Number(el.dataset.pairIndex)][el.dataset.pairKey]=el.value; markDirty(); } const objBox = el.closest('[data-object-list]'); if (objBox && el.dataset.objectIndex) { const arr=byPath(state.content,objBox.dataset.objectList)||[]; arr[Number(el.dataset.objectIndex)] ||= {}; arr[Number(el.dataset.objectIndex)][el.dataset.objectKey]=el.value; markDirty(); } const staticObjBox = el.closest('[data-static-object-list]'); if (staticObjBox && el.dataset.staticObjectIndex) { const page=selectedStaticPage(); const arr=byPath(page,staticObjBox.dataset.staticObjectList)||[]; arr[Number(el.dataset.staticObjectIndex)] ||= {}; arr[Number(el.dataset.staticObjectIndex)][el.dataset.staticObjectKey]=el.value; setNested(page,staticObjBox.dataset.staticObjectList,arr); markDirty(); } if (el.dataset.staticKey) { const page=state.content.staticPages.find(p=>p.slug===state.selected.staticPage); setNested(page, el.dataset.staticKey, el.value); markDirty(); } });
+    editor.addEventListener('input', (event) => { const el = event.target; const pairBox = el.closest('[data-pair-list]'); if (pairBox && el.dataset.pairIndex) { const arr=byPath(state.content,pairBox.dataset.pairList)||[]; arr[Number(el.dataset.pairIndex)] ||= {}; arr[Number(el.dataset.pairIndex)][el.dataset.pairKey]=el.value; markDirty(); } const objBox = el.closest('[data-object-list]'); if (objBox && el.dataset.objectIndex) { const arr=byPath(state.content,objBox.dataset.objectList)||[]; arr[Number(el.dataset.objectIndex)] ||= {}; arr[Number(el.dataset.objectIndex)][el.dataset.objectKey]=el.value; markDirty(); } const staticObjBox = el.closest('[data-static-object-list]'); if (staticObjBox && el.dataset.staticObjectIndex) { const page=selectedStaticPage(); const arr=byPath(page,staticObjBox.dataset.staticObjectList)||[]; arr[Number(el.dataset.staticObjectIndex)] ||= {}; arr[Number(el.dataset.staticObjectIndex)][el.dataset.staticObjectKey]=el.value; setNested(page,staticObjBox.dataset.staticObjectList,arr); markDirty(); } if (el.dataset.staticKey) { const page=state.content.staticPages.find(p=>p.slug===state.selected.staticPage); setNested(page, el.dataset.staticKey, el.type==='checkbox'?el.checked:el.value); markDirty(); } });
     editor.addEventListener('click', (event) => {
       const btn = event.target.closest('button');
       if (!btn || (!('configApplyJson' in btn.dataset) && !btn.dataset.configAdd && !('configRemoveParent' in btn.dataset))) return;
@@ -2392,15 +2624,19 @@ async function serveFile(res, file, cache = false) {
 /** 所有响应统一安全头：CSP 按控制台/官网/客服三个来源收敛。 */
 function applySecurityHeaders(res) {
   const connectSources = new Set(["'self'", SITE_ORIGIN, PUBLIC_ORIGIN]);
+  if (configuredSiteOrigin) connectSources.add(configuredSiteOrigin);
   try {
     connectSources.add(new URL(SERVICEBRIDGE_API_URL).origin);
   } catch {}
-  const frameSources = new Set(["'self'", SITE_ORIGIN]);
+  const frameSources = new Set(["'self'", SITE_ORIGIN, 'https://www.youtube-nocookie.com']);
+  if (configuredSiteOrigin) frameSources.add(configuredSiteOrigin);
   const csp = [
     "default-src 'self'",
     "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
+    "style-src 'self'",
+    "style-src-attr 'unsafe-inline'",
     "img-src 'self' data: blob: https: http:",
+    "media-src 'self' blob: https: http:",
     "font-src 'self' data:",
     `connect-src ${[...connectSources].join(' ')}`,
     `frame-src ${[...frameSources].join(' ')}`,
@@ -2435,7 +2671,7 @@ function adminOriginAllowed(req, pathname) {
   if (pathname === '/site-admin-api/leads' || pathname === '/site-admin-api/analytics/visit') return true;
   const origin = String(req.headers.origin || '').replace(/\/$/, '');
   if (!origin) return true; // 命令行/自动化工具不带 Origin
-  if (ADMIN_CORS_ALLOWED_ORIGINS.has(origin)) return true;
+  if (ADMIN_WRITE_ALLOWED_ORIGINS.has(origin)) return true;
   // 控制台自身的来源必须放行：admin-server 就是控制台的宿主，「同源」请求不可能是 CSRF。
   // 之前只比对 ADMIN_CORS_ALLOWED_ORIGINS（那是给官网跨域用的），一旦没把控制台地址写进去，
   // 浏览器里所有写操作（保存内容、上传素材、AI 设置、营业时间、推送、提醒…）都会 403。
@@ -2452,7 +2688,9 @@ function isSameOriginRequest(req, origin) {
   }
   if (!originHost) return false;
   const candidates = new Set();
-  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const forwardedHost = ADMIN_TRUST_PROXY
+    ? String(req.headers['x-forwarded-host'] || '').split(',')[0].trim()
+    : '';
   const host = String(req.headers.host || '').trim();
   if (host) candidates.add(host);
   if (forwardedHost) candidates.add(forwardedHost);
@@ -2599,6 +2837,35 @@ async function handleAdminApi(req, res, pathname) {
     json(res, 401, { error: { message: '请先登录。' } });
     return true;
   }
+  if (pathname === '/site-admin-api/security-settings') {
+    if (req.method === 'GET') {
+      json(res, 200, { data: await readSecuritySettings() });
+      return true;
+    }
+    if (req.method === 'PATCH') {
+      const body = await bodyJson(req).catch(() => null);
+      const candidate = Number(body?.preview_ttl_minutes);
+      if (!Number.isFinite(candidate) || candidate < 1 || candidate > 1440) {
+        json(res, 400, { error: { message: 'preview_ttl_minutes 必须是 1–1440 的整数。' } });
+        return true;
+      }
+      const settings = { previewTtlMinutes: Math.round(candidate) };
+      await platformStore.saveRuntimeSetting(SECURITY_SETTINGS_KEY, { config: settings });
+      void recordSystemEvent({
+        category: 'admin',
+        level: 'info',
+        action: 'security.settings',
+        message: `更新安全策略：预览有效期 ${settings.previewTtlMinutes} 分钟`,
+        method: req.method,
+        path: pathname,
+        ip: resolveAdminClient(req).ip,
+        userAgent: String(req.headers['user-agent'] || ''),
+        statusCode: 200
+      });
+      json(res, 200, { data: { previewTtlMinutes: settings.previewTtlMinutes } });
+      return true;
+    }
+  }
   return false;
 }
 
@@ -2650,11 +2917,15 @@ const server = http.createServer(async (req, res) => {
       return serveFile(res, file, false);
     }
     if (pathname === '/openapi.json' && req.method === 'GET') {
+      if (!verifySession(req)) {
+        json(res, 401, { error: { message: '请先登录后再查看后台 OpenAPI 文档。' } });
+        return;
+      }
       json(res, 200, createOpenApiDocument(PUBLIC_ORIGIN));
       return;
     }
     if (pathname === '/metrics' && req.method === 'GET') {
-      if (!ADMIN_METRICS_BEARER_TOKEN || req.headers.authorization !== `Bearer ${ADMIN_METRICS_BEARER_TOKEN}`) {
+      if (!ADMIN_METRICS_BEARER_TOKEN || !timingSafeStringEqual(req.headers.authorization || '', `Bearer ${ADMIN_METRICS_BEARER_TOKEN}`)) {
         send(res, 404, 'not found');
         return;
       }
@@ -2694,6 +2965,44 @@ const server = http.createServer(async (req, res) => {
         detail: { origin: String(req.headers.origin || '') }
       });
       json(res, 403, { error: { message: '请求来源不被允许。' } });
+      return;
+    }
+    if (requiresCsrf(req, pathname) && !verifyCsrf(req)) {
+      await recordSystemEvent({
+        category: 'security',
+        level: 'warning',
+        action: 'security.csrf_rejected',
+        message: `缺少或错误的 CSRF 令牌：${pathname}`,
+        method: req.method || '',
+        path: pathname,
+        ip: resolveAdminClient(req).ip,
+        userAgent: String(req.headers['user-agent'] || ''),
+        statusCode: 403
+      });
+      json(res, 403, { error: { message: 'CSRF 校验失败，请刷新页面后重试。' } });
+      return;
+    }
+    // Caddy forward_auth 专用：校验预览路径第一段是否为当前构建的随机 token。
+    // 该接口只认 token，不依赖后台 Cookie（预览在官网域名下打开）。
+    if (pathname === '/site-admin-api/preview-grant' && req.method === 'GET') {
+      if (!verifySession(req)) {
+        json(res, 401, { error: { message: '请先登录。' } });
+        return;
+      }
+      const settings = await readSecuritySettings();
+      setPreviewAccessCookie(res, settings.previewTtlMinutes * 60 * 1000);
+      json(res, 200, { ok: true, preview_ttl_minutes: settings.previewTtlMinutes });
+      return;
+    }
+    if (pathname === '/site-admin-api/preview-auth' && req.method === 'GET') {
+      const previewPath = url.searchParams.get('path') || '';
+      const match = previewPath.match(/^\/__preview\/([0-9a-f]{32})(?:\/|$)/);
+      const expected = await publishService.previewToken().catch(() => '');
+      if (!match || !expected || !timingSafeStringEqual(match[1], expected) || !verifyPreviewAccess(req)) {
+        send(res, 401, 'preview unauthorized');
+        return;
+      }
+      send(res, 204, '');
       return;
     }
     if (await handleAuth(req, res, pathname)) return;
@@ -2785,11 +3094,23 @@ const server = http.createServer(async (req, res) => {
 await ensureDirs();
 const initialContentRecord = await readContentRecord();
 const initialTranslations = new Map((await translationService.list()).map((item) => [item.locale, item]));
+const initialAutoSeo = await autoSeo.status();
+await autoSeo.resume();
+if ([...initialTranslations.values()].some((item) => item.status === 'ready')) scheduleTranslationRebuild();
+const translationSettings = await translationService.publicSettings();
+const canRetryUnconfigured = translationSettings.enabled && (
+  (translationSettings.apiKeyConfigured && Boolean(translationSettings.model)) ||
+  Boolean(await resolveAiProvider('translation'))
+);
 const resumeLocales = translationService.locales.filter((locale) => {
   const item = initialTranslations.get(locale);
-  return !item || item.sourceRevision !== initialContentRecord.revision || ['pending', 'running'].includes(item.status);
+  return !item || item.sourceRevision !== initialContentRecord.revision ||
+    ['pending', 'running', 'failed'].includes(item.status) ||
+    (item.status === 'unconfigured' && canRetryUnconfigured);
 });
-if (resumeLocales.length) await translationService.schedule(initialContentRecord.content, initialContentRecord.revision, resumeLocales);
+if (resumeLocales.length && !(initialAutoSeo?.status === 'pending' && initialAutoSeo.sourceRevision === initialContentRecord.revision)) {
+  await translationService.schedule(initialContentRecord.content, initialContentRecord.revision, resumeLocales);
+}
 void platformStore.pruneAdminSessions().catch(() => {});
 void platformStore.purgeSystemEvents({}).catch(() => {});
 setInterval(() => {
@@ -2797,6 +3118,10 @@ setInterval(() => {
   void platformStore.purgeSystemEvents({}).catch(() => {});
 }, 24 * 3600 * 1000).unref?.();
 
+// 限制慢请求/慢头攻击；大文件上传仍允许 5 分钟。
+server.requestTimeout = 5 * 60 * 1000;
+server.headersTimeout = 30 * 1000;
+server.keepAliveTimeout = 5 * 1000;
 server.listen(PORT, HOST, () => {
   console.log(`Astreva admin server listening on http://${HOST}:${PORT}`);
   console.log(`Login: http://${HOST}:${PORT}/admin-2fa`);

@@ -128,21 +128,25 @@ func (s *Service) StopPolicyLoop() {
 //
 // 幂等：同一会话的同一超时只告警一次，用 conversations.sla_state 记录 first_response / idle；
 // 客服真实回复或接管时会清空该标记，重新开始计时。
-// 遍历范围：未结束且已分配的会话（量小，直接用 AllConversations）。
+// 遍历范围：所有未结束的会话（量小，直接用 AllConversations）；首响与空闲 SLA 仅处理已分配会话。
 func (s *Service) RunPolicySweep(now time.Time) {
 	now = now.UTC()
 	s.purgeExpiredVisitorProfiles(now)
 	policy := s.store.ServicePolicy()
 	for _, conversation := range s.store.AllConversations() {
-		if conversation.Status == domain.ConversationClosed || strings.TrimSpace(conversation.AssignedAgentID) == "" {
+		if conversation.Status == domain.ConversationClosed {
 			continue
 		}
 		current := conversation
-		if updated, acted := s.sweepFirstResponse(policy, current, now); acted {
-			current = updated
-		}
-		if updated, acted := s.sweepIdle(policy, current, now); acted {
-			current = updated
+		// 首响提醒和客服空闲回退要求已有负责客服；静默自动关闭适用于所有
+		// 未结束会话，包括等待分配、无人在线创建的会话。
+		if strings.TrimSpace(current.AssignedAgentID) != "" {
+			if updated, acted := s.sweepFirstResponse(policy, current, now); acted {
+				current = updated
+			}
+			if updated, acted := s.sweepIdle(policy, current, now); acted {
+				current = updated
+			}
 		}
 		s.sweepAutoClose(policy, current, now)
 	}
@@ -318,7 +322,7 @@ func (s *Service) slaReleaseIdleConversationToQueue(conversation domain.Conversa
 	s.logger.Info("SLA 空闲回退排队", "conversation_id", released.ID, "reason", reason)
 }
 
-// sweepAutoClose 处理会话超时自动关闭（2c）：auto_close_idle_minutes>0 且双方最后消息距今超过该值时，
+// sweepAutoClose 处理会话超时自动关闭（2c）：auto_close_idle_minutes>0 且最近活动距今超过该值时，
 // 走既有 CloseConversation 流程（访客能收到"会话已结束"与评价入口），并写审计。
 // 已结束的会话在 RunPolicySweep 入口被跳过，不会重复执行。
 func (s *Service) sweepAutoClose(policy domain.ServicePolicy, conversation domain.Conversation, now time.Time) {

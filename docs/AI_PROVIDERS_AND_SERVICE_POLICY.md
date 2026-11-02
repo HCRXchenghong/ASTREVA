@@ -322,7 +322,9 @@ App 的「AI 建议」按钮同样按两者共同启用/禁用；控制台「客
 
 ---
 
-# 附录 B：开放 API 权限范围（批次 5）施工规格
+# 附录 B：开放 API 权限范围（批次 5，历史规格；现已关闭，不对外接入）
+
+> 开放 API 默认关闭，由后台「安全策略」开关控制；以下仅保留为内部实现记录。
 
 ## B1 现状
 开放 API（`/open/v1/*`）现有端点：`GET /me`、`GET|POST /conversations`、`GET /conversations/{id}`、`GET|POST /conversations/{id}/messages`、`POST /conversations/{id}/close`、`GET /ws`。
@@ -394,13 +396,13 @@ App 的「AI 建议」按钮同样按两者共同启用/禁用；控制台「客
 
 `node scripts/verify-ai-failover.mjs`（纯 Node，无新增依赖）对**真实运行中的**客服引擎执行一次可重复的故障转移验收：
 
-1. 用种子超级管理员登录 Go 引擎后台（`POST /api/admin/login`，默认 `superadmin` / `123456`）。
+1. 用超级管理员登录 Go 引擎后台（`POST /api/admin/login`）。账号/密码从环境变量 `ASTREVA_E2E_ADMIN_ACCOUNT` / `ASTREVA_E2E_ADMIN_PASSWORD`（或 `.env` 的 `SERVICEBRIDGE_ADMIN_PASSWORD`）读取；脚本不再内置默认口令。
 2. 记录当前 `GET /api/admin/ai-binding-targets` 与 `ai_keyword_priority`，在 `finally` 中**原样恢复**（含其它能力的候选）。
 3. 确保真实 MiMo 供应商存在（缺省 `https://api.xiaomimimo.com/v1` / `mimo-v2.6-flash`，密钥从 gitignored `.env` 的 `ASTREVA_E2E_MIMO_API_KEY` 读取），并用 `POST /api/admin/ai-providers/{id}/test` 验证连通。
 4. 造一个必然失败的候选：`http://127.0.0.1:9/v1`，`timeout_ms=3000`，连接被立即拒绝。
 5. 通过控制台同一接口 `PUT /api/admin/ai-binding-targets` 把 `reception` 链配成 `[broken@priority 0, mimo@priority 1]`。
 6. 临时把 `ai_keyword_priority` 设为 `ai_only`，经开放 API（`POST /open/v1/conversations` + `POST /open/v1/conversations/{id}/messages`）投递真实访客消息，轮询直到 AI 回复落库（≤90s）。
-7. 断言：确实产生 AI 回复；回复**不等于任何本地兜底文案**（从 Go 源码的 `fallbackReply` / `aiBusyText` / 拒答 / 超限文案提取，覆盖多语言）；`GET /api/admin/ai-providers/health` 中失败候选 `consecutive_failures >= 1`（或 `state=open`）且 `last_error` 指向死上游，MiMo 保持 `closed` 且 0 失败；任一断言失败则退出码非 0。
+7. 断言：确实产生 AI 回复；回复**不等于任何本地兜底文案**（从 Go 源码的 `aiBusyText` / 拒答 / 超限文案提取，覆盖多语言）；`GET /api/admin/ai-providers/health` 中失败候选 `consecutive_failures >= 1`（或 `state=open`）且 `last_error` 指向死上游，MiMo 保持 `closed` 且 0 失败；任一断言失败则退出码非 0。
 8. 输出中的密钥一律掩码为 `sk-****`，绝不打印明文。
 
 **Phase 2（熔断打开 + 跳过）**：把失败候选连续打到 `aiCircuitFailureThreshold = 3`，使 `state` 变为 `open`，并断言 `opened_until` 存在且剩余时间 > 0；随后在熔断打开期间再发一条消息，断言：MiMo 仍给出真实回复；失败候选 `consecutive_failures` **不再增长**（证明请求被跳过而非再次拨号）；`state` 仍为 `open` 且 `opened_until` 未被重置；引擎日志出现 `msg="AI 上游故障转移成功" attempted=1 skipped=1`（HTTP health 本身没有 skip 字段，`last_error` 在跳过时不更新，因此该日志行是唯一可观测的跳过信号）。

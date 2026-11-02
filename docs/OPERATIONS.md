@@ -2,11 +2,11 @@
 
 ## 存储切换
 
-生产 Compose 固定 `CMS_STORE_DRIVER=postgres` 和 `ADMIN_MEDIA_DRIVER=s3`。旧 JSON 运行数据不再由后台自动读取。首次升级使用下方一次性切换命令，核验通过后会删除旧 JSON 与本地媒体；新实例仅使用镜像内只读种子初始化空数据库。
+生产 Compose 固定 `CMS_STORE_DRIVER=postgres`；多机部署使用 `ADMIN_MEDIA_DRIVER=s3`，单机一键部署可使用 `ADMIN_MEDIA_DRIVER=local` + `ADMIN_ALLOW_LOCAL_MEDIA=true`。旧 JSON 运行数据不再由后台自动读取。首次升级使用下方一次性切换命令，核验通过后会删除旧 JSON 与本地媒体；新实例仅使用镜像内只读种子初始化空数据库。
 
 `DATA_ENCRYPTION_KEY` 会同时用于后台 TOTP 密钥的数据库加密。不得在上线后直接更换该值；如需轮换，先完成专门的数据重加密迁移。
 
-后台媒体默认使用 S3 兼容对象存储。上线前必须设置：
+多机/商业化大规模部署推荐 S3 兼容对象存储。此类部署上线前必须设置：
 
 - `ADMIN_MEDIA_DRIVER=s3`
 - `S3_BUCKET`
@@ -148,14 +148,14 @@ bash scripts/start-local-storage.sh
 ```bash
 # 1. 确认 .env.ubuntu 已设置 METRICS_BEARER_TOKEN 与 GRAFANA_ADMIN_PASSWORD
 # 2. 启动监控（不影响现有业务容器）
-docker compose --env-file deployments/ubuntu/.env.ubuntu --profile monitoring up -d
+docker compose -f deployments/ubuntu/docker-compose.ubuntu.yml --env-file deployments/ubuntu/.env.ubuntu --profile monitoring up -d
 
 # 查看状态 / 日志
-docker compose --env-file deployments/ubuntu/.env.ubuntu --profile monitoring ps
-docker compose --env-file deployments/ubuntu/.env.ubuntu --profile monitoring logs -f prometheus
+docker compose -f deployments/ubuntu/docker-compose.ubuntu.yml --env-file deployments/ubuntu/.env.ubuntu --profile monitoring ps
+docker compose -f deployments/ubuntu/docker-compose.ubuntu.yml --env-file deployments/ubuntu/.env.ubuntu --profile monitoring logs -f prometheus
 
 # 停止监控（业务容器不受影响）
-docker compose --env-file deployments/ubuntu/.env.ubuntu --profile monitoring down
+docker compose -f deployments/ubuntu/docker-compose.ubuntu.yml --env-file deployments/ubuntu/.env.ubuntu --profile monitoring down
 ```
 
 - Prometheus：`http://127.0.0.1:9090`（`PROMETHEUS_HOST_PORT`，默认只绑回环）。
@@ -180,7 +180,7 @@ docker compose --env-file deployments/ubuntu/.env.ubuntu --profile monitoring do
 后台自身还暴露：
 
 - 后台指标：`GET /metrics`，需 `Authorization: Bearer $ADMIN_METRICS_BEARER_TOKEN`（未配置时返回 404）。
-- 后台 OpenAPI：`GET /openapi.json`。
+- 后台 OpenAPI：`GET /openapi.json`（需管理员会话 Cookie，未登录返回 401）。
 - 审计日志：`GET /site-admin-api/audit-events`（需要管理员会话）。
 - 发布队列：`GET /site-admin-api/publish-jobs`（需要管理员会话）。
 
@@ -219,11 +219,15 @@ Go 客服引擎的 Postgres 存储会**在启动时自动补齐新增列**（`en
 不依赖 `migrations/001_init.sql`。为避免"只在内存存储跑过、上线才发现列缺失"这类问题，提供了一个真实库集成测试：
 
 ```bash
-docker run --rm -d --name astreva-pg-test -e POSTGRES_PASSWORD=test \
-  -e POSTGRES_DB=astreva_test -p 55432:5432 postgres:16-alpine
+# 只绑回环 + 随机口令；容器退出即删，避免测试库暴露到局域网。
+PG_TEST_PASSWORD="$(openssl rand -hex 16)"
+docker run --rm -d --name astreva-pg-test \
+  -e POSTGRES_PASSWORD="$PG_TEST_PASSWORD" -e POSTGRES_DB=astreva_test \
+  -p 127.0.0.1:55432:5432 postgres:16-alpine
+trap 'docker rm -f astreva-pg-test >/dev/null 2>&1 || true' EXIT
 sleep 3
 cd servicebridge/backend
-TEST_DATABASE_URL='postgres://postgres:test@127.0.0.1:55432/astreva_test?sslmode=disable' \
+TEST_DATABASE_URL="postgres://postgres:${PG_TEST_PASSWORD}@127.0.0.1:55432/astreva_test?sslmode=disable" \
   GOCACHE="${TMPDIR:-/tmp}/astreva-go-cache" go test ./internal/store/ -run TestPostgresAgentPreferences -count=1 -v
 docker rm -f astreva-pg-test
 ```

@@ -16,7 +16,7 @@ import (
 //   - sla_state=first_response / idle 各一个（状态为 ai_serving，不产生 takeover 告警）。
 func newPolicyAlertFixture(t *testing.T) (*Service, store.Store, domain.Agent, map[string]string) {
 	t.Helper()
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	// 关闭营业时间限制，保证 RequestHumanHandoff 的静默分配可用。
 	if _, err := st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false}); err != nil {
 		t.Fatalf("update business hours: %v", err)
@@ -183,7 +183,7 @@ func TestPolicyAlertsFieldsAndOrder(t *testing.T) {
 // TestPolicyAlertsSkipsFirstRespondedAndClosed：
 // 已有人工首响的 waiting 会话、已结束会话都不产生告警。
 func TestPolicyAlertsSkipsFirstRespondedAndClosed(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	if _, err := st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false}); err != nil {
 		t.Fatalf("update business hours: %v", err)
 	}

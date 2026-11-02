@@ -30,6 +30,8 @@ export PUBLIC_LEADS_ENDPOINT="${PUBLIC_LEADS_ENDPOINT:-$PUBLIC_ADMIN_URL/site-ad
 # 控制台自身（1337 生产式托管）与 vite 开发服务器（5174）也要在允许来源里：
 # 1337 属同源、已被 adminOriginAllowed 直接放行，但 5174 是真正的跨域，必须显式列出。
 export ADMIN_CORS_ALLOWED_ORIGINS="${ADMIN_CORS_ALLOWED_ORIGINS:-$PUBLIC_SITE_URL,http://127.0.0.1:1337,http://127.0.0.1:5174}"
+# Vite 控制台（5174）是跨域开发服务器，写接口需显式允许；生产默认只允许同源。
+export ADMIN_WRITE_ALLOWED_ORIGINS="${ADMIN_WRITE_ALLOWED_ORIGINS:-http://127.0.0.1:5174,http://localhost:5174}"
 export PUBLIC_SERVICEBRIDGE_URL="${PUBLIC_SERVICEBRIDGE_URL:-http://127.0.0.1:5173}"
 export SERVICEBRIDGE_CORS_ALLOWED_ORIGINS="${SERVICEBRIDGE_CORS_ALLOWED_ORIGINS:-http://127.0.0.1:4321,http://127.0.0.1:5173}"
 export CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-$SERVICEBRIDGE_CORS_ALLOWED_ORIGINS}"
@@ -67,7 +69,12 @@ if [[ -z "${DATA_ENCRYPTION_KEY:-}" || ${#DATA_ENCRYPTION_KEY} -lt 32 ]]; then
 fi
 export DATA_ENCRYPTION_KEY
 
-export HTTP_ADDR="${HTTP_ADDR:-0.0.0.0:8080}"
+# 默认只绑回环；需要局域网真机调试时显式设置 ASTREVA_ALLOW_LAN=1。
+if [[ "${ASTREVA_ALLOW_LAN:-0}" == "1" ]]; then
+  export HTTP_ADDR="${HTTP_ADDR:-0.0.0.0:8080}"
+else
+  export HTTP_ADDR="${HTTP_ADDR:-127.0.0.1:8080}"
+fi
 # 受限沙箱（以及部分 CI）禁止写默认的 ~/Library/Caches/go-build；把 Go 构建缓存放到可写目录。
 export GOCACHE="${GOCACHE:-${TMPDIR:-/tmp}/astreva-go-cache}"
 mkdir -p "$GOCACHE"
@@ -99,7 +106,11 @@ start_service frontend-static node scripts/static-server.mjs
 start_service admin npm run dev:admin
 start_service rebuild-webhook npm run rebuild:webhook
 start_service servicebridge-backend env DATABASE_URL="$SERVICEBRIDGE_DATABASE_URL" STORE_DRIVER="$STORE_DRIVER" DATA_ENCRYPTION_KEY="$DATA_ENCRYPTION_KEY" HTTP_ADDR="$HTTP_ADDR" CORS_ALLOWED_ORIGINS="$CORS_ALLOWED_ORIGINS" FRAME_ANCESTORS="$FRAME_ANCESTORS" npm run servicebridge:backend
-start_service servicebridge-user-web python3 -m http.server 5173 --bind 0.0.0.0 --directory "$ROOT_DIR/servicebridge/apps/user-web"
+if [[ "${ASTREVA_ALLOW_LAN:-0}" == "1" ]]; then
+  start_service servicebridge-user-web python3 -m http.server 5173 --bind 0.0.0.0 --directory "$ROOT_DIR/servicebridge/apps/user-web"
+else
+  start_service servicebridge-user-web python3 -m http.server 5173 --bind 127.0.0.1 --directory "$ROOT_DIR/servicebridge/apps/user-web"
+fi
 
 printf '[astreva] local stack launched. Logs are in %s\n' "$LOG_DIR"
 printf '[astreva] engine store: %s (%s)\n' "$STORE_DRIVER" "${SERVICEBRIDGE_DATABASE_URL:-unset}"

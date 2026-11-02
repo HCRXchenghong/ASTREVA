@@ -56,6 +56,7 @@ func (s *Service) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info("open api websocket subscribed", "app_id", apiApp.ID, "conversation_id", conversationID)
 	client := realtime.NewClient(realtime.RoleVisitor, conversationID, conversationID, conn, s.app.Hub(), s.rejectIncomingEvents, s.logger)
+	client.APIAppID = apiApp.ID
 	client.Run()
 }
 

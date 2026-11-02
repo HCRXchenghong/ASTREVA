@@ -183,8 +183,6 @@ func extension(mimeType string) string {
 		return ".wav"
 	case "audio/aac":
 		return ".aac"
-	case "application/vnd.android.package-archive":
-		return ".apk"
 	default:
 		return ""
 	}
@@ -192,6 +190,11 @@ func extension(mimeType string) string {
 
 func detectUploadMimeType(content []byte, declaredType, filename string) string {
 	detected := normalizeMimeType(http.DetectContentType(content))
+	// 不允许把 HTML/脚本伪装成图片或音频落盘；即使扩展名被强制为 .jpg，
+	// 也不应接受明显的文本/HTML 内容。
+	if strings.HasPrefix(detected, "text/") || detected == "application/xhtml+xml" || detected == "application/javascript" {
+		return ""
+	}
 	if extension(detected) != "" {
 		return detected
 	}

@@ -2,11 +2,14 @@
 import Icon from '../components/ui/Icon.astro';
 import Container from '../components/ui/Container.astro';
 import InnerPageHero from '../components/InnerPageHero.astro';
+import MediaCarousel from '../components/MediaCarousel';
+import { mediaItemsFor } from '../lib/media';
 import BaseLayout from '../layouts/BaseLayout.astro';
-import { localePath, localizeHref, type SiteLocale } from '../lib/i18n';
+import { localePath, localizeHref, safeHref, type SiteLocale } from '../lib/i18n';
 import { resolveIcon } from '../lib/icons';
 import { breadcrumbJsonLd, productJsonLd } from '../lib/seo';
 import { resolveVideoSource } from '../lib/video';
+import { productImage, productImages } from '../lib/default-images';
 import type { Category, Product, SiteContent } from '../lib/types';
 
 type Props = { content: SiteContent; locale: SiteLocale; product: Product; category: Category };
@@ -24,7 +27,13 @@ const video = resolveVideoSource(product.videoUrl);
 const isMp4Video = video.isFile;
 const downloads = product.downloads.filter((download) => download.url);
 const specifications = product.specifications.filter((spec) => spec.label || spec.value);
-const galleryImages = product.galleryImages.filter(Boolean);
+const configuredGalleryImages = product.galleryImages.filter(Boolean);
+const coverImage = productImage(product);
+const coverMedia = mediaItemsFor(product.mediaItems, { image: product.coverImage }, productImages(product), product.name);
+const galleryMedia = mediaItemsFor(product.galleryMediaItems, { image: configuredGalleryImages }, productImages(product), product.name);
+const videoMedia = mediaItemsFor(product.videoMediaItems, { video: [product.videoUrl || '', ...(product.galleryVideos || [])] }, productImages(product), product.name);
+const showVideoSection = product.videoMediaItems !== undefined || Boolean(product.videoUrl?.trim()) || Boolean(product.galleryVideos?.some((url) => url.trim()));
+const isPlaceholderCover = !product.coverImage?.trim();
 const localHref = (target: string) => localizeHref(locale, target) as string;
 const jsonLd = [
   productJsonLd(product, category, content.site),
@@ -39,13 +48,15 @@ const jsonLd = [
 
 <BaseLayout content={content} seo={product.seo} path={path} locale={locale} jsonLd={jsonLd}>
   <div class="w-full pt-24">
-    <InnerPageHero
+    <InnerPageHero locale={locale}
       id="product-page-hero"
       eyebrow={category.name}
       title={product.name}
       description={product.summary}
-      backgroundImage={product.coverImage || category.coverImage}
+      backgroundImage={product.coverImage}
       backgroundVideo={isMp4Video ? product.videoUrl : category.heroVideo}
+      mediaItems={product.mediaItems}
+      defaultImages={productImages(product)}
     />
     <div class="bg-gray-50 border-b border-gray-200">
       <Container class="py-4 flex items-center gap-2 text-sm text-gray-500 flex-wrap">
@@ -66,23 +77,12 @@ const jsonLd = [
       <Container class="flex flex-col lg:flex-row gap-16 items-center">
         <div class="lg:w-1/2">
           <div class="rounded-3xl overflow-hidden shadow-2xl border border-gray-100 aspect-[4/3] group relative">
-            {
-              product.coverImage ? (
-                <img
-                  src={product.coverImage}
-                  alt={product.name}
-                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-                />
-              ) : (
-                <div
-                  role="img"
-                  aria-label={product.name}
-                  class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"
-                >
-                  <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
-                </div>
-              )
-            }
+            <MediaCarousel locale={locale} client:visible items={coverMedia} alt={product.name} className="h-full w-full" fallbackImage={coverImage} />
+            {isPlaceholderCover && (
+              <span class="absolute bottom-4 left-4 rounded-full border border-white/25 bg-brand-950/80 px-3 py-1.5 text-[11px] font-bold tracking-wide text-white backdrop-blur">
+                {detail.placeholderImageLabel}
+              </span>
+            )}
             <div
               class="absolute inset-0 bg-linear-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"
             >
@@ -123,7 +123,7 @@ const jsonLd = [
             {
               downloads.map((download) => (
                 <a
-                  href={download.url}
+                  href={safeHref(download.url)}
                   class="bg-white border-2 border-gray-200 text-gray-700 hover:border-brand-500 hover:text-brand-500 px-8 py-4 rounded-xl font-bold transition-all flex items-center gap-2"
                 >
                   <Icon name={resolveIcon(downloadButtonIcon)} class="h-4 w-4" /> {download.label}
@@ -163,6 +163,13 @@ const jsonLd = [
               </div>
             )
           }
+          {
+            specifications.length === 0 && (
+              <p class="px-8 pt-8 text-sm leading-7 text-ink-500 md:px-10" role="status">
+                {detail.specsEmptyMessage}
+              </p>
+            )
+          }
           <div class={`p-8 md:p-10 ${specifications.length > 0 ? 'border-t border-gray-100 bg-gray-50/60' : ''}`}>
             <div class="mb-4 flex items-center gap-5">
               <Icon name={resolveIcon(detail.descriptionIcon, 'description')} class="h-9 w-9 shrink-0 text-brand-500" />
@@ -174,41 +181,21 @@ const jsonLd = [
       </Container>
     </section>
     {
-      galleryImages.length > 0 && (
+      galleryMedia.length > 0 && (
         <section id="product-gallery" class="py-20 bg-white scroll-mt-24">
           <Container>
             <h2 class="text-3xl font-extrabold text-gray-900 mb-10">{detail.galleryTitle}</h2>
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {galleryImages.map((image) => (
-                <div class="aspect-[4/3] rounded-2xl overflow-hidden border border-gray-100 shadow-sm">
-                  <img src={image} alt={product.name} class="h-full w-full object-cover" />
-                </div>
-              ))}
-            </div>
+            <MediaCarousel locale={locale} client:visible items={galleryMedia} alt={product.name} className="mx-auto aspect-[4/3] w-full max-w-4xl rounded-2xl shadow-sm" fallbackImage={coverImage} />
           </Container>
         </section>
       )
     }
     {
-      video.url && (
+      showVideoSection && videoMedia.length > 0 && (
         <section id="product-video" class="py-20 bg-gray-50 scroll-mt-24">
           <Container size="mid">
             <h2 class="text-3xl font-extrabold text-gray-900 mb-8 text-center">{detail.videoTitle}</h2>
-            <div
-              class={`overflow-hidden rounded-3xl border border-gray-100 bg-black shadow-xl ${video.isShorts ? 'mx-auto aspect-[9/16] max-w-[420px]' : 'aspect-video'}`}
-            >
-              {video.isFile ? (
-                <video src={video.url} controls playsinline preload="metadata" class="h-full w-full object-cover" />
-              ) : (
-                <iframe
-                  src={video.url}
-                  title={detail.videoTitle}
-                  class="h-full w-full border-0"
-                  allow="autoplay; encrypted-media; picture-in-picture"
-                  allowfullscreen
-                />
-              )}
-            </div>
+            <MediaCarousel locale={locale} client:visible items={videoMedia} alt={detail.videoTitle} className="aspect-video w-full rounded-3xl shadow-xl" fallbackImage={coverImage} />
           </Container>
         </section>
       )

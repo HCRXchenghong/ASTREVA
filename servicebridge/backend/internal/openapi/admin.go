@@ -173,6 +173,10 @@ func (s *Service) HandleAdminApp(w http.ResponseWriter, r *http.Request) {
 			mapStoreError(w, err)
 			return
 		}
+		if !updated.Enabled {
+			// 停用后立即断开该应用已建立的实时订阅。
+			s.app.Hub().DisconnectAPIApp(id)
+		}
 		s.recordAdminAudit(r, session, "api_app.update", id, "更新 API 授权："+updated.Name)
 		writeOpenJSON(w, http.StatusOK, map[string]any{"app": updated})
 	case http.MethodDelete:
@@ -185,6 +189,7 @@ func (s *Service) HandleAdminApp(w http.ResponseWriter, r *http.Request) {
 			mapStoreError(w, err)
 			return
 		}
+		s.app.Hub().DisconnectAPIApp(id)
 		s.recordAdminAudit(r, session, "api_app.delete", id, "删除 API 授权："+current.Name)
 		writeOpenJSON(w, http.StatusOK, map[string]any{"deleted": true})
 	default:
@@ -227,6 +232,8 @@ func (s *Service) HandleAdminAppResetKey(w http.ResponseWriter, r *http.Request)
 		mapStoreError(w, err)
 		return
 	}
+	// 旧 Key 立即失效：除了数据库哈希更新，还要断开旧 Key 建立的 WS 连接。
+	s.app.Hub().DisconnectAPIApp(id)
 	s.recordAdminAudit(r, session, "api_app.reset_key", id, "重置 API Key："+updated.Name)
 	writeOpenJSON(w, http.StatusOK, map[string]any{"app": updated, "api_key": plaintext})
 }

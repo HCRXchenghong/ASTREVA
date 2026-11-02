@@ -40,7 +40,7 @@ func TestAIReplyTimeoutTracksConfiguredTimeout(t *testing.T) {
 }
 
 func TestVisitorWebSocketCannotSendToAnotherConversation(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	service := NewService(st, realtime.NewHub(), slog.Default())
 	visitorA, err := st.CreateVisitorConversation("192.0.2.40", "web", "zh", "direct", "")
 	if err != nil {
@@ -75,7 +75,7 @@ func TestVisitorWebSocketCannotSendToAnotherConversation(t *testing.T) {
 }
 
 func TestVisitorWebSocketRejectsMismatchedConversationID(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	service := NewService(st, realtime.NewHub(), slog.Default())
 	visitorA, err := st.CreateVisitorConversation("192.0.2.43", "web", "zh", "direct", "")
 	if err != nil {
@@ -106,7 +106,7 @@ func TestVisitorWebSocketRejectsMismatchedConversationID(t *testing.T) {
 }
 
 func TestVisitorWebSocketCanSendToOwnConversation(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	service := NewService(st, realtime.NewHub(), slog.Default())
 	visitor, err := st.CreateVisitorConversation("192.0.2.42", "web", "zh", "direct", "")
 	if err != nil {
@@ -132,7 +132,7 @@ func TestVisitorWebSocketCanSendToOwnConversation(t *testing.T) {
 }
 
 func TestVisitorWebSocketCannotCloseAnotherConversation(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	service := NewService(st, realtime.NewHub(), slog.Default())
 	visitorA, err := st.CreateVisitorConversation("192.0.2.45", "web", "zh", "direct", "")
 	if err != nil {
@@ -163,7 +163,7 @@ func TestVisitorWebSocketCannotCloseAnotherConversation(t *testing.T) {
 }
 
 func TestVisitorWebSocketCanCloseOwnConversation(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	service := NewService(st, realtime.NewHub(), slog.Default())
 	visitor, err := st.CreateVisitorConversation("192.0.2.47", "web", "zh", "direct", "")
 	if err != nil {

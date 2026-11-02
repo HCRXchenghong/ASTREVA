@@ -1,0 +1,30 @@
+---
+import CompanySubpageView from '../../../views/CompanySubpageView.astro';
+import { getContent, hasTranslation } from '../../../lib/content';
+import { PREFIXED_LOCALES, type SiteLocale } from '../../../lib/i18n';
+import type { CompanyInfoPage } from '../../../lib/types';
+
+export async function getStaticPaths() {
+  const aboutRoutes = {
+    manufacturing: 'about-manufacturing',
+    quality: 'about-quality',
+  } as const;
+  const paths: Array<{ params: { lang: SiteLocale; aboutSubpage: string }; props: { slug: CompanyInfoPage['slug'] } }> = [];
+  for (const lang of PREFIXED_LOCALES) {
+    if (!(await hasTranslation(lang))) continue;
+    const content = await getContent(lang);
+    for (const [aboutSubpage, slug] of Object.entries(aboutRoutes)) {
+      if (content.staticPages.some((page) => page.slug === slug && page.enabled !== false)) {
+        paths.push({ params: { lang, aboutSubpage }, props: { slug } });
+      }
+    }
+  }
+  return paths;
+}
+
+const { lang } = Astro.params as { lang: SiteLocale };
+const { slug } = Astro.props as { slug: CompanyInfoPage['slug'] };
+const content = await getContent(lang);
+---
+
+<CompanySubpageView content={content} locale={lang} slug={slug} />

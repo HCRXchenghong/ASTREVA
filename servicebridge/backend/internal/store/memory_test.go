@@ -9,7 +9,7 @@ import (
 )
 
 func TestRemarkUpdateKeepsOriginalIP(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	visitor, err := s.CreateVisitorConversation("203.0.113.7:53100", "web_pc", "zh", "direct", "")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
@@ -33,7 +33,7 @@ func TestRemarkUpdateKeepsOriginalIP(t *testing.T) {
 }
 
 func TestAgentCannotEditUnassignedConversation(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	visitor, err := s.CreateVisitorConversation("198.51.100.9", "web", "zh", "direct", "")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
@@ -50,7 +50,7 @@ func TestAgentCannotEditUnassignedConversation(t *testing.T) {
 }
 
 func TestHumanKeywordSilentlyAssignsAndKeepsAIUntilAgentReplies(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	openBusinessForTest(t, s)
 	agentSession, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
@@ -94,7 +94,7 @@ func TestHumanKeywordSilentlyAssignsAndKeepsAIUntilAgentReplies(t *testing.T) {
 }
 
 func TestAgentOfflineKeepsTakenOverConversationInHumanQueue(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	openBusinessForTest(t, s)
 	agentSession, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
@@ -135,7 +135,7 @@ func TestAgentOfflineKeepsTakenOverConversationInHumanQueue(t *testing.T) {
 }
 
 func TestAlwaysAIModeStillHonorsExplicitHumanHandoff(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	openBusinessForTest(t, s)
 	if _, err := s.CreateKeywordRule(domain.KeywordRule{
 		Keyword: "电话", MatchType: "contains", Reply: "客服热线请以官网公示为准。", Enabled: true, Priority: 90, Action: "telephone",
@@ -168,7 +168,7 @@ func TestAlwaysAIModeStillHonorsExplicitHumanHandoff(t *testing.T) {
 }
 
 func TestDefaultContactSettingsAndKeywordRulesHaveNoPlaceholderData(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	contacts := s.ContactSettings()
 	if contacts.Telephone != "" || contacts.WhatsApp != "" || contacts.Telegram != "" {
@@ -180,7 +180,7 @@ func TestDefaultContactSettingsAndKeywordRulesHaveNoPlaceholderData(t *testing.T
 }
 
 func TestUpdateContactSettingsReplacesWholeRecord(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	if _, err := s.UpdateContactSettings(domain.ContactSettings{
 		Telephone:  "021-8888-0000",
@@ -205,7 +205,7 @@ func TestUpdateContactSettingsReplacesWholeRecord(t *testing.T) {
 }
 
 func TestUpdateAppReleaseKeepsReleaseNotesWhenEmpty(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	release, err := s.CreateAppRelease(domain.AppRelease{
 		Platform:     "android",
@@ -237,7 +237,7 @@ func TestUpdateAppReleaseKeepsReleaseNotesWhenEmpty(t *testing.T) {
 }
 
 func TestBusinessHoursBlocksAssignmentAndEmitsOfflineReplyOnce(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	_, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
 		t.Fatalf("login agent: %v", err)
@@ -291,7 +291,7 @@ func TestBusinessHoursBlocksAssignmentAndEmitsOfflineReplyOnce(t *testing.T) {
 }
 
 func TestBusinessHoursUsesConfiguredOfflineReply(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	if _, err := s.UpdateBusinessHours(domain.BusinessHours{
 		Timezone:     "UTC",
 		Enabled:      true,
@@ -315,7 +315,7 @@ func TestBusinessHoursUsesConfiguredOfflineReply(t *testing.T) {
 }
 
 func TestBusinessHoursAllowsAssignmentDuringOpenHours(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	_, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
 		t.Fatalf("login agent: %v", err)
@@ -336,7 +336,7 @@ func TestBusinessHoursAllowsAssignmentDuringOpenHours(t *testing.T) {
 }
 
 func TestConversationCarriesAssignedAgentIdentity(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	openBusinessForTest(t, s)
 	_, agent, err := s.LoginAgent("admin", "123456")
 	if err != nil {
@@ -395,7 +395,7 @@ func openBusinessForTest(t *testing.T, s *MemoryStore) {
 }
 
 func TestClientMessageIDIsIdempotent(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	visitor, err := s.CreateVisitorConversation("192.0.2.21", "web", "zh", "direct", "")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
@@ -426,7 +426,7 @@ func TestClientMessageIDIsIdempotent(t *testing.T) {
 }
 
 func TestPagedMessagesReturnsNewestPageAndCursor(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	visitor, err := s.CreateVisitorConversation("192.0.2.22", "web", "zh", "direct", "")
 	if err != nil {
 		t.Fatalf("create visitor conversation: %v", err)
@@ -451,7 +451,7 @@ func TestPagedMessagesReturnsNewestPageAndCursor(t *testing.T) {
 }
 
 func TestHumanTakeoverBlocksKeywordAndAIReplies(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	openBusinessForTest(t, s)
 	if _, err := s.CreateKeywordRule(domain.KeywordRule{
 		Keyword: "电话", MatchType: "contains", Reply: "客服热线请以官网公示为准。", Enabled: true, Priority: 90, Action: "telephone",
@@ -495,7 +495,7 @@ func TestHumanTakeoverBlocksKeywordAndAIReplies(t *testing.T) {
 }
 
 func TestUpdateAISettingsMasksAndPreservesAPIKey(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	updated, err := s.UpdateAISettings(domain.AISettings{
 		Enabled: true,
@@ -528,7 +528,7 @@ func TestUpdateAISettingsMasksAndPreservesAPIKey(t *testing.T) {
 }
 
 func TestRevokeAgentMessageUpdatesConversationAndPreservesOriginalContent(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	openBusinessForTest(t, s)
 
 	agentSession, agent, err := s.LoginAgent("admin", "123456")
@@ -598,7 +598,7 @@ func TestRevokeAgentMessageUpdatesConversationAndPreservesOriginalContent(t *tes
 }
 
 func TestKeywordRuleCreateAndUpdate(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	rule, err := s.CreateKeywordRule(domain.KeywordRule{
 		Keyword:  "售后",
@@ -650,7 +650,7 @@ func TestPrefixKeywordOnlyMatchesMessageStart(t *testing.T) {
 }
 
 func TestCreateVisitorConversationUsesConfiguredEntryReply(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	if _, err := s.UpdateContactSettings(domain.ContactSettings{
 		EntryReply: "欢迎进入会话，这里是后台配置的首条回复。",
@@ -674,7 +674,7 @@ func TestCreateVisitorConversationUsesConfiguredEntryReply(t *testing.T) {
 }
 
 func TestAgentCreateDisableAndLoginBoundary(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	agent, err := s.CreateAgent(domain.Agent{
 		Account:          "kf_003",
@@ -707,7 +707,7 @@ func TestAgentCreateDisableAndLoginBoundary(t *testing.T) {
 }
 
 func TestAdminTransferConversationReleasesOldAgent(t *testing.T) {
-	s := NewMemoryStore(Options{})
+	s := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	openBusinessForTest(t, s)
 	adminSession, _, err := s.LoginAdmin("superadmin", "123456")
 	if err != nil {

@@ -299,13 +299,12 @@
         >
           <a-button>选择 .json 文件</a-button>
         </a-upload>
-        <a-button size="small" @click="fillImportSample">填入示例</a-button>
       </a-space>
       <a-textarea
         v-model="importText"
         class="import-text"
         :auto-size="{ minRows: 8, maxRows: 16 }"
-        placeholder='[{"title":"付款方式","content":"支持信用卡、PayPal 与银行转账。","keywords":["付款方式","PayPal"],"category":"支付","priority":10}]'
+        placeholder='[{"title":"条目标题","content":"条目内容","keywords":["关键词"],"category":"分类","priority":10}]'
       />
       <a-alert v-if="importPreview.error" type="error" class="import-result">
         {{ importPreview.error }}
@@ -707,29 +706,6 @@
   function openImport() {
     importText.value = '';
     importVisible.value = true;
-  }
-
-  function fillImportSample() {
-    importText.value = JSON.stringify(
-      [
-        {
-          title: '付款方式',
-          content: '支持信用卡、PayPal 与银行转账。',
-          keywords: ['付款方式', 'PayPal'],
-          category: '支付',
-          priority: 10,
-        },
-        {
-          title: '发货时效',
-          content: '现货商品在付款后 48 小时内发出。',
-          keywords: ['发货', '时效'],
-          category: '物流',
-          priority: 5,
-        },
-      ],
-      null,
-      2
-    );
   }
 
   // 本地校验：JSON 合法 + 顶层数组 + 每项含 title / content，通过后给出预览条数。

@@ -38,6 +38,15 @@ npm run verify         # = bash scripts/verify-all.sh
 
 > 注意：`partnersHidden` 的语义是「隐藏」。不勾选即显示，不会因为空值误隐藏。
 
+## 4.5 安全配置自检（本次新增）
+
+- `deployments/ubuntu/.env.ubuntu` 已设置强随机 `INTERNAL_API_TOKEN`（≥32 位）；
+- 首次初始化使用 admin-server 启动日志中的 `ADMIN_SETUP_TOKEN`，初始化完成后确认 `setup/start` 返回 409；
+- `APP_ENV=production` 已注入 admin-server，弱 `ADMIN_2FA_SESSION_SECRET` 会让进程拒绝启动；
+- 官网由 Astro `security.csp` 输出带哈希的 CSP（无 `script-src 'unsafe-inline'`），Caddy 输出 `frame-ancestors` + XFO；客服由 Caddy 输出严格 `script-src 'self'`、`style-src 'self'`、属性级 `script-src-attr/style-src-attr 'none'` 与 `frame-ancestors`；`/metrics` 不再从公网 service 域名暴露；
+- 访客上传只允许图片/音频，APK 仅管理员 App 发布路径；
+- 后台写请求带 `X-CSRF-Token`，浏览器已领取 `astreva_admin_csrf` Cookie。
+
 ## 5. 发布前自检
 
 - `/`、`/products/`、`/solutions/`、`/support/`、`/support/faq/`、`/about/` 均返回 200

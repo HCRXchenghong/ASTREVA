@@ -1,5 +1,6 @@
 ---
 import VideoModal from '../components/VideoModal';
+import MediaCarousel from '../components/MediaCarousel';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Button from '../components/ui/Button.astro';
 import Container from '../components/ui/Container.astro';
@@ -8,6 +9,8 @@ import SectionHeading from '../components/ui/SectionHeading.astro';
 import { featuredProducts } from '../lib/content';
 import { localePath, localizeHref, type SiteLocale } from '../lib/i18n';
 import { resolveIcon } from '../lib/icons';
+import { DEFAULT_SCENE_IMAGES, productImage, productImages, resolveImage, sceneImages } from '../lib/default-images';
+import { mediaItemsFor } from '../lib/media';
 import type { SiteContent } from '../lib/types';
 
 type Props = { content: SiteContent; locale: SiteLocale };
@@ -19,6 +22,7 @@ const localHref = (path: string) => localizeHref(locale, path) as string;
 const categoryName = (slug: string) => content.categories.find((category) => category.slug === slug)?.name || '';
 const proofPoints = home.advantages.slice(0, 4);
 const pad = (index: number) => String(index + 1).padStart(2, '0');
+const heroMedia = mediaItemsFor(home.hero.mediaItems, { image: home.hero.backgroundImage, video: home.hero.backgroundVideo }, sceneImages('homeHero'), home.hero.title, 'muted-autoplay');
 ---
 
 <BaseLayout content={content} seo={home.seo} path={localePath(locale, '/')} locale={locale}>
@@ -28,32 +32,10 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
       id="home-hero"
       class="relative flex min-h-[100svh] flex-col justify-between overflow-hidden bg-navy-950 scroll-mt-24"
     >
-      {
-        home.hero.backgroundVideo ? (
-          <video
-            class="pointer-events-none absolute inset-0 h-full w-full object-cover"
-            autoplay
-            muted
-            loop
-            playsinline
-            preload="auto"
-            poster={home.hero.backgroundImage || undefined}
-            aria-hidden="true"
-          >
-            <source src={home.hero.backgroundVideo} type="video/mp4" />
-          </video>
-        ) : home.hero.backgroundImage ? (
-          <div
-            class="absolute inset-0 bg-cover bg-center bg-no-repeat"
-            style={`background-image:url('${home.hero.backgroundImage}')`}
-          />
-        ) : (
-          <div class="absolute inset-0 bg-linear-to-br from-slate-900 via-brand-900 to-slate-800" />
-        )
-      }
-      <div class="absolute inset-0 bg-linear-to-r from-brand-950/95 via-brand-950/70 to-transparent"></div>
-      <div class="absolute inset-0 bg-navy-950/45"></div>
-      <div class="blueprint-grid absolute inset-0" aria-hidden="true"></div>
+      <MediaCarousel locale={locale} client:load items={heroMedia} alt={home.hero.title} background priority fallbackImage={DEFAULT_SCENE_IMAGES.homeHero} activeMediaEvent="astreva:home-hero-media" controls={false} />
+      <div class="pointer-events-none absolute inset-0 bg-linear-to-r from-brand-950/95 via-brand-950/70 to-transparent"></div>
+      <div class="pointer-events-none absolute inset-0 bg-navy-950/45"></div>
+      <div class="blueprint-grid pointer-events-none absolute inset-0" aria-hidden="true"></div>
 
       <Container class="relative z-10 flex flex-1 flex-col justify-center pb-10 pt-28 md:pb-16 md:pt-36">
         <div class="flex items-center gap-4">
@@ -71,23 +53,31 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
           {home.hero.subtitle}
         </p>
         <div class="mt-8 md:mt-12">
-          <VideoModal
+          <VideoModal locale={locale}
             client:load
             primaryLabel={home.hero.primaryCta}
             primaryHref={localHref(home.hero.primaryHref)}
             secondaryLabel={home.hero.secondaryCta}
             videoUrl={home.hero.videoUrl}
+            mediaItems={home.hero.videoMediaItems}
             videoTitle={home.hero.videoTitle}
+            videoModalEyebrow={home.hero.videoModalEyebrow}
+            videoModalDescription={home.hero.videoModalDescription}
+            videoModalBackgroundImage={home.hero.videoModalBackgroundImage}
+            videoModalBackgroundMediaItems={home.hero.videoModalBackgroundMediaItems}
+            videoPosterImage={resolveImage(home.hero.videoPosterImage, DEFAULT_SCENE_IMAGES.homeHero)}
             previewLabel={home.hero.videoPreviewLabel}
             openExternalLabel={home.hero.videoOpenExternalLabel}
             closeLabel={home.hero.videoCloseLabel}
+            showSecondary={heroMedia[0]?.type === 'video'}
+            activeMediaEvent="astreva:home-hero-media"
           />
         </div>
       </Container>
 
       {
         proofPoints.length > 0 && (
-          <Container class="relative z-10 hidden pb-24 md:block">
+          <Container class="home-hero-proof-bar relative z-10 hidden md:block">
             <div class="grid grid-cols-2 gap-px overflow-hidden border-t border-white/15 md:grid-cols-4">
               {proofPoints.map((item) => (
                 <div class="flex items-baseline gap-3 py-5 pr-6">
@@ -116,44 +106,32 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
         <div class="mt-14 grid grid-cols-1 gap-6 md:grid-cols-3">
           {
             featured.map((item, index) => (
-              <a
-                href={localHref(`/products/${item.categorySlug}/${item.slug}/`)}
-                class="reveal group relative flex flex-col overflow-hidden rounded-xl border border-line-100 bg-white transition-all duration-500 hover:-translate-y-1 hover:border-brand-200 hover:shadow-[0_24px_60px_-24px_rgba(10,64,112,0.35)]"
-                style={`--reveal-delay:${index * 90}ms`}
+              <div
+                class={`reveal group relative flex flex-col overflow-hidden rounded-xl border border-line-100 bg-white transition-all duration-500 hover:-translate-y-1 hover:border-brand-200 hover:shadow-[0_24px_60px_-24px_rgba(10,64,112,0.35)] reveal-delay-${index * 90}`}
               >
                 <div class="relative aspect-[4/3] overflow-hidden bg-slate-100">
-                  {item.coverImage ? (
-                    <img
-                      src={item.coverImage}
-                      alt={item.name}
-                      loading="lazy"
-                      class="h-full w-full object-cover transition-transform duration-[900ms] ease-out group-hover:scale-[1.06]"
-                    />
-                  ) : (
-                    <div
-                      role="img"
-                      aria-label={item.name}
-                      class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-5xl font-black text-slate-400"
-                    >
-                      <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
-                    </div>
-                  )}
+              <MediaCarousel locale={locale} client:visible items={mediaItemsFor(item.mediaItems, { image: item.coverImage }, productImages(item), item.name)} alt={item.name} className="h-full w-full" fallbackImage={productImage(item)} />
+              {!item.coverImage?.trim() && (
+                <span class="absolute bottom-3 left-3 rounded-full border border-white/25 bg-brand-950/75 px-3 py-1 text-[10px] font-bold tracking-wide text-white backdrop-blur">
+                  {content.productCenter.categoryPage.placeholderImageLabel}
+                </span>
+              )}
                   <span class="absolute left-5 top-5 rounded-full bg-white/95 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-brand-800 backdrop-blur">
                     {categoryName(item.categorySlug)}
                   </span>
                 </div>
                 <div class="flex flex-1 flex-col p-7">
-                  <h3 class="text-xl font-black text-ink-900">{item.name}</h3>
+                  <h3 class="text-xl font-black text-ink-900"><a href={localHref(`/products/${item.categorySlug}/${item.slug}/`)}>{item.name}</a></h3>
                   <p class="mt-3 line-clamp-2 flex-1 text-sm leading-6 text-ink-500">{item.summary}</p>
-                  <span class="mt-6 inline-flex items-center gap-2 text-sm font-black text-brand-500">
+                  <a href={localHref(`/products/${item.categorySlug}/${item.slug}/`)} class="mt-6 inline-flex items-center gap-2 text-sm font-black text-brand-500">
                     {home.featuredProducts.linkLabel}
                     <Icon
                       name={resolveIcon(home.featuredProducts.linkIcon)}
                       class="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1"
                     />
-                  </span>
+                  </a>
                 </div>
-              </a>
+              </div>
             ))
           }
         </div>
@@ -187,26 +165,14 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
           </div>
         </div>
 
-        <div class="reveal relative lg:col-span-7" style="--reveal-delay:120ms">
+        <div class="reveal reveal-delay-120 relative lg:col-span-7">
           <span
             class="absolute -left-4 -top-4 hidden h-24 w-24 border-l-2 border-t-2 border-accent-500 lg:block"
             aria-hidden="true"></span>
           <div
             class="relative aspect-[4/3] overflow-hidden rounded-xl bg-slate-100 shadow-[0_40px_80px_-40px_rgba(3,32,60,0.55)]"
           >
-            {
-              home.productIntro.image ? (
-                <img src={home.productIntro.image} alt={home.productIntro.title} class="h-full w-full object-cover" />
-              ) : (
-                <div
-                  role="img"
-                  aria-label={home.productIntro.title}
-                  class="grid h-full w-full place-items-center bg-linear-to-br from-slate-100 via-slate-200 to-slate-300 text-6xl font-black text-slate-400"
-                >
-                  <Icon name="box" class="h-16 w-16 text-slate-400/70" strokeWidth={1.1} />
-                </div>
-              )
-            }
+            <MediaCarousel locale={locale} client:visible items={mediaItemsFor(home.productIntro.mediaItems, { image: home.productIntro.image }, sceneImages('homeProductIntro'), home.productIntro.title)} alt={home.productIntro.title} background fallbackImage={DEFAULT_SCENE_IMAGES.homeProductIntro} />
           </div>
         </div>
       </Container>
@@ -228,9 +194,9 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
               <div
                 class:list={[
                   'reveal group relative border-b border-white/12 py-10 pr-6 transition-colors hover:bg-white/[0.03]',
-                  index % 2 === 0 ? 'md:border-r md:border-white/12 md:pr-12' : 'md:pl-12'
+                  index % 2 === 0 ? 'md:border-r md:border-white/12 md:pr-12' : 'md:pl-12',
+                  `reveal-delay-${index * 80}`
                 ]}
-                style={`--reveal-delay:${index * 80}ms`}
               >
                 <div class="flex items-start justify-between gap-6">
                   <div class="max-w-md">
@@ -262,8 +228,7 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
             <div class="mt-14 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               {home.testimonials.map((review, index) => (
                 <figure
-                  class="reveal flex flex-col justify-between rounded-xl border border-line-100 bg-surface-50 p-8 transition-colors hover:border-brand-200"
-                  style={`--reveal-delay:${index * 80}ms`}
+                  class={`reveal flex flex-col justify-between rounded-xl border border-line-100 bg-surface-50 p-8 transition-colors hover:border-brand-200 reveal-delay-${index * 80}`}
                 >
                   <blockquote class="text-base leading-8 text-ink-700">“{review.text}”</blockquote>
                   <figcaption class="mt-8 flex items-center gap-4 border-t border-line-100 pt-6">
@@ -287,14 +252,7 @@ const pad = (index: number) => String(index + 1).padStart(2, '0');
          navy footer below don't merge into one undifferentiated dark block. -->
     <section id="home-cta" class="relative overflow-hidden border-t border-line-100 bg-white py-24 scroll-mt-24">
       <div class="blueprint-grid-light absolute inset-0" aria-hidden="true"></div>
-      {
-        home.cta.backgroundImage && (
-          <div
-            class="absolute inset-0 bg-cover opacity-[0.04]"
-            style={`background-image:url('${home.cta.backgroundImage}')`}
-          />
-        )
-      }
+      <MediaCarousel locale={locale} client:visible items={mediaItemsFor(home.cta.mediaItems, { image: home.cta.backgroundImage }, sceneImages('homeHero'), home.cta.title)} alt={home.cta.title} background fallbackImage={DEFAULT_SCENE_IMAGES.homeHero} mediaClassName="opacity-[0.04]" />
       <Container class="relative">
         <div class="reveal grid items-center gap-12 lg:grid-cols-12">
           <div class="lg:col-span-7">

@@ -1,4 +1,15 @@
 import type { Category, FAQ, Product, SEO, SiteSettings } from './types';
+import { productImage } from './default-images';
+
+/** 把 JSON-LD 序列化成可安全放进 <script> 的文本，避免 </script> 逃逸。 */
+export function safeJsonLd(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
 
 export function pageTitle(seo: SEO | undefined, site: SiteSettings) {
   return seo?.title || site.defaultSeo.title;
@@ -9,7 +20,7 @@ export function pageDescription(seo: SEO | undefined, site: SiteSettings) {
 }
 
 export function absoluteUrl(path = '/') {
-  const site = (process.env.PUBLIC_SITE_URL || 'https://www.example.com').replace(/\/$/, '');
+  const site = (process.env.PUBLIC_SITE_URL || 'http://127.0.0.1:4321').replace(/\/$/, '');
   return `${site}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
@@ -59,7 +70,7 @@ export function productJsonLd(product: Product, category: Category, site: SiteSe
     '@context': 'https://schema.org',
     '@type': 'Product',
     name: product.name,
-    image: product.coverImage,
+    image: productImage(product),
     description: product.summary,
     category: category.name,
     brand: {

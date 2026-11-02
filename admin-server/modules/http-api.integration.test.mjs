@@ -44,7 +44,8 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
   try {
     const base = `http://127.0.0.1:${port}`;
     await waitFor(`${base}/healthz`);
-    const openapi = await (await fetch(`${base}/openapi.json`)).json();
+    const { cookieHeader: adminCookie } = await createAdminSession(base);
+    const openapi = await (await fetch(`${base}/openapi.json`, { headers: { Cookie: adminCookie } })).json();
     const content = await (await fetch(`${base}/site-admin-api/public-content`)).json();
     const fallback = await (await fetch(`${base}/site-admin-api/public-fallback-content`)).json();
     const corsPreflight = await fetch(`${base}/site-admin-api/leads`, {
@@ -83,8 +84,13 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
     const localeRecommendation = await fetch(`${base}/site-admin-api/public-locale`, { headers: { 'CF-IPCountry': 'AE', 'Accept-Language': 'zh-CN' } });
     const unavailableEnglish = await fetch(`${base}/site-admin-api/public-content?locale=en`);
 
-    // 会话现在带 sid 并由服务端校验，必须走真实的 2FA 绑定流程拿 Cookie。
-    const { cookieHeader: cookie } = await createAdminSession(base);
+    // 上面的初始化会话可复用；服务端会话带 sid 并由服务端校验。
+    const cookie = adminCookie;
+    const previewGrant = await fetch(base + '/site-admin-api/preview-grant', { headers: { Cookie: cookie } });
+    assert.equal(previewGrant.status, 200);
+    assert.match(previewGrant.headers.get('set-cookie') || '', /astreva_preview_access=/);
+    const previewGrantAnonymous = await fetch(base + '/site-admin-api/preview-grant');
+    assert.equal(previewGrantAnonymous.status, 401);
     const initialBootstrap = await (await fetch(base + '/site-admin-api/bootstrap', { headers: { Cookie: cookie } })).json();
     const nextContent = structuredClone(content.data);
     nextContent.site.brandTagline = '全量内容编辑测试';

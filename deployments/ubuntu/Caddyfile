@@ -12,8 +12,10 @@
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "frame-ancestors 'self'"
 	}
 
 	# 咨询单由官网域名直连后台，避免跨域与预检。
@@ -23,6 +25,11 @@
 
 	# 草稿预览：构建服务写入发布卷的 preview/ 目录，由官网容器暴露。
 	handle /__preview/* {
+		# 预览不是公开静态目录：由 admin-server 校验本次构建的随机 token。
+		forward_auth admin-server:1337 {
+			uri /site-admin-api/preview-auth?path={http.request.uri.path}
+		}
+		header X-Robots-Tag "noindex, nofollow, noarchive"
 		reverse_proxy frontend:80
 	}
 
@@ -52,6 +59,14 @@
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; script-src-attr 'none'; style-src 'self'; style-src-attr 'none'; img-src 'self' data: blob: https: http:; media-src 'self' blob: https: http:; font-src 'self' data:; connect-src 'self' https://{$SERVICE_DOMAIN} wss://{$SERVICE_DOMAIN} https://{$SITE_DOMAIN}; frame-ancestors 'self' https://{$SITE_DOMAIN}; base-uri 'self'; form-action 'self'; object-src 'none'"
+	}
+
+	# 给访客聊天页注入允许的父页面 Origin，避免把访客会话 token 发给任意 iframe 嵌入方。
+	handle /servicebridge-config.js {
+		header Content-Type "application/javascript; charset=utf-8"
+		header Cache-Control "no-store"
+		respond `window.__SERVICEBRIDGE_ALLOWED_PARENT__ = "https://{$SITE_DOMAIN}";`
 	}
 
 	handle /api/* {
@@ -66,7 +81,8 @@
 		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
 	}
 
-	# 第三方平台开放接口（API Key 鉴权），必须与访客端页面区分开。
+	# 开放 API 的启用/关闭由后台“安全策略”总开关决定；Caddy 始终转发，
+	# 关闭时由 Go 引擎返回 503，不泄露任何数据。
 	handle /open/* {
 		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
 	}
@@ -84,10 +100,6 @@
 	}
 
 	handle /healthz {
-		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
-	}
-
-	handle /metrics {
 		reverse_proxy servicebridge-backend-1:8080 servicebridge-backend-2:8080
 	}
 

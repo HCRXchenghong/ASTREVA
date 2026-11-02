@@ -254,7 +254,7 @@ func TestAdminAIModelsFallsBackToSavedAPIKey(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	_, _ = st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false})
 	service := app.NewService(st, realtime.NewHub(), slog.Default())
 	server := NewRouter(config.Config{Env: "test"}, slog.Default(), service)
@@ -295,7 +295,7 @@ func TestFormValueTruthyAcceptsHTMLCheckboxValues(t *testing.T) {
 }
 
 func TestVisitorMessagePageMasksRevokedAgentMessage(t *testing.T) {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	_, _ = st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false})
 	service := app.NewService(st, realtime.NewHub(), slog.Default())
 	router := NewRouter(config.Config{Env: "test"}, slog.Default(), service)
@@ -757,12 +757,20 @@ func TestWebSocketOriginWhitelist(t *testing.T) {
 	_ = conn.Close()
 }
 
+func TestOpenAPIClosedByDefault(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newTestRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/open/v1/me", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("开放 API 默认必须关闭（503），status=%d", rec.Code)
+	}
+}
+
 func newTestRouter() http.Handler {
 	return newTestRouterWithConfig(config.Config{Env: "test"})
 }
 
 func newTestRouterWithConfig(cfg config.Config) http.Handler {
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	// 默认关闭营业时间限制（Enabled=false 表示不限制），让既有用例不依赖运行时刻。
 	_, _ = st.UpdateBusinessHours(domain.BusinessHours{Timezone: "Asia/Shanghai", Enabled: false})
 	service := app.NewService(st, realtime.NewHub(), slog.Default())

@@ -138,7 +138,7 @@ func createFlowAgent(t *testing.T, st store.Store, account string, maxConversati
 // newFlowService 构造关闭营业时间限制、关闭排队的服务实例（避免无关副作用干扰用例）。
 func newFlowService(t *testing.T) (*Service, *store.MemoryStore, *eventRecorder) {
 	t.Helper()
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	if _, err := st.UpdateBusinessHours(domain.BusinessHours{Timezone: "UTC", Enabled: false}); err != nil {
 		t.Fatalf("update business hours: %v", err)
 	}
@@ -271,7 +271,8 @@ func agentCurrentConversations(t *testing.T, st store.Store, agentID string) int
 // TestWatchIsReadOnlyAndSkipsMarkRead 覆盖只读围观：
 // 不改变分配与并发、不计入客服会话列表、围观期间不调用 MarkConversationRead（未读数不变）。
 func TestWatchIsReadOnlyAndSkipsMarkRead(t *testing.T) {
-	base := store.NewMemoryStore(store.Options{})
+	// 该用例覆盖“任意客服围观”这个可选产品策略；默认策略只允许本人/本组/未分配会话。
+	base := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	counter := &markReadCounter{Store: base}
 	service := NewService(counter, realtime.NewHub(), slog.Default())
 	if _, err := base.UpdateBusinessHours(domain.BusinessHours{Timezone: "UTC", Enabled: false}); err != nil {
@@ -283,6 +284,7 @@ func TestWatchIsReadOnlyAndSkipsMarkRead(t *testing.T) {
 	}
 	policy := domain.DefaultServicePolicy()
 	policy.QueueEnabled = false
+	policy.AgentWatchScope = domain.AgentWatchScopeAll
 	if _, err := base.UpdateServicePolicy(policy); err != nil {
 		t.Fatalf("update service policy: %v", err)
 	}

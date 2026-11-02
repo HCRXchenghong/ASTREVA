@@ -10,7 +10,7 @@ import (
 
 // TestAILimitsMemoryStore 覆盖内存实现的默认值、单例覆盖、越界收敛与非法文案校验。
 func TestAILimitsMemoryStore(t *testing.T) {
-	st := NewMemoryStore(Options{})
+	st := NewMemoryStore(Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 
 	defaults := st.AILimits()
 	want := domain.DefaultAILimits()

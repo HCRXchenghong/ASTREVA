@@ -50,7 +50,7 @@ func newTranslationStub(t *testing.T) (*httptest.Server, *int32) {
 func newTranslationService(t *testing.T) (*Service, store.Store, *int32) {
 	t.Helper()
 	server, calls := newTranslationStub(t)
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	if _, err := st.UpdateAISettings(domain.AISettings{
 		Enabled:        true,
 		Mode:           domain.AIModeHumanFirst,

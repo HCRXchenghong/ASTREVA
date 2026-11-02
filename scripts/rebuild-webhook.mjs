@@ -51,10 +51,11 @@ async function runBuild(source = 'current', previewContent = null) {
     source
   };
   try {
+    let result = {};
     if (previewContent) {
-      await buildFrontend({ source: 'current', snapshotContent: previewContent, target: 'preview' });
+      result = await buildFrontend({ source: 'current', snapshotContent: previewContent, target: 'preview' });
     } else {
-      await buildFrontend({ source });
+      result = await buildFrontend({ source });
     }
     lastBuild = {
       ...lastBuild,
@@ -62,7 +63,8 @@ async function runBuild(source = 'current', previewContent = null) {
       finishedAt: new Date().toISOString(),
       exitCode: 0,
       signal: null,
-      source
+      source,
+      ...(result?.previewToken ? { previewToken: result.previewToken } : {})
     };
   } catch (error) {
     console.error(`[rebuild] ${error.message}`);

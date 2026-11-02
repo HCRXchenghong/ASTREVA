@@ -491,6 +491,13 @@ export const fetchVisitorProfile = (visitorId: string) =>
     .get(bridge(`/api/admin/visitor-profiles/${encodeURIComponent(visitorId)}`))
     .then((r) => r.data);
 
+// The first-party analytics store retains browser, device, source and path fields
+// that the chat-engine profile model does not currently include.
+export const fetchAnalyticsVisitorVisits = (visitorId: string) =>
+  client
+    .get('/site-admin-api/analytics/visitor', { params: { visitor_id: visitorId } })
+    .then((r) => r.data?.data || []);
+
 // POST /api/admin/visitor-profiles/{visitor_id}/refresh -> {profile:{...}}
 export const refreshVisitorProfile = (visitorId: string) =>
   client

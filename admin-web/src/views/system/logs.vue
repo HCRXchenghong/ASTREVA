@@ -180,6 +180,7 @@
   } from '@/api/admin';
   // 审计日志与系统日志是两种数据，合并在同一页的两个视图里。
   import AuditLogPanel from '@/views/operations/audit.vue';
+  import { csvCell as cell } from '@/utils/csv';
 
   const route = useRoute();
   const router = useRouter();
@@ -441,7 +442,6 @@
       '系统',
       'User-Agent',
     ];
-    const cell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
     const data = rows.value.map((item) => [
       item.occurredAt,
       sourceLabel(item.source),

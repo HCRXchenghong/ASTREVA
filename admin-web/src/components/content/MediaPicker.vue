@@ -25,7 +25,8 @@
       </a-button>
     </div>
     <div v-if="previewUrl" class="media-preview">
-      <video v-if="isVideo" :src="previewUrl" controls muted />
+      <iframe v-if="youtubeEmbed" :src="youtubeEmbed" title="YouTube 视频预览" allow="encrypted-media; picture-in-picture" allowfullscreen />
+      <video v-else-if="isVideo" :src="previewUrl" controls muted />
       <img v-else :src="previewUrl" alt="" />
     </div>
     <input
@@ -147,6 +148,16 @@
   const isVideo = computed(
     () => props.mediaType === 'video' || /\.(mp4|webm|mov|m3u8)(\?|$)/i.test(previewUrl.value)
   );
+  const youtubeEmbed = computed(() => {
+    try {
+      const url = new URL(previewUrl.value);
+      const host = url.hostname.toLowerCase();
+      if (!['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'www.youtu.be', 'youtube-nocookie.com', 'www.youtube-nocookie.com'].includes(host)) return '';
+      const parts = url.pathname.split('/').filter(Boolean);
+      const id = host.endsWith('youtu.be') ? parts[0] : ['shorts', 'embed', 'live'].includes(parts[0]) ? parts[1] : url.searchParams.get('v');
+      return /^[a-zA-Z0-9_-]{6,}$/.test(String(id || '')) ? `https://www.youtube-nocookie.com/embed/${id}` : '';
+    } catch { return ''; }
+  });
   const modalTitle = computed(() =>
     props.mediaType === 'video' ? '选择视频素材' : '选择图片素材'
   );
@@ -180,6 +191,10 @@
   }
 
   function pick(item: MediaItem) {
+    if (props.mediaType && item.type !== props.mediaType) {
+      Message.error(`请选择${props.mediaType === 'video' ? '视频' : props.mediaType === 'image' ? '图片' : '文件'}素材`);
+      return;
+    }
     emitValue(item.url);
     modalVisible.value = false;
   }
@@ -199,6 +214,8 @@
     try {
       const urls: string[] = [];
       for (const file of files) {
+        if (props.mediaType === 'image' && !file.type.startsWith('image/')) throw new Error('请选择图片文件');
+        if (props.mediaType === 'video' && !file.type.startsWith('video/')) throw new Error('请选择视频文件');
         // eslint-disable-next-line no-await-in-loop
         const media = await uploadMedia(file);
         if (media?.url) urls.push(media.url);
@@ -209,8 +226,8 @@
         Message.success(`已上传 ${urls.length} 个文件`);
       }
       if (modalVisible.value) await loadMedia();
-    } catch {
-      // 具体错误由 api/interceptor.ts 统一提示
+    } catch (error) {
+      Message.error(error instanceof Error ? error.message : '上传失败，请重试');
     } finally {
       uploading.value = false;
       input.value = '';
@@ -230,7 +247,8 @@
     gap: 8px;
   }
   .media-preview img,
-  .media-preview video {
+  .media-preview video,
+  .media-preview iframe {
     max-width: 240px;
     max-height: 150px;
     border: 1px solid var(--color-border-2);

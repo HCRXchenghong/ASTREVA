@@ -80,6 +80,16 @@ func registerServicePolicyRoutes(mux *http.ServeMux, service *app.Service, proxi
 		if req.TakeoverPopupEnabled != nil {
 			next.TakeoverPopupEnabled = *req.TakeoverPopupEnabled
 		}
+		if req.OpenAPIEnabled != nil {
+			next.OpenAPIEnabled = *req.OpenAPIEnabled
+		}
+		if req.AgentWatchScope != nil {
+			if !domain.ValidAgentWatchScope(*req.AgentWatchScope) {
+				writeError(w, fmt.Errorf("%w: agent_watch_scope 只允许 own_group 或 all", store.ErrInvalidInput))
+				return
+			}
+			next.AgentWatchScope = domain.NormalizeAgentWatchScope(*req.AgentWatchScope)
+		}
 		updated, err := service.Store().UpdateServicePolicy(next)
 		if err != nil {
 			writeError(w, err)
@@ -396,6 +406,8 @@ type servicePolicyPatchRequest struct {
 	UnattendedEnabled       *bool   `json:"unattended_enabled"`
 	UnattendedReply         *string `json:"unattended_reply"`
 	TakeoverPopupEnabled    *bool   `json:"takeover_popup_enabled"`
+	OpenAPIEnabled          *bool   `json:"open_api_enabled"`
+	AgentWatchScope         *string `json:"agent_watch_scope"`
 }
 
 // queuedConversationView 在排队记录上补充"已等待秒数"与访客名，供后台展示。

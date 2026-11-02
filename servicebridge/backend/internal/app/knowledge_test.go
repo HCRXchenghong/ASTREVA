@@ -47,7 +47,7 @@ func newKnowledgeStub(t *testing.T, reply string) (*httptest.Server, *int32, <-c
 // newKnowledgeService 构造使用指定 AI 模式与上游地址的服务实例。
 func newKnowledgeService(t *testing.T, mode domain.AICustomerMode, baseURL string) (*Service, store.Store) {
 	t.Helper()
-	st := store.NewMemoryStore(store.Options{})
+	st := store.NewMemoryStore(store.Options{BootstrapAdminPassword: "123456", BootstrapAgentPassword: "123456"})
 	if _, err := st.UpdateAISettings(domain.AISettings{
 		Enabled:        true,
 		Mode:           mode,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/io.dart';
@@ -169,6 +170,10 @@ class ServiceBridgeClient {
     final uri = Uri.tryParse(normalized);
     if (uri == null || uri.host.isEmpty) {
       throw const ServiceBridgeException('请输入有效的服务器地址');
+    }
+    // 正式包禁止明文 HTTP：避免登录 token、会话内容和上传在网络上被截获。
+    if (kReleaseMode && uri.scheme == 'http') {
+      throw const ServiceBridgeException('正式版必须使用 HTTPS 服务器地址');
     }
     return normalized.replaceFirst(RegExp(r'/+$'), '');
   }

@@ -162,7 +162,7 @@ export function createSystemRouter({
       return Math.min(Math.max(Math.trunc(parsed), min), max);
     };
     return {
-      eventDays: pick(override.event_days ?? override.eventDays, envEventDays, 30, 3650),
+      eventDays: pick(override.event_days ?? override.eventDays, Math.max(envEventDays, 180), 180, 3650),
       visitDays: pick(override.visit_days ?? override.visitDays, envVisitDays, 1, 365)
     };
   }

@@ -1,12 +1,15 @@
 ---
 import InnerPageHero from '../components/InnerPageHero.astro';
+import MediaCarousel from '../components/MediaCarousel';
+import { mediaItemsFor } from '../lib/media';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Icon from '../components/ui/Icon.astro';
 import Container from '../components/ui/Container.astro';
 import { staticPage } from '../lib/content';
 import { localePath, type SiteLocale } from '../lib/i18n';
 import { resolveIcon } from '../lib/icons';
-import type { SiteContent } from '../lib/types';
+import type { CompanyInfoPage, SiteContent } from '../lib/types';
+import { DEFAULT_PAGE_HERO_IMAGES, pageHeroImages } from '../lib/default-images';
 
 type Props = { content: SiteContent; locale: SiteLocale };
 
@@ -16,18 +19,22 @@ const { content, locale } = Astro.props;
 const partnerLogos = content.home.partnerLogos ?? [];
 const partnerItems = partnerLogos.length ? partnerLogos : content.home.partners.map((name) => ({ name, logoUrl: '' }));
 const showPartners = !content.home.partnersHidden && partnerItems.length > 0;
+const companyPages = ['about-manufacturing', 'about-quality']
+  .map((slug) => content.staticPages.find((item): item is CompanyInfoPage => item.slug === slug && item.enabled !== false))
+  .filter((item): item is CompanyInfoPage => Boolean(item));
 const page = staticPage(content, 'about');
 ---
 
 <BaseLayout content={content} seo={page.seo} path={localePath(locale, '/about/')} locale={locale}>
   <div class="w-full pt-24">
-    <InnerPageHero
+    <InnerPageHero locale={locale}
       id="about-hero"
       eyebrow={page.hero.eyebrow}
       title={page.hero.title}
       description={page.hero.description}
       backgroundImage={page.hero.backgroundImage}
       backgroundVideo={page.hero.backgroundVideo}
+      mediaItems={page.hero.mediaItems}
     />
     <section id="about-content" class="py-24 bg-white relative scroll-mt-24">
       <Container size="narrow" class="text-center">
@@ -45,6 +52,35 @@ const page = staticPage(content, 'about');
         />
       </Container>
     </section>
+    {companyPages.length > 0 && (
+      <section class="bg-surface-50 py-20">
+        <Container>
+          <div class="mb-10 max-w-2xl">
+            <p class="mb-3 text-xs font-black uppercase tracking-[0.2em] text-accent-600">{content.site.brandName}</p>
+            <h2 class="display-tight text-3xl font-black text-brand-950 md:text-4xl">{page.sections.companyPagesTitle}</h2>
+          </div>
+          <div class="grid gap-6 md:grid-cols-2">
+            {companyPages.map((item) => (
+              <div
+                class="group overflow-hidden rounded-2xl border border-line-200 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-brand-300 hover:shadow-xl"
+              >
+                <div class="relative aspect-[16/7] overflow-hidden bg-brand-950">
+                  <MediaCarousel locale={locale} client:visible items={mediaItemsFor(item.hero.mediaItems, { image: item.hero.backgroundImage, video: item.hero.backgroundVideo }, pageHeroImages(item.slug), item.title)} alt={item.title} className="h-full w-full" fallbackImage={DEFAULT_PAGE_HERO_IMAGES[item.slug] || DEFAULT_PAGE_HERO_IMAGES.about} />
+                  {!item.hero?.backgroundImage?.trim() && <span class="absolute bottom-3 left-3 rounded-full border border-white/25 bg-brand-950/75 px-3 py-1 text-[10px] font-bold tracking-wide text-white backdrop-blur">{item.sections?.imagePlaceholderLabel || page.sections.imagePlaceholderLabel}</span>}
+                </div>
+                <div class="flex items-center justify-between gap-4 p-6">
+                  <div>
+                    <h3 class="text-xl font-black text-brand-950"><a href={locale === 'zh-CN' ? `/about/${item.slug === 'about-quality' ? 'quality' : 'manufacturing'}/` : `/${locale}/about/${item.slug === 'about-quality' ? 'quality' : 'manufacturing'}/`}>{item.title}</a></h3>
+                    <p class="mt-2 line-clamp-2 text-sm leading-6 text-ink-500">{item.hero?.description}</p>
+                  </div>
+                  <span class="shrink-0 text-sm font-bold text-brand-600 transition-transform group-hover:translate-x-1">{item.sections?.cardLinkLabel || content.site.navigation.aboutLabel} →</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Container>
+      </section>
+    )}
     {
       showPartners && (
         <section class="bg-surface-50 py-24">

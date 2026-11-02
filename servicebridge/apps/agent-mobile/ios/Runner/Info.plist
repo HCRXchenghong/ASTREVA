@@ -18,7 +18,8 @@
 	<string>在线客服</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
+		<!-- 只允许本地网络调试；生产服务器必须使用 HTTPS。 -->
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>

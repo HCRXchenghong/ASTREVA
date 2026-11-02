@@ -77,6 +77,8 @@ const res = await client.query(
   [NEW_EMAIL, passwordHash, encryptedSecret]
 );
 if (!res.rows.length) throw new Error('no admin user row found');
+// 重置密码/2FA 后必须撤销所有已签发会话；否则旧 Cookie 仍可继续操作。
+await client.query('UPDATE site_admin_sessions SET revoked_at = now() WHERE revoked_at IS NULL');
 await client.end();
 
 const base = 'http://127.0.0.1:1337';

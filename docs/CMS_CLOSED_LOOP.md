@@ -11,7 +11,7 @@
 - 公开内容：`GET /site-admin-api/public-content`（`?locale=en|ar` 取译文，未就绪返回 409）
 - 当前降级内容：`GET /site-admin-api/public-fallback-content`
 - 咨询单：`POST /site-admin-api/leads`
-- 草稿预览：`POST /site-admin-api/preview`（构建到官网 `/__preview/`）
+- 草稿预览：`POST /site-admin-api/preview`，构建到官网 `/__preview/<随机 token>/`，由 Caddy forward_auth 向 admin-server 校验构建 token + 后台领取的短时预览 Cookie
 - 发布：`POST /site-admin-api/publish?source=current|fallback`
 - 构建状态：`GET /site-admin-api/status`
 - 审计日志：`GET /site-admin-api/audit-events`
@@ -25,7 +25,7 @@
    - 常规编辑使用「页面 / 产品 / 全局组件 / SEO」分组；
    - 需要逐项核对时使用「全部内容」，它会按前端内容模型递归显示所有分类、产品、图片、视频、文字、SEO、导航和解决方案字段；新字段加入内容模型后也会自动出现。
 2. 保存草稿（不会影响线上），或点击「保存并发布」。
-3. 想在发布前核对效果，点击「预览草稿」：后台把当前编辑器内容（包括未保存修改）通过构建服务构建到官网的 `/__preview/` 路径，线上 `current` 不受影响。
+3. 想在发布前核对效果，点击「预览草稿」：后台把当前编辑器内容（包括未保存修改）通过构建服务构建到官网的 `/__preview/<随机 token>/` 路径，线上 `current` 不受影响。
 4. 如需调整后台不可用时使用的内容，在「发布中心 → 降级版本」中从当前已保存内容创建版本，再启用目标版本。创建不影响官网；启用后会自动发布；删除当前启用版本时会先切换到另一版本并自动发布，最后一个版本不可删除。
 5. 点击「保存并发布」后，后台携带 `REBUILD_WEBHOOK_SECRET` 请求 `FRONTEND_REBUILD_WEBHOOK_URL`。
 6. 构建服务先校验内容源（当前内容或启用的降级版本），再执行 `npm run build:frontend`，并把静态产物原子切换到官网容器共享的发布目录（`releases/` + `current` 符号链接）。

@@ -32,6 +32,7 @@
               allow-search
               placeholder="从上游获取或手动填写"
             />
+            <template #help>请选择文本生成模型；语音识别和语音合成模型不能用于网站翻译。</template>
           </a-form-item>
           <a-form-item>
             <a-checkbox v-model="form.clearApiKey">清除已保存的 API Key</a-checkbox>
@@ -152,7 +153,6 @@
     try {
       const result = await fetchTranslationModels(payload());
       form.configuredModels = result.models || [];
-      if (!form.model && form.configuredModels.length) form.model = form.configuredModels[0];
       Message.success(`已获取 ${form.configuredModels.length} 个上游模型`);
     } finally {
       fetchingModels.value = false;

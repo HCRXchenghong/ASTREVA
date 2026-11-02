@@ -17,12 +17,12 @@ ServiceBridge 是 ASTREVA 自研在线客服子系统，包括访客聊天端、
 ```bash
 cd backend
 STORE_DRIVER=memory \
-HTTP_ADDR=0.0.0.0:8080 \
+HTTP_ADDR=127.0.0.1:8080 \
 CORS_ALLOWED_ORIGINS=http://127.0.0.1:4321,http://127.0.0.1:5173 \
 go run ./cmd/server
 ```
 
-另开终端运行访客端：
+`HTTP_ADDR=127.0.0.1:8080` 是默认安全值；只有同一局域网真机联调时才改成 `0.0.0.0:8080`，并确认网络可信。`ADMIN_BOOTSTRAP_PASSWORD` 未设置时会生成本进程随机口令并打印一次，需与 admin-server 的 `SERVICEBRIDGE_ADMIN_PASSWORD` 保持一致。另开终端运行访客端：
 
 ```bash
 python3 -m http.server 5173 --bind 127.0.0.1 --directory apps/user-web
