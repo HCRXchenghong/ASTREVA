@@ -2,7 +2,7 @@
   <a-card :bordered="false" class="media-page">
     <template #title>
       <a-space>
-        <span>R2 素材库</span>
+        <span>素材库</span>
         <a-tag :color="storageTagColor">{{ storageTagText }}</a-tag>
       </a-space>
     </template>
@@ -131,7 +131,8 @@
   const storage = computed(() => stats.value.storage || runtime.value.storage || {});
   const storageTagText = computed(() => {
     if (storage.value.ok === undefined) return '存储检查中';
-    return storage.value.ok ? `${storage.value.bucket || 'S3'} 已连通` : '存储连接异常';
+    if (!storage.value.ok) return '存储连接异常';
+    return storage.value.driver === 'local' ? '本地存储已就绪' : `${storage.value.bucket || 'S3'} 已连通`;
   });
   const storageTagColor = computed(() => {
     if (storage.value.ok === undefined) return 'gray';

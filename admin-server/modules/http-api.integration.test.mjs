@@ -23,7 +23,7 @@ test('HTTP API 暴露 OpenAPI、公开内容并保护管理接口', async () => 
   const root = process.cwd();
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'astreva-http-api-data-'));
   const uploadDir = await mkdtemp(path.join(os.tmpdir(), 'astreva-http-api-upload-'));
-  const port = 19338;
+  const port = 20000 + Math.floor(Math.random() * 20000);
   const server = spawn('node', ['admin-server/server.mjs'], {
     cwd: root,
     env: {

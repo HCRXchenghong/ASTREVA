@@ -16,7 +16,7 @@ cp deployments/ubuntu/.env.ubuntu.example deployments/ubuntu/.env.ubuntu
 
 `INTERNAL_API_TOKEN` 必须是 32 位以上随机值（admin-server 与 Go 引擎共用，用于 AI 供应商明文配置和访客画像转发）。`ADMIN_SETUP_TOKEN` 生产必须显式设置（`scripts/ubuntu-one-click.sh` 会自动生成并在终端打印一次）；首次进入控制台必须填写。不要把它写进容器日志或公开渠道。生产 compose 已为 admin-server 设置 `APP_ENV=production`，弱密钥/示例值会拒绝启动。草稿预览的短时 Cookie 默认写入 `ADMIN_DOMAIN`/`SITE_DOMAIN` 的公共父域；如两个域名不在同一注册域，需用 `PREVIEW_COOKIE_DOMAIN` 指定可共享的父域，否则预览会返回 401（这是有意的安全限制）。
 
-后台素材使用对象存储：`S3_ENDPOINT` 必须同时被服务器和管理员浏览器访问（预签名直传由浏览器直接 PUT），生产推荐 Cloudflare R2 / OSS / S3 等外部存储；仓库内置的 MinIO 只监听宿主机回环，仅适合本机验证。
+后台素材使用对象存储：`S3_ENDPOINT` 必须同时被服务器和管理员浏览器访问（预签名直传由浏览器直接 PUT），生产推荐 Cloudflare R2 / OSS / S3 等外部存储；生产 Compose 不再内置 MinIO；请使用外部 R2/OSS/S3，或单机 `ADMIN_MEDIA_DRIVER=local` 本地卷。
 
 ## 操作
 

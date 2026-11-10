@@ -2,7 +2,7 @@
 
 本仓库包含 Astro 官网、Arco Design Pro Vue 统一控制台、构建发布服务和 ServiceBridge 在线客服。
 
-统一控制台使用 `1337` 端口和一次 2FA 登录，侧栏包含工作台、客服管理（账号 / 服务评价）、运营（咨询单 / 关键词 / 审计日志）、应用管理（App 版本 / API 管理）、内容管理（官网内容 / 网站翻译 / R2 素材库）和系统设置（营业时间与联系方式 / AI / 推送）。客服使用 Flutter「在线客服」App 接待访客。
+统一控制台使用 `1337` 端口和一次 2FA 登录，侧栏包含工作台、客服管理（账号 / 服务评价）、运营（咨询单 / 关键词 / 审计日志）、应用管理（App 版本 / API 管理）、内容管理（官网内容 / 网站翻译 / 素材库）和系统设置（营业时间与联系方式 / 推送 / 提醒 / 安全策略）。客服使用 Flutter「在线客服」App 接待访客。
 
 ## 总清单
 
@@ -15,6 +15,9 @@
 - [基线加固清单](docs/security/基线加固清单.md)
 - [日志留存与审计规范](docs/security/日志留存与审计规范.md)
 - [自动翻译与 AI 客户画像实施规格](docs/AI_TRANSLATION_AND_PROFILE.md)
+- [App 发布、更新与推送](docs/APP_RELEASE.md)
+- [一键部署](docs/ONE_CLICK_DEPLOY.md)
+- [运营手册](docs/OPERATIONS.md)
 
 ## 目录
 
@@ -89,7 +92,7 @@ cd servicebridge/backend && go test ./... && go vet ./...
 cd ../apps/agent-mobile && dart analyze && flutter test
 ```
 
-商业上线前仍需完成真机推送验证、正式签名发布、浏览器/真机端到端自动化、备份恢复演练和容量验收；统一记录在 [功能完善任务.md](功能完善任务.md)。
+商业上线前仍需在真实 VPS/测试域名完成部署、推送真机、备份恢复演练和容量验收；剩余事项统一记录在 [功能完善任务.md](功能完善任务.md)。
 
 ## 快速部署
 

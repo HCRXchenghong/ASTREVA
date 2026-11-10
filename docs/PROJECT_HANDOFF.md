@@ -1,6 +1,6 @@
 # ASTREVA 官网、后台与在线客服项目交接
 
-> 交接基线：2026-10-22，本地仓库 `ASTREVA-main` 的代码与只读环境检查。本文给接手开发、测试及部署同事使用。功能状态以当前代码、数据库和实际环境为准；文中“已有实现”不等于生产环境已完成端到端验收。
+> 交接基线：2026-11-10，`main` 分支与真实 PostgreSQL/浏览器回归结果。本文给接手开发、测试及部署同事使用。功能状态以当前代码、数据库和实际环境为准；文中“已有实现”不等于生产环境已完成端到端验收。
 
 ## 1. 项目目标与当前关注点
 
@@ -41,7 +41,7 @@ flowchart LR
   B -->|原子切换静态产物| F
 ```
 
-`admin-server/seed/site-content.json` 是首次初始化种子，**不是**线上运行内容。生产和当前本地运行内容在 PostgreSQL；媒体文件在 S3 兼容对象存储。不要靠修改种子文件来覆盖已初始化的网站。
+`admin-server/seed/site-content.json` 是首次初始化种子，**不是**线上运行内容。生产和当前本地运行内容在 PostgreSQL；媒体文件默认在 S3 兼容对象存储；单机一键部署可使用本地 Docker 卷（`ADMIN_MEDIA_DRIVER=local` + `ADMIN_ALLOW_LOCAL_MEDIA=true`）。不要靠修改种子文件来覆盖已初始化的网站。
 
 ## 3. 本地启动与快速定位
 
@@ -126,21 +126,14 @@ scripts/ubuntu-one-click.sh logs
 
 上线由 `deployments/ubuntu/docker-compose.ubuntu.yml` 和 `Caddyfile` 负责。发布/回滚应以明确的 Git 版本和数据库、对象存储备份为基线；不要把本地未提交修改直接当成生产版本。数据库包含内容、译文、SEO 任务及运行设置；对象存储包含后台素材；两者要一起备份和恢复。详见[生产部署说明](../deployments/ubuntu/README.md)与[运营手册](OPERATIONS.md)。
 
-## 8. 2026-10-22 本地快照与验证边界
+## 8. 当前验证边界（2026-11-10）
 
-本次只读检查：
-
-| 项目 | 检查结果 |
-| --- | --- |
-| CMS 中文内容 | 修订号 `23`。 |
-| 英文与阿拉伯语 | `en:ready:23`、`ar:ready:23`；各含 9 个静态页。 |
-| `website-site-domain` 设置 | 未发现记录；目前还没有后台填写的正式官网域名。 |
-| `website-auto-seo` 设置 | 未发现状态记录；需用后台触发一次真实 AI SEO 并验收。 |
-| 本地端点 | `4321` 官网、`1337` 登录、`8787` 重建健康检查、`8080` 客服健康检查、`5173` 访客端均返回 HTTP 200。 |
-| 默认媒体素材 | `frontend/public/assets/placeholders/` 下有 47 个文件。 |
-| 工作区 | 当前在 `master`，存在大量用户已有的未提交修改与新增文件；接手者先看 `git status --short`，不要重置、覆盖或直接发布错误分支。 |
-
-以上是一个时间点的读数，不保证进程持续运行。未在本次交接任务里重新执行完整测试、后台 2FA 登录后的媒体保存与发布、AI 上游真实生成、三语页面人工审查、客服评价或超时端到端验收。旧文档里如有“本地客服使用内存仓库”等说法，以当前 `scripts/run-local-stack.sh` 的 PostgreSQL 默认行为为准。
+- 代码在 `main`，已推送 GitHub；工作区应保持 clean。
+- 本地真实依赖回归使用隔离 PostgreSQL/Redis：admin-server 内容 API、CMS 保存/乐观锁、咨询单、媒体上传与公开 URL、降级版本、草稿预览、正式发布均通过。
+- 后台 15 个可见页面由真实 Chrome 逐页打开，15/15 无 console error、无 5xx；安全策略页单独验证可读写。
+- 客服引擎验证访客创建/WebSocket 发消息/上传、客服登录/接管/围观/结束/评价、队列、开放 API Key/scope/重置/停用、后台策略开关。
+- AI 未配置真实供应商时走明确错误/`aiBusyText`，不再返回伪造回复；真实上游生成、三语翻译、推送真机仍需在生产配置后验收。
+- 未在真实公网 VPS 执行一键安装、DNS/Let's Encrypt、备份恢复演练和容量压测；上线前必须按 [生产检查清单](PRODUCTION_CHECKLIST.md) 与 [一键部署文档](ONE_CLICK_DEPLOY.md) 完成。
 
 ## 9. 接手顺序与验收清单
 
@@ -156,7 +149,6 @@ scripts/ubuntu-one-click.sh logs
 
 - [根 README](../README.md)：项目目录与基本命令。
 - [官网内容闭环](CMS_CLOSED_LOOP.md)：保存、预览、发布和降级版本。
-- [媒体改造任务说明](media-system-task-prompt.md)：媒体字段、行为与验收要求；部分是目标说明，实际状态仍要看代码。
 - [功能状态总表](FEATURE_STATUS.md)：历史功能盘点；可能滞后于当前未提交改动。
 - [AI 翻译与画像设计](AI_TRANSLATION_AND_PROFILE.md)：数据与流程背景。
 - [生产部署说明](../deployments/ubuntu/README.md)：Compose、Caddy 和域名。

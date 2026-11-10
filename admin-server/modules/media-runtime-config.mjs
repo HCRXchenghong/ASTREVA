@@ -46,7 +46,7 @@ function secretMask(value) {
 export function mediaRuntimeConfigFromEnv(env = process.env) {
   return {
     storage: {
-      driver: 's3',
+      driver: env.ADMIN_MEDIA_DRIVER === 'local' ? 'local' : 's3',
       endpoint: clean(env.S3_ENDPOINT, 2048),
       region: clean(env.S3_REGION || 'us-east-1', 100),
       bucket: clean(env.S3_BUCKET, 255),
@@ -99,6 +99,8 @@ export function hydrateMediaRuntimeConfig(stored, fallback = mediaRuntimeConfigF
     storage: {
       ...fallback.storage,
       ...(stored.config?.storage || {}),
+      // 存储驱动是部署级开关（本地卷 / S3），不能由旧的运行时配置覆盖环境变量。
+      driver: fallback.storage.driver,
       accessKeyId: stored.secrets?.storageAccessKeyId ?? fallback.storage.accessKeyId,
       secretAccessKey: stored.secrets?.storageSecretAccessKey ?? fallback.storage.secretAccessKey,
       sessionToken: stored.secrets?.storageSessionToken ?? fallback.storage.sessionToken

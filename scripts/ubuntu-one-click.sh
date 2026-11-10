@@ -189,8 +189,6 @@ need_var REBUILD_WEBHOOK_SECRET
 need_var ADMIN_2FA_SESSION_SECRET
 need_var METRICS_BEARER_TOKEN
 need_var INTERNAL_API_TOKEN
-need_var MINIO_ROOT_USER
-need_var MINIO_ROOT_PASSWORD
 # 首次初始化令牌不写日志：未配置时本次运行生成一个随机值并注入 compose。
 ADMIN_SETUP_TOKEN="${ADMIN_SETUP_TOKEN:-$(openssl rand -base64 36 | tr -d '\n')}"
 export ADMIN_SETUP_TOKEN
@@ -211,7 +209,6 @@ validate_secret POSTGRES_PASSWORD 16
 if [[ -n "${GRAFANA_ADMIN_PASSWORD:-}" ]]; then
   validate_secret GRAFANA_ADMIN_PASSWORD 16
 fi
-validate_secret MINIO_ROOT_PASSWORD 16
 
 ADMIN_MEDIA_DRIVER="${ADMIN_MEDIA_DRIVER:-s3}"
 case "$ADMIN_MEDIA_DRIVER" in

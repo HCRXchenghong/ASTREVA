@@ -1,7 +1,7 @@
 import client from './client';
 
 // 网站翻译接口（统一后台 SPA 与 admin-server 同源，管理员 2FA Cookie 会话）。
-// 对应后端 modules/website-translation-router.mjs，旧页面 admin-server/public/translation-admin.js 已由本页替代。
+// 对应后端 modules/website-translation-router.mjs，网站翻译页面接口。
 
 export type TranslationApiType =
   | 'chat_completions'

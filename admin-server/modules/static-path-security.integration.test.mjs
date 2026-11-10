@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -61,6 +61,14 @@ test('静态资源路由拒绝目录穿越，且不影响正常资源', async ()
     assert.equal(logo.status, 200);
     const adminAsset = await request(port, '/site-admin-assets/api-docs.js');
     assert.equal(adminAsset.status, 200);
+
+    // 自定义 ADMIN_UPLOAD_DIR 下的素材必须通过 /uploads/site-admin/ 公开可读。
+    const mediaDir = uploadDir;
+    await mkdir(mediaDir, { recursive: true });
+    await writeFile(path.join(mediaDir, 'e2e-media.txt'), 'media-ok');
+    const media = await request(port, '/uploads/site-admin/e2e-media.txt');
+    assert.equal(media.status, 200);
+    assert.equal(media.body, 'media-ok');
 
     // 目录穿越必须被拒绝（403），绝不能返回仓库/容器内的文件内容。
     const traversals = [

@@ -32,8 +32,8 @@ export default {
       path: 'media',
       name: 'Media',
       component: () => import('@/views/content/media.vue'),
-      meta: { title: 'R2 素材库',
-        locale: 'R2 素材库', requiresAuth: true },
+      meta: { title: '素材库',
+        locale: '素材库', requiresAuth: true },
     },
   ],
 };

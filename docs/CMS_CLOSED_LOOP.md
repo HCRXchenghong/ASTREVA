@@ -6,7 +6,7 @@
 - 统一控制台：`http://127.0.0.1:1337/site-admin/`
 - 内容编辑：控制台左侧「内容管理 → 官网内容」
 - 网站翻译：控制台左侧「内容管理 → 网站翻译」
-- R2 素材库：控制台左侧「内容管理 → R2 素材库」
+- 素材库：控制台左侧「内容管理 → 素材库」
 - 客服账号与会话：控制台左侧「客服管理」和「工作台」
 - 公开内容：`GET /site-admin-api/public-content`（`?locale=en|ar` 取译文，未就绪返回 409）
 - 当前降级内容：`GET /site-admin-api/public-fallback-content`

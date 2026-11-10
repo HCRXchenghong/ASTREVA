@@ -627,7 +627,7 @@ write_env() {
   fi
 
   # 已有部署：绝不轮换 DATA_ENCRYPTION_KEY / POSTGRES_PASSWORD / 管理员口令，否则会解不开旧数据。
-  local data_key postgres_password admin_password agent_password session_secret rebuild_secret metrics_token internal_token minio_password setup_token
+  local data_key postgres_password admin_password agent_password session_secret rebuild_secret metrics_token internal_token setup_token
   data_key="$(env_get "$env_file" DATA_ENCRYPTION_KEY)"
   postgres_password="$(env_get "$env_file" POSTGRES_PASSWORD)"
   admin_password="$(env_get "$env_file" ADMIN_BOOTSTRAP_PASSWORD)"
@@ -636,7 +636,6 @@ write_env() {
   rebuild_secret="$(env_get "$env_file" REBUILD_WEBHOOK_SECRET)"
   metrics_token="$(env_get "$env_file" METRICS_BEARER_TOKEN)"
   internal_token="$(env_get "$env_file" INTERNAL_API_TOKEN)"
-  minio_password="$(env_get "$env_file" MINIO_ROOT_PASSWORD)"
   setup_token="$(env_get "$env_file" ADMIN_SETUP_TOKEN)"
 
   if [[ -z "$data_key" || "$data_key" == change-me* ]]; then
@@ -650,7 +649,6 @@ write_env() {
   [[ -n "$rebuild_secret" ]] || rebuild_secret="$(rand_hex 32)"
   [[ -n "$metrics_token" ]] || metrics_token="$(rand_hex 24)"
   [[ -n "$internal_token" ]] || internal_token="$(rand_hex 32)"
-  [[ -n "$minio_password" ]] || minio_password="$(rand_hex 24)"
   [[ -n "$setup_token" ]] || setup_token="$(rand_hex 24)"
   if [[ "$existed" -eq 1 && "$postgres_password" == change-me* ]]; then
     die "已有环境文件里的 POSTGRES_PASSWORD 仍是示例值，拒绝自动轮换（会与旧数据库不匹配）；请手工恢复"
@@ -662,7 +660,6 @@ write_env() {
   [[ "$rebuild_secret" == change-me* ]] && rebuild_secret="$(rand_hex 32)"
   [[ "$metrics_token" == change-me* ]] && metrics_token="$(rand_hex 24)"
   [[ "$internal_token" == change-me* ]] && internal_token="$(rand_hex 32)"
-  [[ "$minio_password" == change-me* ]] && minio_password="$(rand_hex 24)"
 
   env_set "$env_file" SITE_DOMAIN "$DOMAIN"
   env_set "$env_file" ADMIN_DOMAIN "$ADMIN_DOMAIN"
@@ -686,8 +683,6 @@ write_env() {
   env_set "$env_file" REBUILD_WEBHOOK_SECRET "$rebuild_secret"
   env_set "$env_file" METRICS_BEARER_TOKEN "$metrics_token"
   env_set "$env_file" INTERNAL_API_TOKEN "$internal_token"
-  env_set "$env_file" MINIO_ROOT_USER "$(env_get "$env_file" MINIO_ROOT_USER || echo astreva-minio)"
-  env_set "$env_file" MINIO_ROOT_PASSWORD "$minio_password"
   env_set "$env_file" ADMIN_SETUP_TOKEN "$setup_token"
   env_set "$env_file" CORS_ALLOWED_ORIGINS "https://$DOMAIN,https://$ADMIN_DOMAIN,https://$SERVICE_DOMAIN"
   env_set "$env_file" FRAME_ANCESTORS "https://$DOMAIN"
@@ -760,9 +755,9 @@ deploy_stack() {
   CURRENT_STEP="构建并启动服务"
   log "校验 Compose 配置..."
   compose config >/dev/null || die "Compose 配置校验失败，请检查 .env.ubuntu"
-  log "拉取基础设施镜像（数据库/Redis/MinIO/Caddy）..."
+  log "拉取基础设施镜像（数据库/Redis/Caddy）..."
   local service
-  for service in postgres redis minio caddy; do
+  for service in postgres redis caddy; do
     compose pull "$service" >/dev/null 2>&1 || warn "拉取 $service 镜像失败，将尝试使用本地缓存/构建"
   done
   fix_volume_ownership
@@ -825,7 +820,6 @@ health_checks() {
   running="$(compose ps --services --filter status=running 2>/dev/null || true)"
   while IFS= read -r svc; do
     [[ -n "$svc" ]] || continue
-    if [[ "$svc" == "minio-init" ]]; then continue; fi
     if ! grep -qx "$svc" <<<"$running"; then
       printf '\033[1;31m[fail]\033[0m 容器未运行：%s\n' "$svc" >&2
       failures=$((failures+1))
@@ -836,7 +830,6 @@ health_checks() {
   while IFS= read -r id; do
     [[ -n "$id" ]] || continue
     name="$(docker inspect -f '{{.Name}}' "$id" 2>/dev/null || echo "$id")"
-    if [[ "$name" == *"minio-init"* ]]; then continue; fi
     state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || echo unknown)"
     case "$state" in
       healthy|running) ;;

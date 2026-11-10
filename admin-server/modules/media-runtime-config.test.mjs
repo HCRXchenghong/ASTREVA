@@ -72,3 +72,14 @@ test('图片处理与上传限制会标准化并持久化可执行参数', () =>
   assert.equal(next.allowedMimeTypes, 'image/jpeg,image/png,application/pdf');
   assert.throws(() => normalizeImageUpdate({ allowedMimeTypes: 'image/svg+xml' }, current), /暂不支持/);
 });
+
+test('ADMIN_MEDIA_DRIVER=local 必须真正切换为本地存储，且不被旧运行时配置覆盖', () => {
+  const local = mediaRuntimeConfigFromEnv({ ADMIN_MEDIA_DRIVER: 'local' });
+  assert.equal(local.storage.driver, 'local');
+  const hydrated = hydrateMediaRuntimeConfig({
+    config: { storage: { driver: 's3', bucket: 'old-bucket' } },
+    secrets: {}
+  }, local);
+  assert.equal(hydrated.storage.driver, 'local');
+  assert.equal(publicMediaRuntimeConfig(hydrated).storage.driver, 'local');
+});

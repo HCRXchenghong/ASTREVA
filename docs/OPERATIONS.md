@@ -13,11 +13,11 @@
 - `S3_PUBLIC_BASE_URL`
 - 对应的 S3 endpoint、region 与访问凭据（如供应商不使用实例角色）
 
-这些环境变量只用于首次启动种子。后台首次启动会将 R2/S3 与 AI 生图配置迁入 PostgreSQL 的 `site_runtime_settings`；之后以“统一控制台 → 内容管理 → R2 素材库 → 系统设置”里保存的配置为准。Access Key、Secret Access Key、Session Token 与 AI API Key 使用 `CMS_DATA_ENCRYPTION_KEY` 做 AES-256-GCM 加密，读取接口只返回是否已配置和末四位掩码。
+这些环境变量只用于首次启动种子。后台首次启动会将 R2/S3 与 AI 生图配置迁入 PostgreSQL 的 `site_runtime_settings`；之后以“统一控制台 → 内容管理 → 素材库 → 系统设置”里保存的配置为准。Access Key、Secret Access Key、Session Token 与 AI API Key 使用 `CMS_DATA_ENCRYPTION_KEY` 做 AES-256-GCM 加密，读取接口只返回是否已配置和末四位掩码。
 
 R2 配置保存前会真实执行 `HeadBucket`。素材库已有记录时，后台禁止直接修改 Endpoint、Bucket、对象前缀或 Public URL，避免旧记录对应的对象被错误删除或替换；切换存储身份必须先执行对象迁移。凭据、Region、寻址方式和服务端加密策略可以在线更新并立即生效。
 
-R2 素材库支持智能 WebP 上传、原文件上传、稳定 URL 替换、批量删除与预签名 PUT 直传。可用以下变量调整图片策略：
+素材库支持智能 WebP 上传、原文件上传、稳定 URL 替换、批量删除与预签名 PUT 直传。可用以下变量调整图片策略：
 
 - `ADMIN_UPLOAD_MAX_BYTES`：后台上传和直传确认的大小上限。
 - `ADMIN_IMAGE_VARIANT_WIDTHS`：逗号分隔的 WebP 变体宽度。
@@ -40,7 +40,7 @@ R2 素材库支持智能 WebP 上传、原文件上传、稳定 URL 替换、批
 
 预签名确认接口会通过 `HeadObject` 和对象前 128 KiB 内容复核真实存在性、大小、Content-Type 与文件魔数；校验失败的对象会被删除且不入库。
 
-AI 生图初始密钥由服务端读取 `ADMIN_OPENAI_IMAGE_API_KEY`，迁入 PostgreSQL 后可在“R2 素材库 → 系统设置 → AI 生图”中更新。自定义兼容 API 时，还必须把主机名显式写入请求主机白名单；这个白名单用于阻止 SSRF。保存新密钥时会真实请求模型接口验证，明文密钥不会返回浏览器。未配置密钥时，媒体库其他功能正常使用，页面会明确标记 AI 功能不可用。
+AI 生图初始密钥由服务端读取 `ADMIN_OPENAI_IMAGE_API_KEY`，迁入 PostgreSQL 后可在“素材库 → 系统设置 → AI 生图”中更新。自定义兼容 API 时，还必须把主机名显式写入请求主机白名单；这个白名单用于阻止 SSRF。保存新密钥时会真实请求模型接口验证，明文密钥不会返回浏览器。未配置密钥时，媒体库其他功能正常使用，页面会明确标记 AI 功能不可用。
 
 旧 JSON 与本地媒体使用以下命令一次性迁移并清理：
 
@@ -64,7 +64,7 @@ bash scripts/start-local-storage.sh
 | 对象 | 备份方式 | 是否在本仓库脚本内 |
 | --- | --- | --- |
 | PostgreSQL（内容、管理员、降级版本、素材记录、发布队列、审计） | `scripts/backup-production.sh` 每日全量 `pg_dump` + gzip + SHA-256 | 是 |
-| 对象存储媒体文件（R2 / S3 / MinIO） | 供应商侧 bucket versioning、跨区复制、生命周期归档 | 否，必须在供应商侧开启 |
+| 对象存储媒体文件（R2 / S3） | 供应商侧 bucket versioning、跨区复制、生命周期归档 | 否，必须在供应商侧开启 |
 | `.env.ubuntu`（密钥、域名、口令） | 离线加密保管（密码管理器/密管系统），不进 Git | 否 |
 | Caddy 证书与配置卷 | 由 Caddy 自动签发/续期，无需备份；自定义 Caddyfile 已入 Git | 否 |
 

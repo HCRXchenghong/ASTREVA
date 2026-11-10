@@ -1,7 +1,7 @@
 import { sanitizeCmsContent } from './html-sanitize.mjs';
 
 /** 发布队列、构建状态与审计记录的 HTTP 边界。 */
-export function createPublishRouter({ platformStore, publishService, verifySession, auditEvent, json, publicOrigin }) {
+export function createPublishRouter({ platformStore, publishService, verifySession, auditEvent, bodyJson, json, publicOrigin }) {
   return async function handlePublish(req, res, pathname) {
     const isRoute =
       pathname === '/site-admin-api/audit-events' ||

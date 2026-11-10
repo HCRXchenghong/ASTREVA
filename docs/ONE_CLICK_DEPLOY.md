@@ -83,7 +83,7 @@ ASTREVA_COMMIT=<40位commit> ASTREVA_USE_MIRRORS=0
 
 首次安装默认使用本地 Docker 卷（`ADMIN_MEDIA_DRIVER=local`、`UPLOAD_DRIVER=local`、`ADMIN_ALLOW_LOCAL_MEDIA=true`），不依赖外部对象存储。
 
-已有部署如果原来是 `ADMIN_MEDIA_DRIVER=s3`，脚本会保留原 S3 配置，不会清空。
+已有部署如果原来是 `ADMIN_MEDIA_DRIVER=s3`，脚本会保留原 S3 配置，不会清空。生产 Compose 不再内置 MinIO；素材使用外部 R2/S3 或单机本地卷。
 
 ## 非交互示例
 

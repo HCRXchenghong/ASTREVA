@@ -1,5 +1,5 @@
-// R2 素材库通用工具：格式化、复制、MIME 推断与直传辅助。
-// 迁移自 admin-server/public/media-admin.js 中的同名工具函数，行为保持一致。
+// 素材库通用工具：格式化、复制、MIME 推断与直传辅助。
+// 媒体列表/URL 工具函数。
 import { h } from 'vue';
 import { Message } from '@arco-design/web-vue';
 
