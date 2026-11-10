@@ -1,6 +1,8 @@
 # ASTREVA 官网、后台与在线客服项目交接
 
-> 交接基线：2026-11-10，`main` 分支与真实 PostgreSQL/浏览器回归结果。本文给接手开发、测试及部署同事使用。功能状态以当前代码、数据库和实际环境为准；文中“已有实现”不等于生产环境已完成端到端验收。
+> 版本：v1.4.5 · 更新时间：2026-11-10
+
+> 交接基线：2026-11-10 · v1.4.5，`main` 分支与真实 PostgreSQL/浏览器回归结果。非配置遗留项见 [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)。本文给接手开发、测试及部署同事使用。功能状态以当前代码、数据库和实际环境为准；文中“已有实现”不等于生产环境已完成端到端验收。
 
 ## 1. 项目目标与当前关注点
 
@@ -41,7 +43,7 @@ flowchart LR
   B -->|原子切换静态产物| F
 ```
 
-`admin-server/seed/site-content.json` 是首次初始化种子，**不是**线上运行内容。生产和当前本地运行内容在 PostgreSQL；媒体文件默认在 S3 兼容对象存储；单机一键部署可使用本地 Docker 卷（`ADMIN_MEDIA_DRIVER=local` + `ADMIN_ALLOW_LOCAL_MEDIA=true`）。不要靠修改种子文件来覆盖已初始化的网站。
+`admin-server/seed/site-content.json` 是首次初始化种子，**不是**线上运行内容。生产和当前本地运行内容在 PostgreSQL；媒体文件默认使用本地 Docker 卷（`ADMIN_MEDIA_DRIVER=local` + `ADMIN_ALLOW_LOCAL_MEDIA=true`）；也支持外部 S3/R2。备份脚本会同时归档 PostgreSQL 与两个本地媒体卷。不要靠修改种子文件来覆盖已初始化的网站。
 
 ## 3. 本地启动与快速定位
 
@@ -65,7 +67,7 @@ bash scripts/run-local-stack.sh
 | 客服健康检查 | `http://127.0.0.1:8080/healthz` | `.local-logs/servicebridge-backend.log` |
 | 重建服务健康检查 | `http://127.0.0.1:8787/healthz` | `.local-logs/rebuild-webhook.log` |
 
-本地必需的配置类别：CMS 数据库、客服数据库、S3/MinIO、后台 2FA 会话密钥、CMS/客服 AI Key 加密密钥、发布 webhook 密钥、官网/后台/客服公开地址与 CORS。变量名和示例见仓库根目录 `.env.example`；**不要复制示例密码进生产**。本地访问返回 200 只说明端点可达，不能代表后台登录、构建与客服业务全链路通过。
+本地必需的配置类别：CMS 数据库、客服数据库、可选 S3/R2（或本地媒体卷）、后台 2FA 会话密钥、CMS/客服 AI Key 加密密钥、发布 webhook 密钥、官网/后台/客服公开地址与 CORS。变量名和示例见仓库根目录 `.env.example`；**不要复制示例密码进生产**。本地访问返回 200 只说明端点可达，不能代表后台登录、构建与客服业务全链路通过。
 
 ## 4. 内容、媒体与发布闭环
 

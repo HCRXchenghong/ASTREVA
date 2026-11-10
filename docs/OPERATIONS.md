@@ -1,5 +1,7 @@
 # 生产运维：CMS 数据、媒体、备份与监控
 
+> 版本：v1.4.5 · 更新时间：2026-11-10
+
 ## 存储切换
 
 生产 Compose 固定 `CMS_STORE_DRIVER=postgres`；多机部署使用 `ADMIN_MEDIA_DRIVER=s3`，单机一键部署可使用 `ADMIN_MEDIA_DRIVER=local` + `ADMIN_ALLOW_LOCAL_MEDIA=true`。旧 JSON 运行数据不再由后台自动读取。首次升级使用下方一次性切换命令，核验通过后会删除旧 JSON 与本地媒体；新实例仅使用镜像内只读种子初始化空数据库。
@@ -64,7 +66,8 @@ bash scripts/start-local-storage.sh
 | 对象 | 备份方式 | 是否在本仓库脚本内 |
 | --- | --- | --- |
 | PostgreSQL（内容、管理员、降级版本、素材记录、发布队列、审计） | `scripts/backup-production.sh` 每日全量 `pg_dump` + gzip + SHA-256 | 是 |
-| 对象存储媒体文件（R2 / S3） | 供应商侧 bucket versioning、跨区复制、生命周期归档 | 否，必须在供应商侧开启 |
+| 本地媒体卷（`admin-uploads` / `servicebridge-uploads`） | `scripts/backup-production.sh` 每日 `tar.gz` + SHA-256（停机一致性需自行控制） | 是 |
+| 外部对象存储媒体文件（R2 / S3） | 供应商侧 bucket versioning、跨区复制、生命周期归档 | 否，必须在供应商侧开启 |
 | `.env.ubuntu`（密钥、域名、口令） | 离线加密保管（密码管理器/密管系统），不进 Git | 否 |
 | Caddy 证书与配置卷 | 由 Caddy 自动签发/续期，无需备份；自定义 Caddyfile 已入 Git | 否 |
 
@@ -73,19 +76,21 @@ bash scripts/start-local-storage.sh
 在生产主机上设置一个非根目录的 `ASTREVA_BACKUP_DIR`，并用 cron 每日执行：
 
 ```bash
-0 2 * * * ASTREVA_BACKUP_DIR=/srv/astreva-backups /path/to/ASTREVA-main/scripts/backup-production.sh
+0 2 * * * ASTREVA_STACK_NAME=astreva-ubuntu ASTREVA_BACKUP_DIR=/srv/astreva-backups /path/to/ASTREVA-main/scripts/backup-production.sh
 ```
 
 脚本行为：
 
 - 生成 PostgreSQL `pg_dump --format=plain` 的 gzip 文件与同名 `.sha256` 校验文件，默认保留 30 天（`ASTREVA_BACKUP_RETENTION_DAYS`）。
+- 同时归档 `astreva-<stack>_admin-uploads` 与 `servicebridge-uploads` 两个本地卷为 `.tar.gz` + `.sha256`；找不到卷时给出提示并继续（S3/R2 模式）。
+- 备份前请确认 `ASTREVA_STACK_NAME` 与实际 Compose 项目名一致（安装器默认 `astreva-ubuntu`）。
 - 写完先 `gzip -t` 校验压缩完整性，再生成 `.sha256` 并校验摘要格式（64 位十六进制），避免把截断的校验文件当成有效备份。
 - 校验命令自动选择 `sha256sum`（Linux）或 `shasum -a 256`（macOS 默认）；恢复时重新计算摘要逐字节比对，不依赖 `-c` 的退出码。
 - 可选：设置 `ASTREVA_BACKUP_TEXTFILE=/var/lib/node_exporter/textfile/astreva_backup.prom` 会额外写出
   `astreva_backup_last_success_timestamp_seconds`，供监控的 `AstrevaBackupStale` 告警判断备份新鲜度。
 - 备份失败（非 0 退出）时 cron 会发邮件；请确保 `MAILTO` 或外部告警通道可用。
 
-对象存储需在供应商侧启用 bucket versioning、跨区复制或生命周期归档，因为媒体不在 PostgreSQL 备份内。
+本地媒体卷已纳入备份；S3/R2 模式仍需在供应商侧启用 bucket versioning、跨区复制或生命周期归档。
 
 ### RPO / RTO 目标模板
 
@@ -94,7 +99,8 @@ bash scripts/start-local-storage.sh
 | 数据/能力 | 恢复手段 | RPO（可丢多久） | RTO（多久恢复） | 验收方式 |
 | --- | --- | --- | --- | --- |
 | PostgreSQL（全站内容与后台数据） | 每日全量备份 + 恢复演练 | ≤ 24 小时 | ≤ 2 小时 | `scripts/restore-production.sh` 通过 |
-| 对象存储媒体 | bucket versioning + 生命周期归档 | ≈ 0（版本可回滚） | ≤ 1 小时 | 版本回滚 + 抽查对象可访问 |
+| 本地媒体卷（默认） | 每日 tar.gz + 恢复演练 | ≤ 24 小时 | ≤ 2 小时 | 解包到两个卷后抽查素材 URL |
+| 外部对象存储媒体 | bucket versioning + 生命周期归档 | ≈ 0（版本可回滚） | ≤ 1 小时 | 版本回滚 + 抽查对象可访问 |
 | 运行时配置与密钥 | 离线加密副本 | 随每次变更 | ≤ 1 小时 | 用副本重建 `.env.ubuntu` 并启动 |
 | 整体站点 | 上述组合 | ≤ 24 小时 | ≤ 4 小时 | 端到端演练（含官网与后台登录） |
 
@@ -108,7 +114,7 @@ bash scripts/start-local-storage.sh
 2. 执行非交互演练：
 
    ```bash
-   scripts/restore-production.sh --yes /srv/astreva-backups/astreva-postgres-20260101T020000Z.sql.gz
+   ASTREVA_STACK_NAME=astreva-ubuntu scripts/restore-production.sh --yes /srv/astreva-backups/astreva-postgres-20260101T020000Z.sql.gz
    ```
 
    脚本会先校验 SHA-256 与 gzip 完整性，再删除并重建目标库，然后
@@ -125,14 +131,28 @@ bash scripts/start-local-storage.sh
 4. 人工补充核验（脚本无法自动完成）：
 
    - 用恢复库启动一个**临时**后台实例，确认能登录并看到最新内容与最近一次发布结果；
-   - 抽查若干 `site_media` 记录对应的对象存储 URL 仍可访问（备份不含对象存储本体）；
+   - 抽查若干 `site_media` 记录对应的本地媒体 URL 仍可访问（S3/R2 模式则查供应商对象）；
    - 恢复耗时对照 RTO 目标，超标则记录改进项。
 
-5. 演练结束后清理隔离库：
+5. **本地媒体卷恢复（默认本地媒体模式，必须做）**：
+
+   备份脚本已为两个卷生成独立归档与 `.sha256`。恢复时先停写入方（脚本会处理），再执行：
+
+   ```bash
+   export ASTREVA_STACK_NAME=astreva-ubuntu
+   scripts/restore-media.sh --yes --volume admin-uploads \
+     /srv/astreva-backups/astreva-admin-uploads-<时间戳>.tar.gz
+   scripts/restore-media.sh --yes --volume servicebridge-uploads \
+     /srv/astreva-backups/astreva-servicebridge-uploads-<时间戳>.tar.gz
+   ```
+
+   脚本会校验 SHA-256、gzip 完整性，停止 `admin-server` 或两个 Go 后端，清空目标卷并解包，然后重启服务。对象存储（R2/S3）模式不需要这一步。
+
+6. 演练结束后清理隔离库：
 
    ```bash
    docker compose --env-file deployments/ubuntu/.env.ubuntu \
-     -f deployments/ubuntu/docker-compose.ubuntu.yml \
+     -f deployments/ubuntu/docker-compose.ubuntu.yml -p astreva-ubuntu \
      exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" --if-exists customer_service_restore'
    ```
 

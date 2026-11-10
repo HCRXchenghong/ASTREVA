@@ -13,7 +13,7 @@
 #   - 对 GitHub、Docker 安装脚本、Docker 镜像源做延迟探测，优先使用可用且较快的渠道
 #   - 交互式询问部署域名和 ACME 邮箱（也可用 ASTREVA_DOMAIN / ASTREVA_EMAIL 非交互传入）
 #   - 生成 .env.ubuntu（保留已有密钥），Caddy 自动签发并续期证书
-#   - 已有旧版本时先备份 PostgreSQL，再原地更新，不执行 down -v，不动数据库卷
+#   - 已有旧版本时先备份 PostgreSQL + 本地媒体卷，再原地更新，不执行 down -v，不动数据库卷
 #   - 部署完成后检查官网、后台、客服 API、容器健康和证书，全部正常才退出 0
 #
 # 常用环境变量：
@@ -712,7 +712,7 @@ compose() {
 }
 
 backup_before_update() {
-  CURRENT_STEP="更新前备份数据库"
+  CURRENT_STEP="更新前备份数据库与媒体卷"
   local env_file="$INSTALL_DIR/deployments/ubuntu/.env.ubuntu"
   local backup_dir
   backup_dir="$INSTALL_DIR/backups/pre-deploy-$(date +%Y%m%dT%H%M%SZ)"
@@ -720,11 +720,12 @@ backup_before_update() {
   cp "$env_file" "$backup_dir/.env.ubuntu"
   chmod 600 "$backup_dir/.env.ubuntu"
   if compose ps -q postgres 2>/dev/null | grep -q .; then
-    log "检测到旧版本 PostgreSQL，执行 pg_dump 备份..."
+    log "检测到旧版本 PostgreSQL，执行数据库与本地媒体卷备份..."
     COMPOSE_PROJECT_NAME="$STACK_NAME" \
+    ASTREVA_STACK_NAME="$STACK_NAME" \
     ASTREVA_UBUNTU_ENV="$env_file" \
     ASTREVA_BACKUP_DIR="$backup_dir" \
-    bash "$INSTALL_DIR/scripts/backup-production.sh" || die "数据库备份失败，已停止更新（不会动数据库）"
+    bash "$INSTALL_DIR/scripts/backup-production.sh" || die "数据库/媒体卷备份失败，已停止更新（不会动数据库）"
   else
     log "首次安装或数据库未启动，跳过数据库备份"
   fi
@@ -901,7 +902,7 @@ $SETUP_TOKEN
 
 配置：$INSTALL_DIR/deployments/ubuntu/.env.ubuntu
 证书：Caddy 自动签发并自动续期（数据卷 caddy-data）
-更新：重新执行本脚本即可；会先备份 PostgreSQL，再原地更新，不会 down -v
+更新：重新执行本脚本即可；会先备份 PostgreSQL 与本地媒体卷，再原地更新，不会 down -v
 日志：docker compose -f $INSTALL_DIR/deployments/ubuntu/docker-compose.ubuntu.yml logs -f
 ============================================================
 EOF

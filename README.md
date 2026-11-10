@@ -1,5 +1,7 @@
 # ASTREVA 独立站
 
+> 当前生产版本：**v1.4.5**（2026-11-10）。上线前请先阅读 [生产就绪说明](docs/PRODUCTION_READINESS.md) 与 [上线检查清单](docs/PRODUCTION_CHECKLIST.md)。
+
 本仓库包含 Astro 官网、Arco Design Pro Vue 统一控制台、构建发布服务和 ServiceBridge 在线客服。
 
 统一控制台使用 `1337` 端口和一次 2FA 登录，侧栏包含工作台、客服管理（账号 / 服务评价）、运营（咨询单 / 关键词 / 审计日志）、应用管理（App 版本 / API 管理）、内容管理（官网内容 / 网站翻译 / 素材库）和系统设置（营业时间与联系方式 / 推送 / 提醒 / 安全策略）。客服使用 Flutter「在线客服」App 接待访客。
@@ -7,6 +9,8 @@
 ## 总清单
 
 - [二期功能总清单：已实现 / 需你侧配置 / 未做与已知限制](docs/FEATURE_STATUS.md)
+- [生产就绪说明：代码/脚本/验证层面的遗留问题](docs/PRODUCTION_READINESS.md)
+- [生产上线检查清单](docs/PRODUCTION_CHECKLIST.md)
 
 ## 安全与合规文档
 
@@ -52,7 +56,7 @@ bash scripts/run-local-stack.sh
 
 开发控制台时可以用热更新：`npm run dev:admin-web`（Vite 起在 `5174`，把 `/site-admin-api` 与 `/site-admin-auth` 代理到 `1337`）。
 
-首次进入控制台时，由站点管理员创建自己的邮箱、密码并绑定 2FA。**首次初始化必须填写 `ADMIN_SETUP_TOKEN`**：生产环境必须显式配置（`scripts/ubuntu-one-click.sh` 会自动生成并在终端打印一次；直接 `docker compose` 时需自行设置），本地未配置时启动日志会生成一次性随机令牌。初始化接口还会再次确认“仍无管理员”，旧挑战不能覆盖已建账号。客服账号在「客服管理 → 客服账号」中新建，随后用于登录「在线客服」App。本地脚本默认使用内存客服仓库，客服 API 默认只绑 `127.0.0.1:8080`；需要同一局域网真机访问时显式设置 `ASTREVA_ALLOW_LAN=1`（会监听 `0.0.0.0:8080`，仅限可信网络）。重启后本地客服账号和会话会清空，生产 Compose 使用 PostgreSQL。
+首次进入控制台时，由站点管理员创建自己的邮箱、密码并绑定 2FA。**首次初始化必须填写 `ADMIN_SETUP_TOKEN`**：生产环境必须显式配置（`scripts/ubuntu-one-click.sh` 会自动生成并在终端打印一次；直接 `docker compose` 时需自行设置），本地未配置时启动日志会生成一次性随机令牌。初始化接口还会再次确认“仍无管理员”，旧挑战不能覆盖已建账号。客服账号在「客服管理 → 客服账号」中新建，随后用于登录「在线客服」App。`run-local-stack.sh` 默认使用 PostgreSQL（`STORE_DRIVER=postgres`，独立 `astreva_engine` 库），客服 API 默认只绑 `127.0.0.1:8080`；需要同一局域网真机访问时显式设置 `ASTREVA_ALLOW_LAN=1`（会监听 `0.0.0.0:8080`，仅限可信网络）。不要用 `STORE_DRIVER=memory` 做持久化验证（重启即丢）。生产 Compose 使用 PostgreSQL。
 
 ## 内容、翻译与客服
 
@@ -84,15 +88,15 @@ App 启动时调用 `GET /api/app-config` 获取公开的 Firebase 参数；控�
 ## 验证
 
 ```bash
-bash scripts/verify-all.sh        # 一键跑完下面所有检查
+bash scripts/verify-all.sh        # 11 项：语法/契约/后台测试/构建/Go/Compose/Caddy/Flutter/PG
 npm run build:admin-web
 node --check admin-server/server.mjs
 npm run test:admin
 cd servicebridge/backend && go test ./... && go vet ./...
-cd ../apps/agent-mobile && dart analyze && flutter test
+cd ../apps/agent-mobile && dart analyze
 ```
 
-商业上线前仍需在真实 VPS/测试域名完成部署、推送真机、备份恢复演练和容量验收；剩余事项统一记录在 [功能完善任务.md](功能完善任务.md)。
+商业上线前仍需在真实 VPS/测试域名完成部署、推送真机、备份恢复演练和容量验收；代码级遗留项与放行条件见 [生产就绪说明](docs/PRODUCTION_READINESS.md)，剩余事项见 [功能完善任务.md](功能完善任务.md)。
 
 ## 快速部署
 

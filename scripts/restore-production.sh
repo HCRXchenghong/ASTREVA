@@ -25,6 +25,7 @@ DEPLOY_DIR="$ROOT_DIR/deployments/ubuntu"
 ENV_FILE="${ASTREVA_UBUNTU_ENV:-$DEPLOY_DIR/.env.ubuntu}"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.ubuntu.yml"
 DEFAULT_TARGET_DB="customer_service_restore"
+STACK_NAME="${ASTREVA_STACK_NAME:-astreva-ubuntu}"
 
 TARGET_DB="$DEFAULT_TARGET_DB"
 ASSUME_YES=0
@@ -45,6 +46,9 @@ usage() {
       --env-file PATH       生产环境文件，默认 deployments/ubuntu/.env.ubuntu
       --compose-file PATH   Compose 文件，默认 deployments/ubuntu/docker-compose.ubuntu.yml
   -h, --help                显示帮助
+
+环境变量：
+  ASTREVA_STACK_NAME        Compose 项目名，默认 astreva-ubuntu；必须与实际部署一致
 
 行为：
   * 校验 <backup.sql.gz>.sha256（sha256sum 或 macOS 的 shasum -a 256）。
@@ -130,8 +134,8 @@ if [[ ! -f "$COMPOSE_FILE" ]]; then
   exit 1
 fi
 
-# shellcheck disable=SC1090
 set -a
+# shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
 
@@ -160,7 +164,7 @@ if [[ "$TARGET_DB" == "$POSTGRES_DB" && "$FORCE_PRODUCTION" -ne 1 ]]; then
 fi
 
 compose() {
-  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" -p "$STACK_NAME" "$@"
 }
 
 psql_admin() {
@@ -184,7 +188,7 @@ ok_check() { printf '  [ OK ] %s\n' "$1"; }
 on_error() {
   local code=$?
   printf '\n恢复流程失败（退出码 %s，第 %s 行）。目标数据库：%s\n' "$code" "${BASH_LINENO[0]:-?}" "$TARGET_DB" >&2
-  printf '排查：docker compose -f %s --env-file %s ps postgres；确认容器在运行且磁盘有足够空间。\n' "$COMPOSE_FILE" "$ENV_FILE" >&2
+  printf '排查：docker compose -f %s --env-file %s -p %s ps postgres；确认容器在运行且磁盘有足够空间。\n' "$COMPOSE_FILE" "$ENV_FILE" "$STACK_NAME" >&2
 }
 trap on_error ERR
 
@@ -231,7 +235,7 @@ fi
 ok_check "gzip 完整性校验通过"
 
 if ! compose ps -q postgres | grep -q .; then
-  echo "postgres 容器未运行，无法恢复。先执行：docker compose -f $COMPOSE_FILE --env-file $ENV_FILE up -d postgres" >&2
+  echo "postgres 容器未运行，无法恢复。先执行：docker compose -f $COMPOSE_FILE --env-file $ENV_FILE -p $STACK_NAME up -d postgres" >&2
   exit 1
 fi
 if ! compose exec -T postgres pg_isready -q -U "$POSTGRES_USER" -d postgres; then
@@ -344,8 +348,16 @@ printf '  site_media             行数=%s\n' "$media_rows"
 printf '  最近一次发布记录       %s\n' "$latest_job"
 printf '  当前降级版本引用异常    %s\n' "$orphan_fallbacks"
 
-[[ "$content_rows" == "1" ]] && ok_check "site_content 恰好一行（当前内容）" || fail_check "site_content 行数应为 1，实际 $content_rows"
-[[ "$content_shape_ok" == "t" ]] && ok_check "site_content.content 含 site/home 字段" || fail_check "site_content.content 结构异常（缺少 site 或 home）"
+if [[ "$content_rows" == "1" ]]; then
+  ok_check "site_content 恰好一行（当前内容）"
+else
+  fail_check "site_content 行数应为 1，实际 $content_rows"
+fi
+if [[ "$content_shape_ok" == "t" ]]; then
+  ok_check "site_content.content 含 site/home 字段"
+else
+  fail_check "site_content.content 结构异常（缺少 site 或 home）"
+fi
 if [[ "$admin_rows" == "0" ]]; then
   warn_check "site_admin_users 为空：恢复后无法登录后台，请确认备份来源是否包含管理员"
 else
@@ -382,6 +394,6 @@ cat <<EOF
   1. 用恢复库启动一个临时后台实例，确认能登录并看到最新内容；
   2. 抽查 site_media 记录对应的对象存储文件仍可访问（备份不含对象存储本体）；
   3. 记录本次演练时间、备份时间戳与校验值，归档到运维记录。
-清理隔离库：docker compose -f $COMPOSE_FILE --env-file $ENV_FILE exec -T postgres \\
+清理隔离库：docker compose -f $COMPOSE_FILE --env-file $ENV_FILE -p $STACK_NAME exec -T postgres \\
   psql -U $POSTGRES_USER -d postgres -c 'DROP DATABASE "$TARGET_DB";'
 EOF

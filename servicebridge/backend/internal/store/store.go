@@ -172,7 +172,7 @@ type Store interface {
 	// 递增客服并发并把会话移出排队队列，不改变会话状态。
 	// 会话已被他人负责、已结束、客服非在线或已达并发上限时返回 ErrConflict。
 	AssignConversationToAgent(conversationID, agentID string) (domain.Conversation, error)
-	// SetConversationSLAState 只更新会话的 sla_state 标记（含 updated_at），
+	// SetConversationSLAState 只更新会话的 sla_state 标记（含 updated_at）。目标状态已存在时返回 ErrNotFound，保证多个巡检副本只有一个能写入并告警；
 	// 供 SLA 巡检记录 first_response / idle，保证同一超时只告警一次。
 	SetConversationSLAState(conversationID, state string) (domain.Conversation, error)
 	// ReturnConversationToAI 把会话交回 AI 接待（状态置 ai_serving，保留负责客服便于追溯）。

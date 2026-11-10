@@ -1,16 +1,22 @@
-# 上线检查清单
+# 生产上线检查清单
 
-面向「明天就要发版」的场景。按顺序执行，任何一步失败都不要继续。
+> 版本：v1.4.5 · 更新时间：2026-11-10
+> 适用于“今天/明天就要发版”的场景。任何一步失败都不要继续。配置类细节见 [ONE_CLICK_DEPLOY.md](ONE_CLICK_DEPLOY.md)，非配置遗留项见 [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)。
 
 ## 1. 依赖与代码质量
 
 ```bash
-npm ci                 # 会触发 postinstall：缺失的 rolldown 原生绑定自动补装
-npm run check          # typecheck + ESLint + 内容契约
-npm run format:check   # 格式检查（不通过则 npm run format 后重新提交）
+npm ci
+npm run check
+npm run verify        # = bash scripts/verify-all.sh
 ```
 
-期望：`check` 全绿；`format:check` 无输出。
+期望：
+
+- `npm run check` 全绿；
+- `verify-all.sh` 为 **11 PASS / 0 FAIL / 0 SKIP**；
+- `npm run test:admin` 为 **111 tests / 106 pass / 0 fail / 5 skip**；
+- 不需要手工补跑 `npm run format:check` 才能上线；若团队要求格式门禁，另行执行。
 
 ## 2. 构建
 
@@ -18,96 +24,111 @@ npm run format:check   # 格式检查（不通过则 npm run format 后重新提
 npm run build:frontend
 ```
 
-期望：`67 page(s) built`，且 `frontend/dist` 非空。
+期望：
 
-## 3. 全量验证
+- 中文内容：**27 page(s) built**；
+- 配置并完成 `en`/`ar` 翻译后，生成对应语言页面（不是无条件 67 页；未就绪的译文返回 409 并按设计跳过）；
+- `frontend/dist` 非空，`sitemap-index.xml`、`robots.txt`、`llms.txt` 存在。
+
+## 3. 内容模型迁移
+
+如果生产库是旧内容结构：
+
+1. 先备份数据库（见第 6 节）；
+2. 打开后台「内容管理 → 官网内容」；
+3. 不修改内容，点一次「仅保存」；
+4. 确认保存 200、revision 增加，刷新后字段完整。
+
+如果生产库已经是当前结构，可跳过。
+
+## 4. 安全配置自检
+
+- `.env.ubuntu` 已设置强随机 `INTERNAL_API_TOKEN`（≥32 位）、`DATA_ENCRYPTION_KEY`、`ADMIN_2FA_SESSION_SECRET`；
+- `APP_ENV=production` 已注入 admin-server；弱密钥/示例值会拒绝启动；
+- 首次初始化使用启动日志中的 `ADMIN_SETUP_TOKEN`；初始化完成后确认 `GET /site-admin-api/setup/start` 返回 409；
+- 后台写请求带 `X-CSRF-Token`，浏览器已领取 `astreva_admin_csrf` Cookie；
+- 官网 CSP 无 `script-src 'unsafe-inline'`；Caddy 输出 `frame-ancestors` + XFO；
+- 访客上传只允许图片/音频；APK 仅管理员 App 发布路径；
+- `/metrics` 只在受保护的管理/内网入口，不暴露在公网 service 域名。
+
+## 5. 发布前页面自检
+
+### 中文
+
+- `/`、`/products/`、`/solutions/`、`/support/`、`/support/faq/`、`/about/`、`/privacy/`、`/agreement/` 返回 200；
+- `sitemap-index.xml`、`robots.txt`、`llms.txt` 可访问；
+- 导航下拉、移动端菜单、Cookie 同意、表单提交、客服 iframe 均可用；
+- 浏览器控制台无报错。
+
+### 英文/阿拉伯语
+
+- 仅在翻译已就绪后检查 `/en/`、`/ar/`；
+- `/ar/` 的 `<html dir="rtl">`；
+- 译文未就绪时接口 409、构建跳过是预期行为，不要用中文兜底。
+
+## 6. 备份
+
+生产默认 `ADMIN_MEDIA_DRIVER=local`，备份必须同时覆盖数据库和本地媒体卷。
 
 ```bash
-npm run verify         # = bash scripts/verify-all.sh
+# 项目名默认 astreva-ubuntu；安装器使用其他名字时显式传
+ASTREVA_STACK_NAME=astreva-ubuntu \
+ASTREVA_BACKUP_DIR=/srv/astreva-backups \
+bash scripts/backup-production.sh
 ```
 
-期望：`PASS 11 / FAIL 0 / SKIP 0`。含后台单测、admin-web 构建、Go 测试、Compose/Caddy 校验、PostgreSQL 集成。
+期望生成：
 
-## 4. 内容模型变更（本次必须做一次）
+- `astreva-postgres-*.sql.gz` + `.sha256`；
+- `astreva-admin-uploads-*.tar.gz` + `.sha256`；
+- `astreva-servicebridge-uploads-*.tar.gz` + `.sha256`；
+- 全部 `gzip -t` 通过、SHA-256 校验通过。
 
-这次新增了合作伙伴 Logo 与隐藏开关，生产库里的内容是旧结构：
+对象存储（R2/S3）模式还需要在供应商侧开启版本/生命周期；本脚本不会替代供应商备份。
 
-1. 打开后台「内容管理 → 官网内容 → 首页」。
-2. 不做任何修改直接 **保存一次**。
-3. 之后 `home.partnersHidden`（默认 false = 显示）与 `home.partnerLogos` 才会写进 PostgreSQL。
+## 7. 部署
 
-> 注意：`partnersHidden` 的语义是「隐藏」。不勾选即显示，不会因为空值误隐藏。
-
-## 4.5 安全配置自检（本次新增）
-
-- `deployments/ubuntu/.env.ubuntu` 已设置强随机 `INTERNAL_API_TOKEN`（≥32 位）；
-- 首次初始化使用 admin-server 启动日志中的 `ADMIN_SETUP_TOKEN`，初始化完成后确认 `setup/start` 返回 409；
-- `APP_ENV=production` 已注入 admin-server，弱 `ADMIN_2FA_SESSION_SECRET` 会让进程拒绝启动；
-- 官网由 Astro `security.csp` 输出带哈希的 CSP（无 `script-src 'unsafe-inline'`），Caddy 输出 `frame-ancestors` + XFO；客服由 Caddy 输出严格 `script-src 'self'`、`style-src 'self'`、属性级 `script-src-attr/style-src-attr 'none'` 与 `frame-ancestors`；`/metrics` 不再从公网 service 域名暴露；
-- 访客上传只允许图片/音频，APK 仅管理员 App 发布路径；
-- 后台写请求带 `X-CSRF-Token`，浏览器已领取 `astreva_admin_csrf` Cookie。
-
-## 5. 发布前自检
-
-- `/`、`/products/`、`/solutions/`、`/support/`、`/support/faq/`、`/about/` 均返回 200
-- `/en/`、`/ar/` 正常，`/ar/` 的 `<html dir="rtl">`
-- `sitemap-index.xml`、`robots.txt`、`llms.txt` 可访问
-- 导航在下拉、移动端菜单、语言切换均可用
-- Cookie 同意、表单提交、客服 iframe 均可用（表单需要后台在线）
-- 浏览器控制台无报错
-
-## 6. 部署
+### 全新/升级（推荐）
 
 ```bash
-# 与现有发布流程一致：构建 → 原子发布 → current symlink 切换
+curl -fsSL https://raw.githubusercontent.com/HCRXchenghong/ASTREVA/main/scripts/install.sh \
+  | sudo bash -s -- \
+      --repo https://github.com/HCRXchenghong/ASTREVA.git \
+      --domain www.example.com \
+      --email ops@example.com
+```
+
+安装器会检查 DNS/端口、生成强密钥、保留旧数据库密钥、更新前备份、启动 Compose 并做 HTTPS 健康检查。
+
+### 手工发布静态站
+
+```bash
 PUBLISH_DIR=/usr/share/nginx/site node scripts/build-frontend.mjs
 ```
 
-或使用控制台的「保存并发布」（走同一个 `buildFrontend()`）。
+或控制台「保存并发布」（走同一个 `buildFrontend()`）。
 
-## 7. 回滚
+## 8. 上线后验收
 
-- 静态产物：`releases/` 下保留最近 3 个版本，把 `current` 指回上一个即可。
-- 代码：`git revert <commit>`，重新发布。
-- 内容：后台有发布前的快照（`backups/`），关闭开关或回填内容字段即可。
+- `https://SITE_DOMAIN/`、`https://ADMIN_DOMAIN/site-admin/`、`https://SERVICE_DOMAIN/readyz` 均可访问；
+- 管理员 2FA 登录成功，普通客服登录成功；
+- 访客创建会话、发消息、转人工、客服接管、结束、评价全链路通过；
+- 后台上传一张新图，前台发布后可见；
+- 检查 `docker compose ps` 全部 healthy，Caddy 证书有效期正常；
+- 检查 `backups/` 最新备份时间与校验文件。
 
-## 客服联调注意
+## 9. 回滚
 
-访客端会按 iframe 所在主机推导 API 地址（`<host>:8080`），因此**用哪个主机打开官网，就要把对应来源加进白名单**：
+- 代码：`git revert <commit>`，重新部署；
+- 静态站：`releases/` 下保留最近版本，把 `current` symlink 指回上一版；
+- 数据库：使用最近一次 `astreva-postgres-*.sql.gz` 恢复；本地媒体使用同时间戳归档 + `scripts/restore-media.sh` 恢复；
+- 回滚后重新跑第 8 节验收。
 
-```
-SERVICEBRIDGE_CORS_ALLOWED_ORIGINS=http://127.0.0.1:4321,http://127.0.0.1:5173,http://localhost:4321,http://localhost:5173
-```
+## 10. 已知非阻塞项
 
-漏配时的表现是访客端弹出「连接客服系统失败，请确认后端已启动」，控制台里能看到
-`Access to fetch at http://localhost:8080/api/visitor/conversations ... blocked by CORS`。
-修改 `.env` 后需要**重启 ServiceBridge 后端**才生效。
+- 英文/阿语依赖真实翻译 AI；
+- R2/S3、FCM/APNs、真实 AI 需要生产凭证；
+- 本地媒体恢复使用 `scripts/restore-media.sh`（会短暂停止写入服务），仍建议在隔离环境先演练；
+- 移动 App 正式签名/商店发布、真实 VPS 安装、压测和监控告警接入需要发布环境执行。
 
-## 客服后端的数据库指向
-
-`servicebridge/backend` 读取的是 `DATABASE_URL`，不是 `SERVICEBRIDGE_DATABASE_URL`。
-`scripts/run-local-stack.sh` 已经用引擎库覆盖了它，但**手动启动时**如果直接
-`source .env`，`DATABASE_URL` 指向的是 CMS 库（`astreva_cms`），后端会在那里建一套
-引擎表——表现就是「AI 供应商、历史会话全都消失了」。
-
-手动启动请显式指定：
-
-```bash
-DATABASE_URL="postgres://…/astreva_engine?sslmode=disable" go run ./cmd/server
-```
-
-## AI 能力接入（客服接待）
-
-1. 后台创建/更新供应商：`base_url`、`api_key`、模型列表、默认模型。
-2. 把 `reception` 能力绑定到该供应商（同一能力可挂多个供应商，按优先级故障转移）。
-3. 推理类模型（如 MiMo v2.6）会先消耗 reasoning token，必须把
-   `max_output_tokens` 提到 **≥800**、`timeout_seconds` 提到 **≥60**，
-   否则会出现「回复为空」或「请求超时」。
-4. 联调：`POST /api/admin/ai-settings/test` 用当前配置发一条真实请求；
-   `GET /api/admin/ai-providers/health` 看熔断状态与连续失败次数。
-
-## 已知限制（非阻塞）
-
-- `npm ci` 在 macOS 上仍可能因 npm 可选依赖 bug 漏装 rolldown 绑定；postinstall 会自动补装，失败时会打印手动命令。
-- `ChatWidget` / `CookieConsent` 是 `client:only`，不参与服务端渲染（非关键路径）。
-- 英文/阿拉伯语内容依赖后台译文；译文未就绪时构建会跳过对应路由（409），不会回退中文。
+完整清单见 [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)。

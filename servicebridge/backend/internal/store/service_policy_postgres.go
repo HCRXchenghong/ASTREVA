@@ -432,9 +432,10 @@ func (s *PostgresStore) SetConversationSLAState(conversationID, state string) (d
 	ctx, cancel := dbContext()
 	defer cancel()
 
+	// 条件更新是跨副本互斥：多个巡检副本同时看到空状态时，只有一个能写入并告警。
 	row := s.pool.QueryRow(ctx, `
 		UPDATE conversations SET sla_state=$2, updated_at=$3
-		WHERE id=$1
+		WHERE id=$1 AND COALESCE(sla_state, '') <> $2
 		RETURNING `+conversationColumns, strings.TrimSpace(conversationID), strings.TrimSpace(state), dbNow())
 	conversation, err := scanConversation(row)
 	if err != nil {

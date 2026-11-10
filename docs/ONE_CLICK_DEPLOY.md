@@ -1,5 +1,7 @@
 # ASTREVA 一键部署
 
+> 版本：v1.4.5 · 更新时间：2026-11-10
+
 适用于 **Ubuntu 22.04 / 24.04**（也兼容 Debian 12、RHEL 9 系）的全新安装和旧版本升级。
 
 ## 一条命令
@@ -25,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/HCRXchenghong/ASTREVA/main/scripts/
 5. 克隆或更新仓库到 `/opt/astreva`；
 6. 询问/确认主域名、后台域名、客服域名、ACME 邮箱；
 7. 生成 `.env.ubuntu`，已有部署会保留数据库密码、数据加密密钥、管理员口令等关键密钥；
-8. 已有旧版本时先 `pg_dump` 备份 PostgreSQL，再原地 `docker compose up -d --build`；
+8. 已有旧版本时先备份 PostgreSQL + 本地媒体卷（`admin-uploads` / `servicebridge-uploads`），再原地 `docker compose up -d --build`；
 9. Caddy 自动申请 SSL 证书并自动续期（`caddy-data` 卷持久化）；
 10. 最终检查官网、后台、客服 API、公开接口、容器健康、TLS 证书；全部正常才退出 0。
 
@@ -58,9 +60,10 @@ curl -fsSL https://raw.githubusercontent.com/HCRXchenghong/ASTREVA/main/scripts/
 ```
 
 - 自动读取已有 `.env.ubuntu`，不会重新生成 `DATA_ENCRYPTION_KEY` 或 `POSTGRES_PASSWORD`；
-- 更新前自动备份数据库到 `backups/pre-deploy-<时间>/`；
+- 更新前自动备份数据库与本地媒体卷到 `backups/pre-deploy-<时间>/`；
 - 只执行 `up -d --build`，不执行 `down -v`，数据库卷不会被删除；
 - 源码目录有未提交改动时会中止；确认后用 `--force`（会先备份 patch）。
+- Compose 项目名不是默认 `astreva-ubuntu` 时，备份/恢复脚本需设置 `ASTREVA_STACK_NAME`。
 
 ## 镜像与供应链
 

@@ -263,7 +263,11 @@ func (s *MemoryStore) SetConversationSLAState(conversationID, state string) (dom
 	if !ok {
 		return domain.Conversation{}, ErrNotFound
 	}
-	conversation.SLAState = strings.TrimSpace(state)
+	next := strings.TrimSpace(state)
+	if conversation.SLAState == next {
+		return domain.Conversation{}, ErrNotFound
+	}
+	conversation.SLAState = next
 	conversation.UpdatedAt = time.Now().UTC()
 	return *conversation, nil
 }

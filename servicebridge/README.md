@@ -1,5 +1,7 @@
 # ServiceBridge 在线客服
 
+> 版本：v1.4.5 · 更新时间：2026-11-10
+
 ServiceBridge 是 ASTREVA 自研在线客服子系统，包括访客聊天端、Go 实时后端、统一控制台中的客服模块，以及 iOS/Android “在线客服”App。
 
 ## 结构
@@ -22,7 +24,7 @@ CORS_ALLOWED_ORIGINS=http://127.0.0.1:4321,http://127.0.0.1:5173 \
 go run ./cmd/server
 ```
 
-`HTTP_ADDR=127.0.0.1:8080` 是默认安全值；只有同一局域网真机联调时才改成 `0.0.0.0:8080`，并确认网络可信。`ADMIN_BOOTSTRAP_PASSWORD` 未设置时会生成本进程随机口令并打印一次，需与 admin-server 的 `SERVICEBRIDGE_ADMIN_PASSWORD` 保持一致。另开终端运行访客端：
+快速体验可用 `STORE_DRIVER=memory`，但重启即丢；需要完整功能/持久化时使用 `STORE_DRIVER=postgres` + `DATABASE_URL`（仓库根目录 `run-local-stack.sh` 默认就是 PostgreSQL）。`HTTP_ADDR=127.0.0.1:8080` 是默认安全值；只有同一局域网真机联调时才改成 `0.0.0.0:8080`，并确认网络可信。`ADMIN_BOOTSTRAP_PASSWORD` 未设置时会生成本进程随机口令并打印一次，需与 admin-server 的 `SERVICEBRIDGE_ADMIN_PASSWORD` 保持一致。另开终端运行访客端：
 
 ```bash
 python3 -m http.server 5173 --bind 127.0.0.1 --directory apps/user-web
@@ -39,7 +41,7 @@ python3 -m http.server 5173 --bind 127.0.0.1 --directory apps/user-web
 - 客服 App WebSocket 心跳、断线重连、会话事件刷新和 15 秒历史补偿轮询。
 - 统一控制台客服账号新增、编辑、重置密码、禁用和删除。
 - 统一控制台数据概览、会话消息、转接、结束、CSV 导出，以及营业时间、欢迎语、联系方式和 AI 设置。
-- WebSocket 鉴权、消息幂等、登录态撤销、Redis 跨节点广播、PostgreSQL 持久化、S3/MinIO 上传、安全响应头和限流。
+- WebSocket 鉴权、消息幂等、登录态撤销、Redis 跨节点广播、PostgreSQL 持久化、本地/S3 上传、安全响应头和限流。
 - 统一控制台关键词规则、服务评价（独立页面）、审计日志、App 版本与 API 管理页面。
 - Android 自建更新通道，包括控制台上传 APK、强制/可选更新配置、App 内检测、下载、SHA-256 校验和安装引导。
 - 后端 FCM HTTP v1（服务账号自动换取 OAuth2 令牌）与 APNs（.p8 令牌签名）通知通道、客服设备 token（含平台）上报接口，以及新会话分配、转接和访客新消息推送触发点；推送参数在统一控制台「系统设置 → 推送设置」里配置并加密入库。

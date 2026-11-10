@@ -2,6 +2,8 @@
 
 本文件是「AI 统一配置 + 多知识库 + 频率限额」与「客服策略」的实施依据，逐条来自产品负责人确认。
 
+> 2026-11-10 状态：本文的 AI 绑定、开放 API 开关、围观范围、SLA/队列/提醒渠道均已落地并有测试；历史段落中的“下一波”“已知限制”如已与代码冲突，以当前代码与 [FEATURE_STATUS.md](FEATURE_STATUS.md) 为准。
+
 ## 一、AI 多供应商（统一配置）
 
 ### 数据模型
@@ -390,7 +392,7 @@ App 的「AI 建议」按钮同样按两者共同启用/禁用；控制台「客
   - `reassign`：同分组优先、排除原客服、转移并发；**无候选时入队**而非立即 drain（刚释放的并发会让原客服成为唯一候选、被立刻分回）。
 - **自动关闭**：`auto_close_idle_minutes>0` 且双方静默超阈值 → 走既有结束流程（访客可评价），审计 `conversation.auto_closed`，不重复关闭。
 - **优先级四模式**：判定集中在纯函数 `resolveAutoReplyPath(priority, aiEnabled, aiConfigured)`；`keyword_first` 完全保持历史行为。
-  **已知限制**：`ai_first`/`ai_only` 判断"上游是否已配置"时看的是**全局 `ai_settings`**（store 层看不到能力绑定）；若只通过「AI 管理 → 能力绑定」提供上游（全局 Key 为空），这两种模式会退化为关键词。修复方向：由应用层把"能力绑定是否可用"传入该判定（列入后续优化）。
+  **绑定感知（已修复）**：`ai_first`/`ai_only` 不再只看全局 `ai_settings`；`bindingUpstreamConfigured()` 会把有效的能力绑定/候选链（有启用供应商、地址和 Key）算作 AI 可用。只通过「AI 管理 → 能力绑定」提供上游时，这两种模式不会退化为关键词。
 
 ## 十、AI 故障转移的实时端到端验证（`scripts/verify-ai-failover.mjs`）
 

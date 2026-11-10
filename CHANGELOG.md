@@ -1,5 +1,19 @@
 # 更新记录
 
+## v1.4.5 - 2026-11-10
+
+### 生产就绪补强
+
+- 备份脚本新增本地媒体卷归档：`admin-uploads`、`servicebridge-uploads` 与 PostgreSQL 一起生成 `.tar.gz` + `.sha256`；导出流程保持可校验。
+- 备份/恢复脚本统一使用 `ASTREVA_STACK_NAME`（默认 `astreva-ubuntu`），避免安装器项目名与 cron/恢复项目不一致。
+- 修复媒体卷缺失提示中 `$volume（` 被 shell 解析为非法变量的问题。
+- npm 根包、admin-web、frontend 版本统一为 `1.4.5`，与 Git tag/发布记录一致。
+- 新增 `docs/PRODUCTION_READINESS.md`，区分“已修复的代码问题 / 仍需生产环境完成的非配置项 / 配置项”。
+- 重写生产检查清单、数据库设计、ServiceBridge 上线验收、运维备份章节和 README 状态，修正页面数、测试数、内存仓库等过期描述。
+- 新增 `scripts/restore-media.sh`：校验 SHA-256/gzip、停写入服务、清空目标卷、解包并重启；本地媒体恢复不再只靠手工命令。
+- SLA `sla_state` 改为 PostgreSQL 条件 UPDATE 原子抢占，默认两副本部署下不会重复推送/审计同一超时。
+- 备份范围不再只有 PostgreSQL；生产检查清单、运维手册和就绪说明同步更新。
+
 ## v1.4.4 - 2026-11-10
 
 ### 生产链路修复与清理

@@ -13,10 +13,10 @@
 
 ```bash
 GOCACHE=/tmp/astreva-go-cache go test ./...
-STORE_DRIVER=memory HTTP_ADDR=127.0.0.1:8080 go run ./cmd/server
+STORE_DRIVER=memory HTTP_ADDR=127.0.0.1:8080 go run ./cmd/server   # 仅快速体验；生产/持久化必须 postgres
 ```
 
-设置 `DATABASE_URL` 或 `STORE_DRIVER=postgres` 使用 PostgreSQL；设置 `REDIS_ADDR` 启用多节点事件。生产还必须设置强随机的 `DATA_ENCRYPTION_KEY`、`ADMIN_BOOTSTRAP_PASSWORD`、`AGENT_BOOTSTRAP_PASSWORD`、`METRICS_BEARER_TOKEN`，并配置明确的 `CORS_ALLOWED_ORIGINS` 和 `TRUSTED_PROXY_CIDRS`。
+生产必须用 `STORE_DRIVER=postgres` + `DATABASE_URL`；`memory` 只用于快速体验，重启即丢。设置 `REDIS_ADDR` 启用多节点事件。生产还必须设置强随机的 `DATA_ENCRYPTION_KEY`、`ADMIN_BOOTSTRAP_PASSWORD`、`AGENT_BOOTSTRAP_PASSWORD`、`METRICS_BEARER_TOKEN`，并配置明确的 `CORS_ALLOWED_ORIGINS` 和 `TRUSTED_PROXY_CIDRS`。
 
 开放 API 默认关闭，由后台「系统设置 → 安全策略」的 `open_api_enabled` 总开关控制；关闭时 `/open/v1/*` 返回 503。Caddy 始终转发，环境变量不再控制开关。
 
