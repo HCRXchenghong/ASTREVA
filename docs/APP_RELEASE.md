@@ -16,7 +16,7 @@ flutter build apk --release \
   --dart-define=APP_VERSION_CODE=3
 ```
 
-不传 `APP_VERSION_CODE` 时默认为 `1`，会导致更新检测异常。
+不传 `APP_VERSION_CODE` 时默认为 `1`，会导致更新检测异常。客服端服务器地址必须通过 `--dart-define=SERVICEBRIDGE_URL=https://客服域名` 编译内置，登录页不再显示服务器地址输入框。
 
 ## 更新流程
 

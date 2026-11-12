@@ -147,6 +147,10 @@ class ServiceBridgeClient {
   Stream<Map<String, dynamic>> get events => _eventController.stream;
 
   static Future<String> savedServerUrl() async {
+    // 服务器地址必须编译期内置（--dart-define=SERVICEBRIDGE_URL=...），
+    // App 不向客服暴露服务器输入框；显式定义优先于设备里保存的旧地址。
+    const configured = String.fromEnvironment('SERVICEBRIDGE_URL');
+    if (configured.trim().isNotEmpty) return configured.trim();
     final preferences = await SharedPreferences.getInstance();
     return preferences.getString('servicebridge_url') ??
         const String.fromEnvironment(

@@ -199,7 +199,7 @@ class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _accountController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _serverController = TextEditingController();
+  String _serverUrl = '';
   bool _busy = false;
   bool _obscurePassword = true;
 
@@ -207,7 +207,7 @@ class _LoginPageState extends State<LoginPage> {
   void initState() {
     super.initState();
     ServiceBridgeClient.savedServerUrl().then((url) {
-      if (mounted) setState(() => _serverController.text = url);
+      if (mounted) setState(() => _serverUrl = url);
       _checkAppUpdate(url);
       // B1：拿到服务器地址后先用服务端下发的参数初始化推送。
       PushService.instance.configureFromServer(url);
@@ -327,22 +327,25 @@ class _LoginPageState extends State<LoginPage> {
   void dispose() {
     _accountController.dispose();
     _passwordController.dispose();
-    _serverController.dispose();
     super.dispose();
   }
 
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_serverUrl.trim().isEmpty) {
+      _showMessage(context, 'App 未内置服务器地址，请联系管理员重新安装正式包。');
+      return;
+    }
     setState(() => _busy = true);
     try {
       final client = ServiceBridgeClient(
-        baseUrl: ServiceBridgeClient.normalizeBaseUrl(_serverController.text),
+        baseUrl: ServiceBridgeClient.normalizeBaseUrl(_serverUrl),
       );
       final result = await client.login(
         _accountController.text,
         _passwordController.text,
       );
-      await client.saveServerUrl(_serverController.text);
+      await client.saveServerUrl(_serverUrl);
       await PushService.instance.registerToBackend(client);
       if (!mounted) return;
       await Navigator.of(context).pushReplacement(
@@ -454,25 +457,6 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                           ),
                           validator: _required,
-                        ),
-                        const SizedBox(height: 14),
-                        TextFormField(
-                          controller: _serverController,
-                          keyboardType: TextInputType.url,
-                          decoration: const InputDecoration(
-                            labelText: '服务器地址',
-                            hintText: 'http://电脑局域网IP:8080',
-                            prefixIcon: Icon(Icons.dns_outlined),
-                          ),
-                          validator: _required,
-                        ),
-                        const SizedBox(height: 9),
-                        const Text(
-                          '真机请输入电脑和手机同一 Wi-Fi 下的局域网地址。',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textSecondary,
-                          ),
                         ),
                         const SizedBox(height: 24),
                         FilledButton.icon(
