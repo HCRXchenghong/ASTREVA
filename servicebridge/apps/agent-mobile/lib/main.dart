@@ -1950,7 +1950,9 @@ class _ChatPageState extends State<ChatPage> {
     if (_closed || _preparingSend) return;
     final original = _messageController.text.trim();
     if (original.isEmpty) return;
-    if (!_preferences.reviewTranslationBeforeSend) {
+    // 出向自动翻译关闭时，绝不再调用 translate-preview：
+    // 否则用户在偏好里明确关闭后，发消息仍会卡在“译文生成失败”弹窗。
+    if (!_preferences.autoTranslateOutgoing || !_preferences.reviewTranslationBeforeSend) {
       _sendContent(original);
       return;
     }
